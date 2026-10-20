@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using CipherVault.Auth.Win;
 using CipherVault.Core;
+using CipherVault.Core.Configuration;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
 using CipherVault.Core.Session;
@@ -21,17 +22,17 @@ if (args.Length == 0 || args[0] is "help" or "--help" or "-h")
 }
 
 var command = args[0].ToLowerInvariant();
-var vaultPath = GetOption(args, "--vault");
-if (command != "restore" && string.IsNullOrWhiteSpace(vaultPath))
-{
-    Console.Error.WriteLine("Missing required option: --vault <directory>");
-    return 2;
-}
-
-VaultSessionOptions sessionOptions;
+ResolvedCipherVaultConfig configuration;
 try
 {
-    sessionOptions = CreateSessionOptions(args);
+    configuration = CipherVaultConfiguration.Load(
+        CreateCommandLineOverrides(args),
+        GetOption(args, "--config"));
+}
+catch (VaultException exception)
+{
+    Console.Error.WriteLine($"{exception.Code}: {exception.Message}");
+    return 2;
 }
 catch (ArgumentException exception)
 {
@@ -39,9 +40,10 @@ catch (ArgumentException exception)
     return 2;
 }
 
+var vaultPath = configuration.VaultPath;
 await using var service = new VaultService(
     new CliActivityProvider(),
-    sessionOptions: sessionOptions);
+    sessionOptions: configuration.SessionOptions);
 try
 {
     return command switch
@@ -366,8 +368,21 @@ static string? GetOption(string[] arguments, string option)
     {
         if (string.Equals(arguments[index], option, StringComparison.OrdinalIgnoreCase))
         {
+            if (arguments[index + 1].StartsWith("--", StringComparison.Ordinal))
+            {
+                throw new VaultException(
+                    VaultErrorCode.InvalidInput,
+                    $"Option {option} requires a value.");
+            }
             return arguments[index + 1];
         }
+    }
+    if (arguments.Any(argument =>
+            string.Equals(argument, option, StringComparison.OrdinalIgnoreCase)))
+    {
+        throw new VaultException(
+            VaultErrorCode.InvalidInput,
+            $"Option {option} requires a value.");
     }
     return null;
 }
@@ -456,48 +471,33 @@ static string ReadCredential(VaultCredentialType credentialType)
     };
 }
 
-static VaultSessionOptions CreateSessionOptions(string[] arguments)
+static CipherVaultConfigOverrides CreateCommandLineOverrides(string[] arguments)
 {
-    var idleMinutes = GetIntegerOption(
-        arguments,
-        "--idle-minutes",
-        "CIPHER_VAULT_IDLE_MINUTES",
-        15);
-    var hardHours = GetIntegerOption(
-        arguments,
-        "--hard-hours",
-        "CIPHER_VAULT_HARD_HOURS",
-        4);
-    if (idleMinutes is < 1 or > 1_440)
+    return new CipherVaultConfigOverrides
     {
-        throw new ArgumentException("--idle-minutes must be between 1 and 1440.");
-    }
-    if (hardHours is < 1 or > 168)
-    {
-        throw new ArgumentException("--hard-hours must be between 1 and 168.");
-    }
-    if (hardHours * 60 < idleMinutes)
-    {
-        throw new ArgumentException("--hard-hours must be at least the idle timeout.");
-    }
-    return VaultSessionOptions.FromMinutes(idleMinutes, hardHours);
+        VaultPath = GetOption(arguments, "--vault"),
+        IdleMinutes = ParseOptionalInteger(
+            GetOption(arguments, "--idle-minutes"),
+            "--idle-minutes"),
+        HardHours = ParseOptionalInteger(
+            GetOption(arguments, "--hard-hours"),
+            "--hard-hours")
+    };
 }
 
-static int GetIntegerOption(
-    string[] arguments,
-    string option,
-    string environmentVariable,
-    int defaultValue)
+static int? ParseOptionalInteger(
+    string? value,
+    string option)
 {
-    var value = GetOption(arguments, option)
-        ?? Environment.GetEnvironmentVariable(environmentVariable);
     if (string.IsNullOrWhiteSpace(value))
     {
-        return defaultValue;
+        return null;
     }
     if (!int.TryParse(value, out var parsed))
     {
-        throw new ArgumentException($"{option} must be an integer.");
+        throw new VaultException(
+            VaultErrorCode.InvalidInput,
+            $"{option} must be an integer.");
     }
     return parsed;
 }
@@ -535,6 +535,7 @@ static void PrintHelp()
           rebuild-index       --vault <directory>
 
         Session options:
+          --config <file>          Defaults to %LOCALAPPDATA%\CipherVault\config.json
           --idle-minutes <1-1440>  Defaults to 15
           --hard-hours <1-168>     Defaults to 4 and must cover the idle timeout
         """);

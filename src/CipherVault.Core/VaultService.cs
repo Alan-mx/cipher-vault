@@ -193,7 +193,7 @@ public sealed class VaultService : IVaultService
         _activityProvider = activityProvider;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _sessionOptions = sessionOptions ?? VaultSessionOptions.Default;
-        ValidateSessionOptions(_sessionOptions);
+        _sessionOptions.Validate();
         SqlCipherVaultStore.InitializeRuntime();
     }
 
@@ -1452,31 +1452,6 @@ public sealed class VaultService : IVaultService
             null,
             reason,
             false);
-    }
-
-    private static void ValidateSessionOptions(VaultSessionOptions options)
-    {
-        if (options.IdleTimeout < TimeSpan.FromMinutes(1) ||
-            options.IdleTimeout > TimeSpan.FromHours(24))
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(options),
-                "Idle timeout must be between 1 minute and 24 hours.");
-        }
-        if (options.HardLifetime < options.IdleTimeout ||
-            options.HardLifetime > TimeSpan.FromDays(7))
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(options),
-                "Hard lifetime must be at least the idle timeout and no more than 7 days.");
-        }
-        if (options.ExpiringWindow < TimeSpan.FromSeconds(10) ||
-            options.ExpiringWindow > options.IdleTimeout)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(options),
-                "Expiring window must be between 10 seconds and the idle timeout.");
-        }
     }
 
     private static string NormalizeVaultPath(string vaultPath)

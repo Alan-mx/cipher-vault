@@ -9,12 +9,14 @@ Windows 11 local encrypted Markdown/TXT vault with a STDIO MCP interface.
 - Recovery-key confirmation is enforced by the Vault core before content access.
 - Recovery-key rotation is staged in `vault.keys.pending` until the new key is confirmed.
 - MCP content tools require an interactive password prompt in the MCP process.
-- MCP supports `--read-only` (or `CIPHER_VAULT_READ_ONLY=1`) to block all create,
-  update, append and delete tools.
+- MCP supports `readOnly` access through the shared configuration, `--read-only`,
+  `--access-mode readOnly`, `CIPHER_VAULT_ACCESS_MODE=readOnly` or the legacy
+  `CIPHER_VAULT_READ_ONLY=1` switch. Read-only mode blocks create, update, append
+  and delete tools.
 - Tool calls do not extend the session.
 - Sessions lock after 15 minutes without Windows keyboard/mouse input, after 4 hours, on screen lock, or on manual lock.
 - Idle and hard session limits can be configured with `--idle-minutes` and
-  `--hard-hours`, or with `CIPHER_VAULT_IDLE_MINUTES` and
+  `--hard-hours`, the shared configuration, or `CIPHER_VAULT_IDLE_MINUTES` and
   `CIPHER_VAULT_HARD_HOURS`. The idle limit must be between 1 minute and 24 hours;
   the hard limit must cover it and must not exceed 7 days.
 - Vault files and directories use a protected Windows ACL.
@@ -49,6 +51,47 @@ Losing both the password and the offline recovery key makes the Vault
 unrecoverable. Rotating the recovery key remains pending until the new key is
 entered and confirmed.
 
+## Local configuration
+
+MCP, CLI and the desktop application read the same optional configuration file:
+
+```text
+%LOCALAPPDATA%\CipherVault\config.json
+```
+
+```json
+{
+  "configVersion": 1,
+  "vaultPath": "%USERPROFILE%\\CipherVault",
+  "session": {
+    "idleMinutes": 15,
+    "hardHours": 4
+  },
+  "mcp": {
+    "accessMode": "readOnly"
+  }
+}
+```
+
+Precedence is:
+
+```text
+command line > environment variable > config file > built-in default
+```
+
+The default Vault is `%USERPROFILE%\CipherVault`. Relative `vaultPath` values are
+resolved against the configuration file directory. `--config` and
+`CIPHER_VAULT_CONFIG` can select another configuration file.
+
+The configuration rejects password, recovery-key, token, secret and credential
+fields. A missing default file is ignored; an explicitly selected file that is
+missing, malformed or has an unsupported `configVersion` fails at startup.
+
+Every MCP or desktop process owns an independent Vault session. Unlocking or
+locking one process does not change the session state of another process. The
+current STDIO architecture therefore provides process isolation, not a global
+lock shared by all clients.
+
 ## MCP trust boundary
 
 CipherVault protects data at rest and controls access to decrypted content through
@@ -65,7 +108,6 @@ timeout while keeping the hard limit bounded:
 
 ```toml
 args = [
-  '--vault', 'D:\CipherVault',
   '--read-only',
   '--idle-minutes', '60',
   '--hard-hours', '8',
@@ -79,8 +121,8 @@ args = [
 - `CipherVault.Cli`: management commands
 - `CipherVault.Ui.Wpf`: Windows desktop UI
 
-The current backup extension is `.cvbackup`; `CIPHER_VAULT_PATH` is the
-supported environment variable for the MCP server.
+The current backup extension is `.cvbackup`. `CIPHER_VAULT_PATH` remains
+available as an environment-variable override for the default Vault.
 
 ## Build and test
 
@@ -94,10 +136,13 @@ dotnet test .\CipherVault.sln -c Release --no-build
 ```toml
 [mcp_servers.cipher_vault]
 command = 'D:\path\to\CipherVault.Mcp.exe'
-args = ['--vault', 'D:\CipherVault', '--read-only']
+args = ['--read-only']
 tool_timeout_sec = 120
 default_tools_approval_mode = "prompt"
 ```
+
+Use `--config <file>` or `--vault <directory>` for an MCP server that should not
+use the shared defaults.
 
 ## Publish
 

@@ -7,6 +7,7 @@ using System.Windows.Threading;
 using Microsoft.Win32;
 using CipherVault.Auth.Win;
 using CipherVault.Core;
+using CipherVault.Core.Configuration;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
 using CipherVault.Core.ImportExport;
@@ -25,6 +26,8 @@ public partial class MainWindow : Window
 
     private readonly VaultService _service;
     private readonly DispatcherTimer _statusTimer;
+    private readonly string _configuredVaultPath;
+    private readonly bool _startupFailed;
     private Guid? _importJobId;
     private string? _catalogCursor;
     private string? _searchCursor;
@@ -36,23 +39,33 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        VaultSessionOptions sessionOptions;
+        ResolvedCipherVaultConfig configuration;
         try
         {
-            sessionOptions = CreateSessionOptions(Environment.GetCommandLineArgs());
+            var arguments = Environment.GetCommandLineArgs();
+            configuration = CipherVaultConfiguration.Load(
+                CreateCommandLineOverrides(arguments),
+                GetOption(arguments, "--config"));
         }
-        catch (ArgumentException exception)
+        catch (VaultException exception)
         {
             MessageBox.Show(
-                exception.Message,
+                $"错误 {exception.Code}：{exception.Message}",
                 "CipherVault 加密资料库",
                 MessageBoxButton.OK,
-                MessageBoxImage.Warning);
-            sessionOptions = VaultSessionOptions.Default;
+                MessageBoxImage.Error);
+            _startupFailed = true;
+            configuration = new ResolvedCipherVaultConfig(
+                CipherVaultConfiguration.DefaultVaultPath,
+                VaultSessionOptions.Default,
+                McpAccessMode.ReadWrite,
+                CipherVaultConfiguration.DefaultConfigPath);
         }
+        _configuredVaultPath = configuration.VaultPath
+            ?? CipherVaultConfiguration.DefaultVaultPath;
         _service = new VaultService(
             new WindowsSystemActivityProvider(),
-            sessionOptions: sessionOptions);
+            sessionOptions: configuration.SessionOptions);
         _statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _statusTimer.Tick += StatusTimer_Tick;
         Loaded += MainWindow_Loaded;
@@ -61,15 +74,12 @@ public partial class MainWindow : Window
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
-        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var defaultPath = Path.Combine(userProfile, "CipherVault");
-        var arguments = Environment.GetCommandLineArgs();
-        var vaultOption = Array.FindIndex(
-            arguments,
-            argument => string.Equals(argument, "--vault", StringComparison.OrdinalIgnoreCase));
-        VaultPathTextBox.Text = vaultOption >= 0 && vaultOption + 1 < arguments.Length
-            ? arguments[vaultOption + 1]
-            : defaultPath;
+        if (_startupFailed)
+        {
+            Application.Current.Shutdown(2);
+            return;
+        }
+        VaultPathTextBox.Text = _configuredVaultPath;
         _statusTimer.Start();
         await RefreshStatusAsync();
         Activate();
@@ -882,60 +892,56 @@ public partial class MainWindow : Window
         };
     }
 
-    private static VaultSessionOptions CreateSessionOptions(string[] arguments)
+    private static CipherVaultConfigOverrides CreateCommandLineOverrides(
+        string[] arguments)
     {
-        var idleMinutes = GetIntegerOption(
-            arguments,
-            "--idle-minutes",
-            "CIPHER_VAULT_IDLE_MINUTES",
-            15);
-        var hardHours = GetIntegerOption(
-            arguments,
-            "--hard-hours",
-            "CIPHER_VAULT_HARD_HOURS",
-            4);
-        if (idleMinutes is < 1 or > 1_440)
+        return new CipherVaultConfigOverrides
         {
-            throw new ArgumentException("--idle-minutes 必须在 1 到 1440 之间。");
-        }
-        if (hardHours is < 1 or > 168)
-        {
-            throw new ArgumentException("--hard-hours 必须在 1 到 168 之间。");
-        }
-        if (hardHours * 60 < idleMinutes)
-        {
-            throw new ArgumentException("--hard-hours 不能小于空闲锁定时长。");
-        }
-        return VaultSessionOptions.FromMinutes(idleMinutes, hardHours);
+            VaultPath = GetOption(arguments, "--vault"),
+            IdleMinutes = ParseOptionalInteger(
+                GetOption(arguments, "--idle-minutes"),
+                "--idle-minutes"),
+            HardHours = ParseOptionalInteger(
+                GetOption(arguments, "--hard-hours"),
+                "--hard-hours")
+        };
     }
 
-    private static int GetIntegerOption(
+    private static int? ParseOptionalInteger(
+        string? value,
+        string option)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+        if (!int.TryParse(value, out var parsed))
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                $"{option} 必须是整数。");
+        }
+        return parsed;
+    }
+
+    private static string? GetOption(
         string[] arguments,
-        string option,
-        string environmentVariable,
-        int defaultValue)
+        string option)
     {
         var optionIndex = Array.FindIndex(
             arguments,
             argument => string.Equals(argument, option, StringComparison.OrdinalIgnoreCase));
         if (optionIndex < 0)
         {
-            var environmentValue = Environment.GetEnvironmentVariable(environmentVariable);
-            if (string.IsNullOrWhiteSpace(environmentValue))
-            {
-                return defaultValue;
-            }
-            if (!int.TryParse(environmentValue, out var environmentInteger))
-            {
-                throw new ArgumentException($"{option} 必须是整数。");
-            }
-            return environmentInteger;
+            return null;
         }
         if (optionIndex + 1 >= arguments.Length ||
-            !int.TryParse(arguments[optionIndex + 1], out var value))
+            arguments[optionIndex + 1].StartsWith("--", StringComparison.Ordinal))
         {
-            throw new ArgumentException($"{option} 必须是整数。");
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                $"选项 {option} 缺少参数值。");
         }
-        return value;
+        return arguments[optionIndex + 1];
     }
 }

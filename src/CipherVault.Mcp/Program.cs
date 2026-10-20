@@ -7,21 +7,23 @@ using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 using CipherVault.Auth.Win;
 using CipherVault.Core;
+using CipherVault.Core.Configuration;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
 using CipherVault.Core.Session;
 
-var vaultPath = GetOption(args, "--vault")
-    ?? Environment.GetEnvironmentVariable("CIPHER_VAULT_PATH");
-var readOnly = HasFlag(args, "--read-only") ||
-    string.Equals(
-        Environment.GetEnvironmentVariable("CIPHER_VAULT_READ_ONLY"),
-        "1",
-        StringComparison.OrdinalIgnoreCase);
-VaultSessionOptions sessionOptions;
+ResolvedCipherVaultConfig configuration;
 try
 {
-    sessionOptions = CreateSessionOptions(args);
+    configuration = CipherVaultConfiguration.Load(
+        CreateCommandLineOverrides(args),
+        GetOption(args, "--config"));
+}
+catch (VaultException exception)
+{
+    Console.Error.WriteLine($"{exception.Code}: {exception.Message}");
+    Environment.ExitCode = 1;
+    return;
 }
 catch (ArgumentException exception)
 {
@@ -30,9 +32,11 @@ catch (ArgumentException exception)
     return;
 }
 
+var vaultPath = configuration.VaultPath;
+var readOnly = configuration.McpAccessMode == McpAccessMode.ReadOnly;
 await using var vault = new VaultService(
     new WindowsSystemActivityProvider(),
-    sessionOptions: sessionOptions);
+    sessionOptions: configuration.SessionOptions);
 var tools = new VaultTools(vault, vaultPath, new WindowsCredentialPrompt(), readOnly);
 
 var builder = Host.CreateApplicationBuilder(Array.Empty<string>());
@@ -50,8 +54,21 @@ static string? GetOption(string[] arguments, string option)
     {
         if (string.Equals(arguments[index], option, StringComparison.OrdinalIgnoreCase))
         {
+            if (arguments[index + 1].StartsWith("--", StringComparison.Ordinal))
+            {
+                throw new VaultException(
+                    VaultErrorCode.InvalidInput,
+                    $"Option {option} requires a value.");
+            }
             return arguments[index + 1];
         }
+    }
+    if (arguments.Any(argument =>
+            string.Equals(argument, option, StringComparison.OrdinalIgnoreCase)))
+    {
+        throw new VaultException(
+            VaultErrorCode.InvalidInput,
+            $"Option {option} requires a value.");
     }
     return null;
 }
@@ -62,48 +79,62 @@ static bool HasFlag(string[] arguments, string flag)
         string.Equals(argument, flag, StringComparison.OrdinalIgnoreCase));
 }
 
-static VaultSessionOptions CreateSessionOptions(string[] arguments)
+static CipherVaultConfigOverrides CreateCommandLineOverrides(string[] arguments)
 {
-    var idleMinutes = GetIntegerOption(
-        arguments,
-        "--idle-minutes",
-        "CIPHER_VAULT_IDLE_MINUTES",
-        15);
-    var hardHours = GetIntegerOption(
-        arguments,
-        "--hard-hours",
-        "CIPHER_VAULT_HARD_HOURS",
-        4);
-    if (idleMinutes is < 1 or > 1_440)
+    var accessMode = ParseAccessMode(GetOption(arguments, "--access-mode"));
+    if (HasFlag(arguments, "--read-only"))
     {
-        throw new ArgumentException("--idle-minutes must be between 1 and 1440.");
+        if (accessMode is not null and not McpAccessMode.ReadOnly)
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "--read-only conflicts with --access-mode readWrite.");
+        }
+        accessMode = McpAccessMode.ReadOnly;
     }
-    if (hardHours is < 1 or > 168)
+
+    return new CipherVaultConfigOverrides
     {
-        throw new ArgumentException("--hard-hours must be between 1 and 168.");
-    }
-    if (hardHours * 60 < idleMinutes)
-    {
-        throw new ArgumentException("--hard-hours must be at least the idle timeout.");
-    }
-    return VaultSessionOptions.FromMinutes(idleMinutes, hardHours);
+        VaultPath = GetOption(arguments, "--vault"),
+        IdleMinutes = ParseOptionalInteger(
+            GetOption(arguments, "--idle-minutes"),
+            "--idle-minutes"),
+        HardHours = ParseOptionalInteger(
+            GetOption(arguments, "--hard-hours"),
+            "--hard-hours"),
+        AccessMode = accessMode
+    };
 }
 
-static int GetIntegerOption(
-    string[] arguments,
-    string option,
-    string environmentVariable,
-    int defaultValue)
+static McpAccessMode? ParseAccessMode(string? value)
 {
-    var value = GetOption(arguments, option)
-        ?? Environment.GetEnvironmentVariable(environmentVariable);
     if (string.IsNullOrWhiteSpace(value))
     {
-        return defaultValue;
+        return null;
+    }
+    return value.ToLowerInvariant() switch
+    {
+        "readonly" => McpAccessMode.ReadOnly,
+        "readwrite" => McpAccessMode.ReadWrite,
+        _ => throw new VaultException(
+            VaultErrorCode.InvalidInput,
+            "--access-mode must be readOnly or readWrite.")
+    };
+}
+
+static int? ParseOptionalInteger(
+    string? value,
+    string option)
+{
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        return null;
     }
     if (!int.TryParse(value, out var parsed))
     {
-        throw new ArgumentException($"{option} must be an integer.");
+        throw new VaultException(
+            VaultErrorCode.InvalidInput,
+            $"{option} must be an integer.");
     }
     return parsed;
 }
@@ -161,7 +192,9 @@ public sealed class VaultTools
     {
         if (string.IsNullOrWhiteSpace(_vaultPath))
         {
-            return Serialize(Error("not_configured", "Set --vault or CIPHER_VAULT_PATH."));
+            return Serialize(Error(
+                "not_configured",
+                "Set vaultPath in the CipherVault configuration, --vault, or CIPHER_VAULT_PATH."));
         }
 
         var status = await _vault.GetStatusAsync(cancellationToken);
@@ -463,7 +496,9 @@ public sealed class VaultTools
     {
         if (string.IsNullOrWhiteSpace(_vaultPath))
         {
-            return Serialize(Error("not_configured", "Set --vault or CIPHER_VAULT_PATH."));
+            return Serialize(Error(
+                "not_configured",
+                "Set vaultPath in the CipherVault configuration, --vault, or CIPHER_VAULT_PATH."));
         }
 
         await _authGate.WaitAsync(cancellationToken);

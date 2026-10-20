@@ -40,6 +40,31 @@ public sealed record VaultSessionOptions(
             TimeSpan.FromHours(hardHours),
             TimeSpan.FromSeconds(warningSeconds));
     }
+
+    internal void Validate()
+    {
+        if (IdleTimeout < TimeSpan.FromMinutes(1) ||
+            IdleTimeout > TimeSpan.FromHours(24))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(IdleTimeout),
+                "Idle timeout must be between 1 minute and 24 hours.");
+        }
+        if (HardLifetime < IdleTimeout ||
+            HardLifetime > TimeSpan.FromDays(7))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(HardLifetime),
+                "Hard lifetime must be at least the idle timeout and no more than 7 days.");
+        }
+        if (ExpiringWindow < TimeSpan.FromSeconds(10) ||
+            ExpiringWindow > IdleTimeout)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(ExpiringWindow),
+                "Expiring window must be between 10 seconds and the idle timeout.");
+        }
+    }
 }
 
 public sealed record VaultSessionStatus(
