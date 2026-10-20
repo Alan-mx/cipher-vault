@@ -119,6 +119,64 @@ public sealed class VaultServiceTests
     }
 
     [Fact]
+    public async Task CustomIdleAndHardLimitsAreAppliedToSession()
+    {
+        var options = VaultSessionOptions.FromMinutes(
+            idleMinutes: 30,
+            hardHours: 2);
+        await using var fixture = await VaultFixture.CreateAsync(options);
+
+        var unlocked = await fixture.Service.UnlockAsync(
+            fixture.VaultPath,
+            Password,
+            VaultCredentialType.Password);
+
+        Assert.Equal(
+            TimeSpan.FromMinutes(30),
+            unlocked.IdleExpiresAt - unlocked.LastUserActivityAt);
+        Assert.Equal(
+            TimeSpan.FromHours(2),
+            unlocked.HardExpiresAt - unlocked.StartedAt);
+    }
+
+    [Fact]
+    public async Task CustomIdleTimeoutControlsLockTiming()
+    {
+        var options = VaultSessionOptions.FromMinutes(
+            idleMinutes: 30,
+            hardHours: 2);
+        await using var fixture = await VaultFixture.CreateAsync(options);
+        await fixture.Service.UnlockAsync(
+            fixture.VaultPath,
+            Password,
+            VaultCredentialType.Password);
+
+        fixture.Activity.SystemIdleTime = TimeSpan.FromMinutes(16);
+        fixture.Time.Advance(TimeSpan.FromMinutes(16));
+        Assert.Equal(VaultSessionState.Unlocked, (await fixture.Service.GetStatusAsync()).State);
+
+        fixture.Activity.SystemIdleTime = TimeSpan.FromMinutes(31);
+        fixture.Time.Advance(TimeSpan.FromMinutes(15));
+        var locked = await fixture.Service.GetStatusAsync();
+        Assert.Equal(VaultSessionState.Locked, locked.State);
+        Assert.Equal("session-expired", locked.LockReason);
+    }
+
+    [Fact]
+    public void InvalidSessionOptionsAreRejected()
+    {
+        var activity = new ManualActivityProvider();
+        var time = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var options = new VaultSessionOptions(
+            TimeSpan.FromHours(8),
+            TimeSpan.FromHours(4),
+            TimeSpan.FromMinutes(2));
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new VaultService(activity, time, options));
+    }
+
+    [Fact]
     public async Task InitializeRefusesExistingDirectory()
     {
         await using var fixture = await VaultFixture.CreateAsync();
@@ -165,14 +223,15 @@ public sealed class VaultServiceTests
         public ManualTimeProvider Time { get; }
         public VaultService Service { get; }
 
-        public static async Task<VaultFixture> CreateAsync()
+        public static async Task<VaultFixture> CreateAsync(
+            VaultSessionOptions? sessionOptions = null)
         {
             var root = Path.Combine(Path.GetTempPath(), $"cipher-vault-tests-{Guid.NewGuid():N}");
             Directory.CreateDirectory(root);
             var vaultPath = Path.Combine(root, "vault");
             var activity = new ManualActivityProvider();
             var time = new ManualTimeProvider(DateTimeOffset.Parse("2026-10-19T12:00:00Z"));
-            var service = new VaultService(activity, time);
+            var service = new VaultService(activity, time, sessionOptions);
             var result = await service.InitializeAsync(vaultPath, Password);
             await service.ConfirmRecoveryKeyAsync(
                 vaultPath,

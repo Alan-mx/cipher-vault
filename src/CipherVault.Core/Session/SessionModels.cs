@@ -21,6 +21,27 @@ public sealed record VaultInitializeResult(
     string RecoveryKey,
     DateTimeOffset CreatedAt);
 
+public sealed record VaultSessionOptions(
+    TimeSpan IdleTimeout,
+    TimeSpan HardLifetime,
+    TimeSpan ExpiringWindow)
+{
+    public static VaultSessionOptions Default { get; } = new(
+        TimeSpan.FromMinutes(15),
+        TimeSpan.FromHours(4),
+        TimeSpan.FromMinutes(2));
+
+    public static VaultSessionOptions FromMinutes(int idleMinutes, int hardHours)
+    {
+        var idleTimeout = TimeSpan.FromMinutes(idleMinutes);
+        var warningSeconds = Math.Clamp(idleTimeout.TotalSeconds / 4, 10, 120);
+        return new VaultSessionOptions(
+            idleTimeout,
+            TimeSpan.FromHours(hardHours),
+            TimeSpan.FromSeconds(warningSeconds));
+    }
+}
+
 public sealed record VaultSessionStatus(
     VaultSessionState State,
     Guid? SessionId,

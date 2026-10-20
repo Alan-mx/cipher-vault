@@ -606,6 +606,10 @@ public sealed class DocumentStoreTests
         var targetPath = Path.Combine(fixture.RootPath, "restored");
 
         var backup = await fixture.Service.CreateBackupAsync(backupPath);
+        var sourceAudit = await fixture.Service.GetAuditPageAsync(null, 100);
+        var backupEvent = Assert.Single(
+            sourceAudit.Items,
+            item => item.Action == "backup_create");
         var restored = await fixture.Service.RestoreBackupAsync(
             backupPath,
             targetPath,
@@ -621,10 +625,24 @@ public sealed class DocumentStoreTests
             created.DocumentId,
             0,
             100);
+        var restoredAudit = await restoredService.GetAuditPageAsync(null, 100);
+        var restoreEvent = Assert.Single(
+            restoredAudit.Items,
+            item => item.Action == "backup_restore");
 
         Assert.True(File.Exists(backup.BackupPath));
         Assert.Equal(created.DocumentId, read.DocumentId);
         Assert.Contains("backup marker", read.Content, StringComparison.Ordinal);
+        Assert.Equal("success", backupEvent.Result);
+        Assert.DoesNotContain(
+            backupPath,
+            backupEvent.DetailsJson,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("success", restoreEvent.Result);
+        Assert.DoesNotContain(
+            targetPath,
+            restoreEvent.DetailsJson,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -725,6 +743,15 @@ public sealed class DocumentStoreTests
         Assert.True(File.Exists(Path.Combine(destination, "vault-export-checksums.txt")));
         Assert.True(File.Exists(Path.Combine(destination, "导出", "导出文档.md")));
         Assert.True(result.ExportedDocuments > 0);
+        var audit = await fixture.Service.GetAuditPageAsync(null, 100);
+        var exportEvent = Assert.Single(
+            audit.Items,
+            item => item.Action == "export_snapshot");
+        Assert.Equal("success", exportEvent.Result);
+        Assert.DoesNotContain(
+            destination,
+            exportEvent.DetailsJson,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

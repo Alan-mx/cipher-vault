@@ -87,6 +87,7 @@
                 <Grid Margin="12">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                         <RowDefinition Height="220" />
                     </Grid.RowDefinitions>
@@ -95,12 +96,17 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBox x:Name="SearchTextBox" Grid.Column="0" MinHeight="30" Padding="8,4" />
                         <Button Grid.Column="1" Content="搜索" MinWidth="80" Margin="8,0,0,0" Click="SearchButton_Click" />
                         <Button Grid.Column="2" Content="刷新" MinWidth="80" Margin="8,0,0,0" Click="RefreshCatalogButton_Click" />
+                        <Button x:Name="LoadMoreCatalogButton" Grid.Column="3" Content="加载更多" MinWidth="100"
+                                Margin="8,0,0,0" IsEnabled="False" Click="LoadMoreCatalogButton_Click" />
                     </Grid>
-                    <DataGrid x:Name="CatalogGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True"
+                    <TextBlock x:Name="CatalogSummaryText" Grid.Row="1" Foreground="#667085"
+                               Margin="0,0,0,8" Text="尚未加载资料库。" />
+                    <DataGrid x:Name="CatalogGrid" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True"
                               SelectionMode="Single" SelectionChanged="CatalogGrid_SelectionChanged">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="标题" Binding="{Binding Title}" Width="2*" />
@@ -108,7 +114,7 @@
                             <DataGridTextColumn Header="版本" Binding="{Binding Revision}" Width="90" />
                         </DataGrid.Columns>
                     </DataGrid>
-                    <TextBox x:Name="DocumentViewer" Grid.Row="2" IsReadOnly="True" AcceptsReturn="True"
+                    <TextBox x:Name="DocumentViewer" Grid.Row="3" IsReadOnly="True" AcceptsReturn="True"
                              TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
                              Margin="0,10,0,0" Padding="10" FontFamily="Consolas" />
                 </Grid>
@@ -124,6 +130,10 @@
                         <Button Content="刷新" MinWidth="80" Click="RefreshTrashButton_Click" />
                         <Button Content="恢复" MinWidth="80" Margin="8,0,0,0" Click="RestoreTrashButton_Click" />
                         <Button Content="永久删除" MinWidth="120" Margin="8,0,0,0" Click="PurgeButton_Click" />
+                        <Button x:Name="LoadMoreTrashButton" Content="加载更多" MinWidth="100"
+                                Margin="8,0,0,0" IsEnabled="False" Click="LoadMoreTrashButton_Click" />
+                        <TextBlock x:Name="TrashSummaryText" Foreground="#667085" VerticalAlignment="Center"
+                                   Margin="12,0,0,0" Text="尚未加载回收站。" />
                     </StackPanel>
                     <DataGrid x:Name="TrashGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single">
                         <DataGrid.Columns>

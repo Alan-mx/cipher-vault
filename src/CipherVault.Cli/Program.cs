@@ -28,7 +28,20 @@ if (command != "restore" && string.IsNullOrWhiteSpace(vaultPath))
     return 2;
 }
 
-await using var service = new VaultService(new CliActivityProvider());
+VaultSessionOptions sessionOptions;
+try
+{
+    sessionOptions = CreateSessionOptions(args);
+}
+catch (ArgumentException exception)
+{
+    Console.Error.WriteLine(exception.Message);
+    return 2;
+}
+
+await using var service = new VaultService(
+    new CliActivityProvider(),
+    sessionOptions: sessionOptions);
 try
 {
     return command switch
@@ -409,6 +422,52 @@ static string NormalizeRecoveryKey(string value)
             .ToArray());
 }
 
+static VaultSessionOptions CreateSessionOptions(string[] arguments)
+{
+    var idleMinutes = GetIntegerOption(
+        arguments,
+        "--idle-minutes",
+        "CIPHER_VAULT_IDLE_MINUTES",
+        15);
+    var hardHours = GetIntegerOption(
+        arguments,
+        "--hard-hours",
+        "CIPHER_VAULT_HARD_HOURS",
+        4);
+    if (idleMinutes is < 1 or > 1_440)
+    {
+        throw new ArgumentException("--idle-minutes must be between 1 and 1440.");
+    }
+    if (hardHours is < 1 or > 168)
+    {
+        throw new ArgumentException("--hard-hours must be between 1 and 168.");
+    }
+    if (hardHours * 60 < idleMinutes)
+    {
+        throw new ArgumentException("--hard-hours must be at least the idle timeout.");
+    }
+    return VaultSessionOptions.FromMinutes(idleMinutes, hardHours);
+}
+
+static int GetIntegerOption(
+    string[] arguments,
+    string option,
+    string environmentVariable,
+    int defaultValue)
+{
+    var value = GetOption(arguments, option)
+        ?? Environment.GetEnvironmentVariable(environmentVariable);
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        return defaultValue;
+    }
+    if (!int.TryParse(value, out var parsed))
+    {
+        throw new ArgumentException($"{option} must be an integer.");
+    }
+    return parsed;
+}
+
 static void PrintJson<T>(T value, JsonSerializerOptions options)
 {
     Console.WriteLine(JsonSerializer.Serialize(value, options));
@@ -440,6 +499,10 @@ static void PrintHelp()
           revisions           --vault <directory> --id <document-id>
           restore-revision    --vault <directory> --id <document-id> --revision-id <id> --expected <revision>
           rebuild-index       --vault <directory>
+
+        Session options:
+          --idle-minutes <1-1440>  Defaults to 15
+          --hard-hours <1-168>     Defaults to 4 and must cover the idle timeout
         """);
 }
 

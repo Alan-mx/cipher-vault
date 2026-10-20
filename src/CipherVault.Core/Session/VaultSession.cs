@@ -5,9 +5,6 @@ namespace CipherVault.Core.Session;
 
 internal sealed class VaultSession : IAsyncDisposable
 {
-    public static readonly TimeSpan IdleTimeout = TimeSpan.FromMinutes(15);
-    public static readonly TimeSpan HardLifetime = TimeSpan.FromHours(4);
-
     public Guid SessionId { get; } = Guid.NewGuid();
     public required string VaultPath { get; init; }
     public required Guid VaultId { get; init; }
@@ -18,6 +15,8 @@ internal sealed class VaultSession : IAsyncDisposable
     public required DateTimeOffset StartedAt { get; init; }
     public required DateTimeOffset LastUserActivityAt { get; set; }
     public required DateTimeOffset HardExpiresAt { get; init; }
+    public required TimeSpan IdleTimeout { get; init; }
+    public required TimeSpan ExpiringWindow { get; init; }
     public required bool RecoveryVerified { get; set; }
     public VaultSessionState State { get; set; } = VaultSessionState.Unlocked;
 

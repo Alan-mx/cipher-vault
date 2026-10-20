@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using CipherVault.Core.Crypto;
+using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
 using CipherVault.Core.Security;
 using CipherVault.Core.Session;
@@ -27,6 +28,7 @@ internal static class BackupService
     public static async Task<VaultBackupResult> CreateAsync(
         VaultSession session,
         string backupPath,
+        VaultActorKind actor,
         CancellationToken cancellationToken)
     {
         var fullBackupPath = Path.GetFullPath(backupPath);
@@ -97,11 +99,26 @@ internal static class BackupService
             VaultFileSecurity.ProtectFile(temporaryArchive);
             File.Move(temporaryArchive, fullBackupPath);
             VaultFileSecurity.ProtectFile(fullBackupPath);
-            return new VaultBackupResult(
+            var result = new VaultBackupResult(
                 fullBackupPath,
                 session.VaultId,
                 createdAt,
                 new FileInfo(fullBackupPath).Length);
+            await AuditWriter.AppendAsync(
+                session.Connection,
+                actor,
+                session.SessionId,
+                "backup_create",
+                null,
+                "success",
+                null,
+                JsonSerializer.Serialize(new
+                {
+                    result.VaultId,
+                    result.BackupBytes
+                }),
+                cancellationToken).ConfigureAwait(false);
+            return result;
         }
         finally
         {
@@ -121,6 +138,7 @@ internal static class BackupService
         string targetPath,
         string credential,
         VaultCredentialType credentialType,
+        VaultActorKind actor,
         CancellationToken cancellationToken)
     {
         var fullBackupPath = Path.GetFullPath(backupPath);
@@ -182,16 +200,35 @@ internal static class BackupService
                     temporaryDirectory,
                     material,
                     cancellationToken).ConfigureAwait(false);
+                Directory.Move(temporaryDirectory, fullTargetPath);
+                VaultFileSecurity.ProtectDirectory(fullTargetPath);
+                await using (var restoredConnection = await SqlCipherVaultStore.OpenAsync(
+                    fullTargetPath,
+                    material,
+                    cancellationToken).ConfigureAwait(false))
+                {
+                    await AuditWriter.AppendAsync(
+                        restoredConnection,
+                        actor,
+                        null,
+                        "backup_restore",
+                        null,
+                        "success",
+                        null,
+                        JsonSerializer.Serialize(new
+                        {
+                            manifest.VaultId,
+                            restoredFiles = 3
+                        }),
+                        cancellationToken).ConfigureAwait(false);
+                }
+                return new VaultRestoreBackupResult(fullTargetPath, manifest.VaultId);
             }
             finally
             {
                 CryptographicOperations.ZeroMemory(material.MasterKey);
                 CryptographicOperations.ZeroMemory(material.DbKey);
             }
-
-            Directory.Move(temporaryDirectory, fullTargetPath);
-            VaultFileSecurity.ProtectDirectory(fullTargetPath);
-            return new VaultRestoreBackupResult(fullTargetPath, manifest.VaultId);
         }
         catch (InvalidDataException exception)
         {

@@ -358,61 +358,63 @@ internal static class ImportExportService
         try
         {
             VaultFileSecurity.ProtectDirectory(temporaryDirectory);
-            using var command = connection.CreateCommand();
-            command.CommandText =
-                """
-                SELECT document_id, title, source_path, format, content,
-                       headings_json, tags_json, payload_hmac, revision
-                FROM documents
-                WHERE deleted_at_ms IS NULL
-                ORDER BY source_path_norm, document_id;
-                """;
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken)
-                .ConfigureAwait(false);
-            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                var id = reader.GetString(0);
-                var title = reader.GetString(1);
-                var sourcePath = reader.GetString(2);
-                var format = reader.GetString(3);
-                var content = reader.GetString(4);
-                var headings = reader.GetString(5);
-                var tags = reader.GetString(6);
-                var hmac = (byte[])reader["payload_hmac"];
-                var revision = reader.GetInt32(8);
-                if (!DocumentHmac.Verify(
-                    integrityKey, hmac, id, revision, title, sourcePath, format,
-                    headings, tags, content))
+                using var command = connection.CreateCommand();
+                command.CommandText =
+                    """
+                    SELECT document_id, title, source_path, format, content,
+                           headings_json, tags_json, payload_hmac, revision
+                    FROM documents
+                    WHERE deleted_at_ms IS NULL
+                    ORDER BY source_path_norm, document_id;
+                    """;
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
                 {
-                    throw new VaultException(
-                        VaultErrorCode.CorruptVault,
-                        "Document integrity check failed during export.");
-                }
+                    var id = reader.GetString(0);
+                    var title = reader.GetString(1);
+                    var sourcePath = reader.GetString(2);
+                    var format = reader.GetString(3);
+                    var content = reader.GetString(4);
+                    var headings = reader.GetString(5);
+                    var tags = reader.GetString(6);
+                    var hmac = (byte[])reader["payload_hmac"];
+                    var revision = reader.GetInt32(8);
+                    if (!DocumentHmac.Verify(
+                        integrityKey, hmac, id, revision, title, sourcePath, format,
+                        headings, tags, content))
+                    {
+                        throw new VaultException(
+                            VaultErrorCode.CorruptVault,
+                            "Document integrity check failed during export.");
+                    }
 
-                var (safePath, _) = VirtualPathPolicy.NormalizeDocumentPath(sourcePath, format);
-                var outputPath = Path.Combine(
-                    temporaryDirectory,
-                    safePath.Replace('/', Path.DirectorySeparatorChar));
-                Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
-                await using (var output = new FileStream(
-                    outputPath,
-                    FileMode.CreateNew,
-                    FileAccess.Write,
-                    FileShare.None))
-                await using (var writer = new StreamWriter(output, new UTF8Encoding(false)))
-                {
-                    await writer.WriteAsync(content.AsMemory(), cancellationToken)
-                        .ConfigureAwait(false);
-                    await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
-                    output.Flush(flushToDisk: true);
+                    var (safePath, _) = VirtualPathPolicy.NormalizeDocumentPath(sourcePath, format);
+                    var outputPath = Path.Combine(
+                        temporaryDirectory,
+                        safePath.Replace('/', Path.DirectorySeparatorChar));
+                    Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+                    await using (var output = new FileStream(
+                        outputPath,
+                        FileMode.CreateNew,
+                        FileAccess.Write,
+                        FileShare.None))
+                    await using (var writer = new StreamWriter(output, new UTF8Encoding(false)))
+                    {
+                        await writer.WriteAsync(content.AsMemory(), cancellationToken)
+                            .ConfigureAwait(false);
+                        await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+                        output.Flush(flushToDisk: true);
+                    }
+                    var bytes = new FileInfo(outputPath).Length;
+                    exported.Add(new ExportedFile(
+                        safePath,
+                        bytes,
+                        Convert.ToHexString(
+                            await ComputeSha256Async(outputPath, cancellationToken)
+                                .ConfigureAwait(false))));
                 }
-                var bytes = new FileInfo(outputPath).Length;
-                exported.Add(new ExportedFile(
-                    safePath,
-                    bytes,
-                    Convert.ToHexString(
-                        await ComputeSha256Async(outputPath, cancellationToken)
-                            .ConfigureAwait(false))));
             }
 
             var manifest = new ExportManifest(
@@ -431,6 +433,20 @@ internal static class ImportExportService
                 exported.Select(item => $"{item.Sha256}  {item.RelativePath}"),
                 cancellationToken).ConfigureAwait(false);
             Directory.Move(temporaryDirectory, fullDestination);
+            await AuditWriter.AppendAsync(
+                connection,
+                actor,
+                sessionId,
+                "export_snapshot",
+                null,
+                "success",
+                null,
+                JsonSerializer.Serialize(new
+                {
+                    exportedDocuments = exported.Count,
+                    totalBytes = exported.Sum(item => item.SizeBytes)
+                }),
+                cancellationToken).ConfigureAwait(false);
             return new VaultExportResult(
                 fullDestination,
                 exported.Count,

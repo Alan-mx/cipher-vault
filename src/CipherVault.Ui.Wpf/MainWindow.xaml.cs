@@ -26,12 +26,33 @@ public partial class MainWindow : Window
     private readonly VaultService _service;
     private readonly DispatcherTimer _statusTimer;
     private Guid? _importJobId;
+    private string? _catalogCursor;
+    private string? _searchCursor;
+    private string? _trashCursor;
+    private string? _activeSearchQuery;
+    private bool _searchMode;
     private bool _busy;
 
     public MainWindow()
     {
         InitializeComponent();
-        _service = new VaultService(new WindowsSystemActivityProvider());
+        VaultSessionOptions sessionOptions;
+        try
+        {
+            sessionOptions = CreateSessionOptions(Environment.GetCommandLineArgs());
+        }
+        catch (ArgumentException exception)
+        {
+            MessageBox.Show(
+                exception.Message,
+                "CipherVault 加密资料库",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            sessionOptions = VaultSessionOptions.Default;
+        }
+        _service = new VaultService(
+            new WindowsSystemActivityProvider(),
+            sessionOptions: sessionOptions);
         _statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _statusTimer.Tick += StatusTimer_Tick;
         Loaded += MainWindow_Loaded;
@@ -118,9 +139,7 @@ public partial class MainWindow : Window
         {
             await _service.LockAsync();
             await RefreshStatusAsync();
-            CatalogGrid.ItemsSource = null;
-            TrashGrid.ItemsSource = null;
-            DocumentViewer.Clear();
+            ClearSensitiveUi();
         });
     }
 
@@ -193,9 +212,56 @@ public partial class MainWindow : Window
         await RunBusyAsync(async () =>
         {
             var page = await _service.SearchNotesAsync(query, null, null, 20);
-            CatalogGrid.ItemsSource = page.Hits;
-            MaintenanceOutput.Text =
-                $"匹配 {page.Coverage.MatchedDocuments} 篇，扫描 {page.Coverage.ScannedDocuments} 篇";
+            _searchMode = true;
+            _activeSearchQuery = query;
+            _catalogCursor = null;
+            _searchCursor = page.NextCursor;
+            SetCatalogItems(
+                page.Hits.Cast<object>().ToList(),
+                $"匹配 {page.Coverage.MatchedDocuments} 篇，扫描 {page.Coverage.ScannedDocuments} 篇",
+                page.NextCursor);
+        });
+    }
+
+    private async void LoadMoreCatalogButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy)
+        {
+            return;
+        }
+        if (_searchMode)
+        {
+            if (_searchCursor is null || _activeSearchQuery is null)
+            {
+                return;
+            }
+            await RunBusyAsync(async () =>
+            {
+                var page = await _service.SearchNotesAsync(
+                    _activeSearchQuery,
+                    null,
+                    _searchCursor,
+                    20);
+                _searchCursor = page.NextCursor;
+                AppendCatalogItems(
+                    page.Hits.Cast<object>().ToList(),
+                    $"匹配 {page.Coverage.MatchedDocuments} 篇，扫描 {page.Coverage.ScannedDocuments} 篇",
+                    page.NextCursor);
+            });
+            return;
+        }
+        if (_catalogCursor is null)
+        {
+            return;
+        }
+        await RunBusyAsync(async () =>
+        {
+            var page = await _service.ListCatalogAsync(null, _catalogCursor, 100);
+            _catalogCursor = page.NextCursor;
+            AppendCatalogItems(
+                page.Items.Cast<object>().ToList(),
+                null,
+                page.NextCursor);
         });
     }
 
@@ -227,6 +293,20 @@ public partial class MainWindow : Window
     private async void RefreshTrashButton_Click(object sender, RoutedEventArgs e)
     {
         await RefreshTrashAsync();
+    }
+
+    private async void LoadMoreTrashButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy || _trashCursor is null)
+        {
+            return;
+        }
+        await RunBusyAsync(async () =>
+        {
+            var page = await _service.ListTrashAsync(_trashCursor, 100);
+            _trashCursor = page.NextCursor;
+            AppendTrashItems(page.Items);
+        });
     }
 
     private async void RestoreTrashButton_Click(object sender, RoutedEventArgs e)
@@ -527,17 +607,21 @@ public partial class MainWindow : Window
             if (status.State == VaultSessionState.Locked)
             {
                 SessionDetailText.Text = "资料库已锁定。请输入上方密码并点击“解锁”。";
+                ClearSensitiveUi();
             }
             else if (!status.RecoveryVerified)
             {
                 StatusText.Text = "恢复密钥未确认";
                 SessionDetailText.Text =
                     "请先确认恢复密钥，或使用当前密码重新轮换恢复密钥，然后才能访问内容。";
+                ClearSensitiveUi();
             }
             else
             {
+                var idleRemaining = FormatRemaining(status.IdleExpiresAt, DateTimeOffset.UtcNow);
+                var hardRemaining = FormatRemaining(status.HardExpiresAt, DateTimeOffset.UtcNow);
                 SessionDetailText.Text =
-                    $"会话 {status.SessionId} | 空闲锁定时间 {status.IdleExpiresAt:u} | 最迟锁定时间 {status.HardExpiresAt:u}";
+                    $"会话 {status.SessionId} | 空闲锁定倒计时 {idleRemaining} | 最迟锁定倒计时 {hardRemaining}";
             }
         }
         catch (Exception exception)
@@ -551,11 +635,18 @@ public partial class MainWindow : Window
         var status = await _service.GetStatusAsync();
         if (status.State == VaultSessionState.Locked || !status.RecoveryVerified)
         {
-            CatalogGrid.ItemsSource = null;
+            ClearSensitiveUi();
             return;
         }
         var page = await _service.ListCatalogAsync(null, null, 100);
-        CatalogGrid.ItemsSource = page.Items;
+        _searchMode = false;
+        _activeSearchQuery = null;
+        _searchCursor = null;
+        _catalogCursor = page.NextCursor;
+        SetCatalogItems(
+            page.Items.Cast<object>().ToList(),
+            null,
+            page.NextCursor);
     }
 
     private async Task RefreshTrashAsync()
@@ -563,11 +654,101 @@ public partial class MainWindow : Window
         var status = await _service.GetStatusAsync();
         if (status.State == VaultSessionState.Locked || !status.RecoveryVerified)
         {
-            TrashGrid.ItemsSource = null;
+            ClearSensitiveUi();
             return;
         }
         var page = await _service.ListTrashAsync(null, 100);
-        TrashGrid.ItemsSource = page.Items;
+        _trashCursor = page.NextCursor;
+        SetTrashItems(page.Items.Cast<object>().ToList(), page.NextCursor);
+    }
+
+    private void SetCatalogItems(
+        IReadOnlyList<object> items,
+        string? detail,
+        string? nextCursor)
+    {
+        CatalogGrid.ItemsSource = items;
+        UpdateCatalogSummary(items.Count, detail, nextCursor is not null);
+    }
+
+    private void AppendCatalogItems(
+        IReadOnlyList<object> items,
+        string? detail,
+        string? nextCursor)
+    {
+        var combined = CatalogGrid.ItemsSource is IEnumerable<object> existing
+            ? existing.ToList()
+            : [];
+        combined.AddRange(items);
+        CatalogGrid.ItemsSource = combined;
+        UpdateCatalogSummary(combined.Count, detail, nextCursor is not null);
+    }
+
+    private void UpdateCatalogSummary(int count, string? detail, bool hasMore)
+    {
+        var prefix = detail is null ? string.Empty : $"{detail}；";
+        CatalogSummaryText.Text =
+            $"{prefix}当前显示 {count} 篇，{(hasMore ? "可继续加载" : "已全部加载")}。";
+        LoadMoreCatalogButton.IsEnabled = hasMore;
+    }
+
+    private void SetTrashItems(IReadOnlyList<object> items, string? nextCursor)
+    {
+        TrashGrid.ItemsSource = items;
+        UpdateTrashSummary(items.Count, nextCursor is not null);
+    }
+
+    private void AppendTrashItems(IEnumerable<object> items)
+    {
+        var combined = TrashGrid.ItemsSource is IEnumerable<object> existing
+            ? existing.ToList()
+            : [];
+        combined.AddRange(items);
+        TrashGrid.ItemsSource = combined;
+        UpdateTrashSummary(combined.Count, _trashCursor is not null);
+    }
+
+    private void UpdateTrashSummary(int count, bool hasMore)
+    {
+        TrashSummaryText.Text =
+            $"当前显示 {count} 篇，{(hasMore ? "可继续加载" : "已全部加载")}。";
+        LoadMoreTrashButton.IsEnabled = hasMore;
+    }
+
+    private void ClearSensitiveUi()
+    {
+        _catalogCursor = null;
+        _searchCursor = null;
+        _trashCursor = null;
+        _activeSearchQuery = null;
+        _searchMode = false;
+        _importJobId = null;
+        CatalogGrid.ItemsSource = null;
+        TrashGrid.ItemsSource = null;
+        DocumentViewer.Clear();
+        MaintenanceOutput.Clear();
+        CatalogSummaryText.Text = "资料库已锁定。";
+        TrashSummaryText.Text = "资料库已锁定。";
+        LoadMoreCatalogButton.IsEnabled = false;
+        LoadMoreTrashButton.IsEnabled = false;
+    }
+
+    private static string FormatRemaining(DateTimeOffset? expiresAt, DateTimeOffset now)
+    {
+        if (expiresAt is null)
+        {
+            return "未知";
+        }
+        var remaining = expiresAt.Value - now;
+        if (remaining <= TimeSpan.Zero)
+        {
+            return "已到期";
+        }
+        if (remaining.TotalHours >= 1)
+        {
+            return $"{(int)remaining.TotalHours} 小时 {remaining.Minutes} 分";
+        }
+        return $"{remaining.Minutes} 分 {remaining.Seconds} 秒";
     }
 
     private async Task RunBusyAsync(Func<Task> operation)
@@ -621,5 +802,62 @@ public partial class MainWindow : Window
             VaultSessionState.Locking => "锁定中",
             _ => "未知状态"
         };
+    }
+
+    private static VaultSessionOptions CreateSessionOptions(string[] arguments)
+    {
+        var idleMinutes = GetIntegerOption(
+            arguments,
+            "--idle-minutes",
+            "CIPHER_VAULT_IDLE_MINUTES",
+            15);
+        var hardHours = GetIntegerOption(
+            arguments,
+            "--hard-hours",
+            "CIPHER_VAULT_HARD_HOURS",
+            4);
+        if (idleMinutes is < 1 or > 1_440)
+        {
+            throw new ArgumentException("--idle-minutes 必须在 1 到 1440 之间。");
+        }
+        if (hardHours is < 1 or > 168)
+        {
+            throw new ArgumentException("--hard-hours 必须在 1 到 168 之间。");
+        }
+        if (hardHours * 60 < idleMinutes)
+        {
+            throw new ArgumentException("--hard-hours 不能小于空闲锁定时长。");
+        }
+        return VaultSessionOptions.FromMinutes(idleMinutes, hardHours);
+    }
+
+    private static int GetIntegerOption(
+        string[] arguments,
+        string option,
+        string environmentVariable,
+        int defaultValue)
+    {
+        var optionIndex = Array.FindIndex(
+            arguments,
+            argument => string.Equals(argument, option, StringComparison.OrdinalIgnoreCase));
+        if (optionIndex < 0)
+        {
+            var environmentValue = Environment.GetEnvironmentVariable(environmentVariable);
+            if (string.IsNullOrWhiteSpace(environmentValue))
+            {
+                return defaultValue;
+            }
+            if (!int.TryParse(environmentValue, out var environmentInteger))
+            {
+                throw new ArgumentException($"{option} 必须是整数。");
+            }
+            return environmentInteger;
+        }
+        if (optionIndex + 1 >= arguments.Length ||
+            !int.TryParse(arguments[optionIndex + 1], out var value))
+        {
+            throw new ArgumentException($"{option} 必须是整数。");
+        }
+        return value;
     }
 }

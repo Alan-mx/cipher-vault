@@ -7,6 +7,33 @@ internal static class AuditWriter
 {
     public static async Task AppendAsync(
         SqliteConnection connection,
+        VaultActorKind actor,
+        Guid? sessionId,
+        string action,
+        Guid? documentId,
+        string result,
+        int? bytesReturned,
+        string detailsJson,
+        CancellationToken cancellationToken)
+    {
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        await AppendAsync(
+            connection,
+            (SqliteTransaction)transaction,
+            actor,
+            sessionId,
+            action,
+            documentId,
+            result,
+            bytesReturned,
+            detailsJson,
+            cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public static async Task AppendAsync(
+        SqliteConnection connection,
         SqliteTransaction transaction,
         VaultActorKind actor,
         Guid? sessionId,

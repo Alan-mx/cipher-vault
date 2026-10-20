@@ -13,12 +13,19 @@ Windows 11 local encrypted Markdown/TXT vault with a STDIO MCP interface.
   update, append and delete tools.
 - Tool calls do not extend the session.
 - Sessions lock after 15 minutes without Windows keyboard/mouse input, after 4 hours, on screen lock, or on manual lock.
+- Idle and hard session limits can be configured with `--idle-minutes` and
+  `--hard-hours`, or with `CIPHER_VAULT_IDLE_MINUTES` and
+  `CIPHER_VAULT_HARD_HOURS`. The idle limit must be between 1 minute and 24 hours;
+  the hard limit must cover it and must not exceed 7 days.
 - Vault files and directories use a protected Windows ACL.
 - Plaintext export is an explicit user operation outside the Vault protection boundary.
 - Export staging directories use a protected ACL and stale staging directories are
   removed when a matching export starts.
 - Password KDF parameters and backup archive expansion are bounded before expensive
   or memory-allocating work starts.
+- Backup creation, backup restoration and plaintext export write encrypted audit
+  events containing operation type, result and aggregate counts without recording
+  destination filesystem paths.
 - Windows administrators, kernel malware and active process-memory attacks are outside scope.
 
 ## MCP trust boundary
@@ -31,6 +38,18 @@ document bodies, search snippets, titles and tags.
 
 Use `--read-only` unless the AI client needs to modify the Vault, and keep the
 client's per-tool approval policy enabled for write and delete operations.
+
+Long-running AI workflows can use a separate MCP process with a longer idle
+timeout while keeping the hard limit bounded:
+
+```toml
+args = [
+  '--vault', 'D:\CipherVault',
+  '--read-only',
+  '--idle-minutes', '60',
+  '--hard-hours', '8',
+]
+```
 
 ## Projects
 
@@ -66,3 +85,10 @@ default_tools_approval_mode = "prompt"
 ```
 
 Outputs are written under `artifacts\publish`.
+
+## Desktop behavior
+
+The browsing view supports cursor-based "load more" pagination for the catalog,
+search results and recycle bin. Session countdowns refresh once per second, and
+decrypted lists, document text and active import state are cleared immediately
+when the session locks or the workstation locks.

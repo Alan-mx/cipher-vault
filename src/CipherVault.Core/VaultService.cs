@@ -178,6 +178,7 @@ public sealed class VaultService : IVaultService
     private const string PendingKeyFileName = "vault.keys.pending";
     private readonly ISystemActivityProvider _activityProvider;
     private readonly TimeProvider _timeProvider;
+    private readonly VaultSessionOptions _sessionOptions;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private VaultSession? _session;
     private CancellationTokenSource? _monitorCts;
@@ -186,10 +187,13 @@ public sealed class VaultService : IVaultService
 
     public VaultService(
         ISystemActivityProvider activityProvider,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        VaultSessionOptions? sessionOptions = null)
     {
         _activityProvider = activityProvider;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _sessionOptions = sessionOptions ?? VaultSessionOptions.Default;
+        ValidateSessionOptions(_sessionOptions);
         SqlCipherVaultStore.InitializeRuntime();
     }
 
@@ -353,7 +357,9 @@ public sealed class VaultService : IVaultService
                         IntegrityKey = integrityKey,
                         StartedAt = now,
                         LastUserActivityAt = now,
-                        HardExpiresAt = now + VaultSession.HardLifetime,
+                        HardExpiresAt = now + _sessionOptions.HardLifetime,
+                        IdleTimeout = _sessionOptions.IdleTimeout,
+                        ExpiringWindow = _sessionOptions.ExpiringWindow,
                         RecoveryVerified = recoveryVerified
                     };
                     await DocumentStore.CleanupExpiredAsync(
@@ -838,6 +844,7 @@ public sealed class VaultService : IVaultService
             var result = await BackupService.CreateAsync(
                 session,
                 fullPath,
+                actor,
                 cancellationToken).ConfigureAwait(false);
             await EnsureSessionStillValidAsync(session, cancellationToken).ConfigureAwait(false);
             return result;
@@ -867,6 +874,7 @@ public sealed class VaultService : IVaultService
                 targetPath,
                 credential,
                 credentialType,
+                actor,
                 cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -1372,7 +1380,7 @@ public sealed class VaultService : IVaultService
 
         var now = _timeProvider.GetUtcNow();
         return now >= session.HardExpiresAt ||
-            now - session.LastUserActivityAt >= VaultSession.IdleTimeout;
+            now - session.LastUserActivityAt >= session.IdleTimeout;
     }
 
     private async Task<VaultSession> RequireSessionAsync(CancellationToken cancellationToken)
@@ -1412,10 +1420,10 @@ public sealed class VaultService : IVaultService
     private void SetExpiringState(VaultSession session)
     {
         var now = _timeProvider.GetUtcNow();
-        var idleRemaining = session.LastUserActivityAt + VaultSession.IdleTimeout - now;
+        var idleRemaining = session.LastUserActivityAt + session.IdleTimeout - now;
         var hardRemaining = session.HardExpiresAt - now;
-        session.State = idleRemaining <= TimeSpan.FromMinutes(2) ||
-            hardRemaining <= TimeSpan.FromMinutes(2)
+        session.State = idleRemaining <= session.ExpiringWindow ||
+            hardRemaining <= session.ExpiringWindow
             ? VaultSessionState.Expiring
             : VaultSessionState.Unlocked;
     }
@@ -1427,7 +1435,7 @@ public sealed class VaultService : IVaultService
             session.SessionId,
             session.StartedAt,
             session.LastUserActivityAt,
-            session.LastUserActivityAt + VaultSession.IdleTimeout,
+            session.LastUserActivityAt + session.IdleTimeout,
             session.HardExpiresAt,
             lockReason,
             session.RecoveryVerified);
@@ -1444,6 +1452,31 @@ public sealed class VaultService : IVaultService
             null,
             reason,
             false);
+    }
+
+    private static void ValidateSessionOptions(VaultSessionOptions options)
+    {
+        if (options.IdleTimeout < TimeSpan.FromMinutes(1) ||
+            options.IdleTimeout > TimeSpan.FromHours(24))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                "Idle timeout must be between 1 minute and 24 hours.");
+        }
+        if (options.HardLifetime < options.IdleTimeout ||
+            options.HardLifetime > TimeSpan.FromDays(7))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                "Hard lifetime must be at least the idle timeout and no more than 7 days.");
+        }
+        if (options.ExpiringWindow < TimeSpan.FromSeconds(10) ||
+            options.ExpiringWindow > options.IdleTimeout)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                "Expiring window must be between 10 seconds and the idle timeout.");
+        }
     }
 
     private static string NormalizeVaultPath(string vaultPath)

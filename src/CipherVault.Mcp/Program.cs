@@ -18,7 +18,21 @@ var readOnly = HasFlag(args, "--read-only") ||
         Environment.GetEnvironmentVariable("CIPHER_VAULT_READ_ONLY"),
         "1",
         StringComparison.OrdinalIgnoreCase);
-await using var vault = new VaultService(new WindowsSystemActivityProvider());
+VaultSessionOptions sessionOptions;
+try
+{
+    sessionOptions = CreateSessionOptions(args);
+}
+catch (ArgumentException exception)
+{
+    Console.Error.WriteLine(exception.Message);
+    Environment.ExitCode = 1;
+    return;
+}
+
+await using var vault = new VaultService(
+    new WindowsSystemActivityProvider(),
+    sessionOptions: sessionOptions);
 var tools = new VaultTools(vault, vaultPath, new WindowsCredentialPrompt(), readOnly);
 
 var builder = Host.CreateApplicationBuilder(Array.Empty<string>());
@@ -46,6 +60,52 @@ static bool HasFlag(string[] arguments, string flag)
 {
     return arguments.Any(argument =>
         string.Equals(argument, flag, StringComparison.OrdinalIgnoreCase));
+}
+
+static VaultSessionOptions CreateSessionOptions(string[] arguments)
+{
+    var idleMinutes = GetIntegerOption(
+        arguments,
+        "--idle-minutes",
+        "CIPHER_VAULT_IDLE_MINUTES",
+        15);
+    var hardHours = GetIntegerOption(
+        arguments,
+        "--hard-hours",
+        "CIPHER_VAULT_HARD_HOURS",
+        4);
+    if (idleMinutes is < 1 or > 1_440)
+    {
+        throw new ArgumentException("--idle-minutes must be between 1 and 1440.");
+    }
+    if (hardHours is < 1 or > 168)
+    {
+        throw new ArgumentException("--hard-hours must be between 1 and 168.");
+    }
+    if (hardHours * 60 < idleMinutes)
+    {
+        throw new ArgumentException("--hard-hours must be at least the idle timeout.");
+    }
+    return VaultSessionOptions.FromMinutes(idleMinutes, hardHours);
+}
+
+static int GetIntegerOption(
+    string[] arguments,
+    string option,
+    string environmentVariable,
+    int defaultValue)
+{
+    var value = GetOption(arguments, option)
+        ?? Environment.GetEnvironmentVariable(environmentVariable);
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        return defaultValue;
+    }
+    if (!int.TryParse(value, out var parsed))
+    {
+        throw new ArgumentException($"{option} must be an integer.");
+    }
+    return parsed;
 }
 
 public interface ICredentialPrompt
