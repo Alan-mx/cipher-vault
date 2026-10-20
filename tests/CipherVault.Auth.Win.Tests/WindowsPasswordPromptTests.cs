@@ -21,11 +21,11 @@ public sealed class WindowsPasswordPromptTests
         var window = await WaitForWindowAsync(title);
         FocusWindow(window);
 
-        System.Windows.Forms.SendKeys.SendWait("{ENTER}");
+        SendKey(window, 0x0D);
         await Task.Delay(200);
         Assert.NotEqual(IntPtr.Zero, NativeMethods.FindWindow(null, title));
 
-        System.Windows.Forms.SendKeys.SendWait($"{Password}{{ENTER}}");
+        SubmitPassword(window, Password);
         var result = await prompt.WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.True(result.Confirmed);
@@ -46,7 +46,7 @@ public sealed class WindowsPasswordPromptTests
         var window = await WaitForWindowAsync(title);
         FocusWindow(window);
 
-        System.Windows.Forms.SendKeys.SendWait("{ESC}");
+        SendKey(window, 0x1B);
         var result = await prompt.WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.False(result.Confirmed);
@@ -121,6 +121,34 @@ public sealed class WindowsPasswordPromptTests
         Thread.Sleep(100);
     }
 
+    private static void SubmitPassword(IntPtr window, string password)
+    {
+        foreach (var character in password)
+        {
+            _ = NativeMethods.PostMessage(
+                window,
+                0x0102,
+                (IntPtr)character,
+                IntPtr.Zero);
+        }
+        SendKey(window, 0x0D);
+    }
+
+    private static void SendKey(IntPtr window, int virtualKey)
+    {
+        _ = NativeMethods.PostMessage(
+            window,
+            0x0100,
+            (IntPtr)virtualKey,
+            IntPtr.Zero);
+        _ = NativeMethods.PostMessage(
+            window,
+            0x0101,
+            (IntPtr)virtualKey,
+            IntPtr.Zero);
+        Thread.Sleep(100);
+    }
+
     private static class NativeMethods
     {
         [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -133,6 +161,14 @@ public sealed class WindowsPasswordPromptTests
         [DllImport("user32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool ShowWindow(IntPtr window, int command);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool PostMessage(
+            IntPtr window,
+            uint message,
+            IntPtr wParam,
+            IntPtr lParam);
     }
 
     private static class UiAutomationLock

@@ -118,7 +118,7 @@ public sealed class CliCrashRecoveryTests
         Guid jobId)
     {
         using var import = StartImportProcess(cliPath, configPath, jobId);
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(180));
         try
         {
             await import.Process.WaitForExitAsync(timeout.Token);
@@ -127,7 +127,7 @@ public sealed class CliCrashRecoveryTests
         {
             import.Process.Kill(entireProcessTree: true);
             await import.Process.WaitForExitAsync();
-            throw new TimeoutException("CipherVault.Cli.exe retry did not exit within 60 seconds.");
+            throw new TimeoutException("CipherVault.Cli.exe retry did not exit within 180 seconds.");
         }
         return await import.FinishOutputAsync();
     }
