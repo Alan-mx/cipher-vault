@@ -18,7 +18,7 @@ public sealed class MainWindowTests
     [Fact]
     public async Task WindowUnlocksLoadsCatalogAndClearsAfterLock()
     {
-        if (!Environment.UserInteractive)
+        if (!ShouldRunInteractiveUiTests())
         {
             return;
         }
@@ -293,6 +293,25 @@ public sealed class MainWindowTests
             }
             await Task.Delay(25);
         }
+    }
+
+    private static bool ShouldRunInteractiveUiTests()
+    {
+        if (!OperatingSystem.IsWindows() || !Environment.UserInteractive)
+        {
+            return false;
+        }
+        if (string.Equals(
+                Environment.GetEnvironmentVariable("CIPHER_VAULT_RUN_UI_TESTS"),
+                "1",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+        return !string.Equals(
+            Environment.GetEnvironmentVariable("GITHUB_ACTIONS"),
+            "true",
+            StringComparison.OrdinalIgnoreCase);
     }
 
     private sealed class WindowFixture : IDisposable

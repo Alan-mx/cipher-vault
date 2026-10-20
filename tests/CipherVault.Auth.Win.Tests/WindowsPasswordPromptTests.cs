@@ -10,7 +10,7 @@ public sealed class WindowsPasswordPromptTests
     [Fact]
     public async Task EmptyPasswordDoesNotCloseAndTypedPasswordIsReturned()
     {
-        if (!Environment.UserInteractive)
+        if (!ShouldRunInteractiveUiTests())
         {
             return;
         }
@@ -35,7 +35,7 @@ public sealed class WindowsPasswordPromptTests
     [Fact]
     public async Task EscapeReturnsCancelledResult()
     {
-        if (!Environment.UserInteractive)
+        if (!ShouldRunInteractiveUiTests())
         {
             return;
         }
@@ -56,7 +56,7 @@ public sealed class WindowsPasswordPromptTests
     [Fact]
     public async Task CancellingTokenClosesOpenWindow()
     {
-        if (!Environment.UserInteractive)
+        if (!ShouldRunInteractiveUiTests())
         {
             return;
         }
@@ -97,6 +97,25 @@ public sealed class WindowsPasswordPromptTests
     private static string CreateTitle()
     {
         return $"CipherVault Prompt Test {Guid.NewGuid():N}";
+    }
+
+    private static bool ShouldRunInteractiveUiTests()
+    {
+        if (!OperatingSystem.IsWindows() || !Environment.UserInteractive)
+        {
+            return false;
+        }
+        if (string.Equals(
+                Environment.GetEnvironmentVariable("CIPHER_VAULT_RUN_UI_TESTS"),
+                "1",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+        return !string.Equals(
+            Environment.GetEnvironmentVariable("GITHUB_ACTIONS"),
+            "true",
+            StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task<IntPtr> WaitForWindowAsync(string title)

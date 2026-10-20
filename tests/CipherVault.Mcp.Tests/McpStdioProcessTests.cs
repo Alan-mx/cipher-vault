@@ -15,7 +15,7 @@ public sealed class McpStdioProcessTests
     [Fact]
     public async Task RealToolCallPromptsForPasswordAndReturnsDocument()
     {
-        if (!Environment.UserInteractive)
+        if (!ShouldRunInteractiveUiTests())
         {
             return;
         }
@@ -275,6 +275,25 @@ public sealed class McpStdioProcessTests
             .GetProperty("text")
             .GetString()
             ?? throw new InvalidOperationException("Tool result text was empty.");
+    }
+
+    private static bool ShouldRunInteractiveUiTests()
+    {
+        if (!OperatingSystem.IsWindows() || !Environment.UserInteractive)
+        {
+            return false;
+        }
+        if (string.Equals(
+                Environment.GetEnvironmentVariable("CIPHER_VAULT_RUN_UI_TESTS"),
+                "1",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+        return !string.Equals(
+            Environment.GetEnvironmentVariable("GITHUB_ACTIONS"),
+            "true",
+            StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task<IntPtr> WaitForWindowAsync(string title)
