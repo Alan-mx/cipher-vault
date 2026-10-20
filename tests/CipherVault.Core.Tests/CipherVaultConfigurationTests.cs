@@ -307,6 +307,31 @@ public sealed class CipherVaultConfigurationTests
         Assert.Equal(VaultErrorCode.InvalidInput, exception.Code);
     }
 
+    [Fact]
+    public void Utf8BomConfigIsAccepted()
+    {
+        using var fixture = new ConfigFixture();
+        var configPath = Path.Combine(fixture.Root, "config-with-bom.json");
+        File.WriteAllText(
+            configPath,
+            """
+            {
+              "configVersion": 1,
+              "session": {
+                "idleMinutes": 25
+              }
+            }
+            """,
+            new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+
+        var result = CipherVaultConfiguration.Load(
+            CipherVaultConfigOverrides.Empty,
+            configPath,
+            _ => null);
+
+        Assert.Equal(TimeSpan.FromMinutes(25), result.SessionOptions.IdleTimeout);
+    }
+
     [Theory]
     [InlineData("{}")]
     [InlineData("{ \"configVersion\": 2 }")]

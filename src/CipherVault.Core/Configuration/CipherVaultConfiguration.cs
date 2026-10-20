@@ -252,9 +252,12 @@ public static class CipherVaultConfiguration
             buffer.Write(chunk, 0, read);
         }
 
-        return new UTF8Encoding(
+        var text = new UTF8Encoding(
             encoderShouldEmitUTF8Identifier: false,
             throwOnInvalidBytes: true).GetString(buffer.ToArray());
+        return text.Length > 0 && text[0] == '\uFEFF'
+            ? text[1..]
+            : text;
     }
 
     private static CipherVaultConfigOverrides ReadEnvironmentOverrides(
