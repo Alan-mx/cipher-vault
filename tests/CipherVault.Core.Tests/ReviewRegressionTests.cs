@@ -78,6 +78,48 @@ public sealed class ReviewRegressionTests
     }
 
     [Fact]
+    public async Task BackupCanBeRestoredAndUnlockedWithRecoveryKey()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var initialized = await fixture.Service.InitializeAsync(fixture.VaultPath, Password);
+        await fixture.Service.ConfirmRecoveryKeyAsync(
+            fixture.VaultPath,
+            initialized.RecoveryKey,
+            VaultActorKind.UserUi);
+        await fixture.Service.UnlockAsync(
+            fixture.VaultPath,
+            Password,
+            VaultCredentialType.Password);
+        await fixture.Service.CreateNoteAsync(
+            "recovery backup",
+            null,
+            "md",
+            "restored with the offline recovery key",
+            null,
+            VaultActorKind.UserUi);
+
+        var backupPath = Path.Combine(fixture.RootPath, "recovery.cvbackup");
+        var restoredPath = Path.Combine(fixture.RootPath, "restored");
+        await fixture.Service.CreateBackupAsync(backupPath);
+        var restored = await fixture.Service.RestoreBackupAsync(
+            backupPath,
+            restoredPath,
+            initialized.RecoveryKey,
+            VaultCredentialType.RecoveryKey);
+
+        await using var restoredService = new VaultService(new AlwaysActiveActivityProvider());
+        var session = await restoredService.UnlockAsync(
+            restored.VaultPath,
+            initialized.RecoveryKey,
+            VaultCredentialType.RecoveryKey);
+
+        Assert.Equal(VaultSessionState.Unlocked, session.State);
+        Assert.True(session.RecoveryVerified);
+        var catalog = await restoredService.ListCatalogAsync(null, null, 10);
+        Assert.Contains(catalog.Items, item => item.Title == "recovery backup");
+    }
+
+    [Fact]
     public async Task ExportRejectsDestinationInsideVault()
     {
         await using var fixture = await Fixture.CreateAsync();

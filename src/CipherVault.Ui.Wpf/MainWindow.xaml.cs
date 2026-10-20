@@ -113,20 +113,50 @@ public partial class MainWindow : Window
             return;
         }
         var path = VaultPathTextBox.Text.Trim();
-        var password = PasswordBox.Password;
-        if (string.IsNullOrWhiteSpace(path) || string.IsNullOrEmpty(password))
+        var credentialType = GetCredentialType(CredentialTypeComboBox);
+        var credential = ReadCredential(
+            credentialType,
+            PasswordBox,
+            RecoveryKeyUnlockBox);
+        if (string.IsNullOrWhiteSpace(path) || string.IsNullOrEmpty(credential))
         {
-            ShowInfo("请输入资料库文件夹和密码。");
+            ShowInfo("请输入资料库文件夹和凭据。");
             return;
         }
         await RunBusyAsync(async () =>
         {
-            await _service.UnlockAsync(path, password, VaultCredentialType.Password);
+            await _service.UnlockAsync(path, credential, credentialType);
             PasswordBox.Clear();
+            RecoveryKeyUnlockBox.Clear();
             await RefreshStatusAsync();
             await RefreshCatalogAsync();
             await RefreshTrashAsync();
         });
+    }
+
+    private void CredentialTypeComboBox_SelectionChanged(
+        object sender,
+        SelectionChangedEventArgs e)
+    {
+        if (PasswordBox is null || RecoveryKeyUnlockBox is null)
+        {
+            return;
+        }
+        var useRecoveryKey = GetCredentialType(CredentialTypeComboBox) ==
+            VaultCredentialType.RecoveryKey;
+        PasswordBox.Visibility = useRecoveryKey ? Visibility.Collapsed : Visibility.Visible;
+        RecoveryKeyUnlockBox.Visibility =
+            useRecoveryKey ? Visibility.Visible : Visibility.Collapsed;
+        PasswordBox.Clear();
+        RecoveryKeyUnlockBox.Clear();
+        if (useRecoveryKey)
+        {
+            RecoveryKeyUnlockBox.Focus();
+        }
+        else
+        {
+            PasswordBox.Focus();
+        }
     }
 
     private async void LockButton_Click(object sender, RoutedEventArgs e)
@@ -476,10 +506,14 @@ public partial class MainWindow : Window
 
     private async void RestoreBackupButton_Click(object sender, RoutedEventArgs e)
     {
-        var password = MaintenancePasswordBox.Password;
-        if (string.IsNullOrEmpty(password))
+        var credentialType = GetCredentialType(RestoreCredentialTypeComboBox);
+        var credential = ReadCredential(
+            credentialType,
+            RestorePasswordBox,
+            RestoreRecoveryKeyBox);
+        if (string.IsNullOrEmpty(credential))
         {
-            ShowInfo("请输入备份密码。");
+            ShowInfo("请输入备份密码或离线恢复密钥。");
             return;
         }
         await RunBusyAsync(async () =>
@@ -487,12 +521,39 @@ public partial class MainWindow : Window
             var result = await _service.RestoreBackupAsync(
                 RestoreBackupTextBox.Text.Trim(),
                 RestoreTargetTextBox.Text.Trim(),
-                password,
-                VaultCredentialType.Password,
+                credential,
+                credentialType,
                 VaultActorKind.UserUi);
             PrintJson(result);
-            MaintenancePasswordBox.Clear();
+            RestorePasswordBox.Clear();
+            RestoreRecoveryKeyBox.Clear();
         });
+    }
+
+    private void RestoreCredentialTypeComboBox_SelectionChanged(
+        object sender,
+        SelectionChangedEventArgs e)
+    {
+        if (RestorePasswordBox is null || RestoreRecoveryKeyBox is null)
+        {
+            return;
+        }
+        var useRecoveryKey = GetCredentialType(RestoreCredentialTypeComboBox) ==
+            VaultCredentialType.RecoveryKey;
+        RestorePasswordBox.Visibility =
+            useRecoveryKey ? Visibility.Collapsed : Visibility.Visible;
+        RestoreRecoveryKeyBox.Visibility =
+            useRecoveryKey ? Visibility.Visible : Visibility.Collapsed;
+        RestorePasswordBox.Clear();
+        RestoreRecoveryKeyBox.Clear();
+        if (useRecoveryKey)
+        {
+            RestoreRecoveryKeyBox.Focus();
+        }
+        else
+        {
+            RestorePasswordBox.Focus();
+        }
     }
 
     private async void VerifyButton_Click(object sender, RoutedEventArgs e)
@@ -789,6 +850,23 @@ public partial class MainWindow : Window
                 .Where(character => !char.IsWhiteSpace(character) && character != '-')
                 .Select(char.ToUpperInvariant)
                 .ToArray());
+    }
+
+    private static VaultCredentialType GetCredentialType(ComboBox selector)
+    {
+        return selector.SelectedIndex == 1
+            ? VaultCredentialType.RecoveryKey
+            : VaultCredentialType.Password;
+    }
+
+    private static string ReadCredential(
+        VaultCredentialType credentialType,
+        PasswordBox passwordBox,
+        PasswordBox recoveryKeyBox)
+    {
+        return credentialType == VaultCredentialType.RecoveryKey
+            ? NormalizeRecoveryKey(recoveryKeyBox.Password)
+            : passwordBox.Password;
     }
 
     private static string GetStateText(VaultSessionState state)

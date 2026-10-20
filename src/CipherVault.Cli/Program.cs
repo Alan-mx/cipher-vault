@@ -49,7 +49,11 @@ try
         "init" => await InitializeAsync(service, Require(vaultPath)),
         "status" => await StatusAsync(service, Require(vaultPath), jsonOptions),
         "backup" => await BackupAsync(service, Require(vaultPath), RequireOption(args, "--to")),
-        "restore" => await RestoreAsync(service, RequireOption(args, "--backup"), RequireOption(args, "--to")),
+        "restore" => await RestoreAsync(
+            service,
+            RequireOption(args, "--backup"),
+            RequireOption(args, "--to"),
+            GetOption(args, "--credential")),
         "verify" => await VerifyAsync(service, Require(vaultPath), jsonOptions),
         "change-password" => await ChangePasswordAsync(service, Require(vaultPath)),
         "rotate-recovery" => await RotateRecoveryAsync(service, Require(vaultPath)),
@@ -117,14 +121,19 @@ static async Task<int> BackupAsync(VaultService service, string vaultPath, strin
     return 0;
 }
 
-static async Task<int> RestoreAsync(VaultService service, string backup, string target)
+static async Task<int> RestoreAsync(
+    VaultService service,
+    string backup,
+    string target,
+    string? credentialOption)
 {
-    var password = ReadPassword("Vault password: ");
+    var credentialType = ParseCredentialType(credentialOption);
+    var credential = ReadCredential(credentialType);
     var result = await service.RestoreBackupAsync(
         backup,
         target,
-        password,
-        VaultCredentialType.Password,
+        credential,
+        credentialType,
         VaultActorKind.UserCli);
     Console.WriteLine(result.VaultPath);
     return 0;
@@ -422,6 +431,31 @@ static string NormalizeRecoveryKey(string value)
             .ToArray());
 }
 
+static VaultCredentialType ParseCredentialType(string? value)
+{
+    return value?.ToLowerInvariant() switch
+    {
+        null or "" or "password" => VaultCredentialType.Password,
+        "recovery-key" or "recovery" => VaultCredentialType.RecoveryKey,
+        _ => throw new VaultException(
+            VaultErrorCode.InvalidInput,
+            "--credential must be password or recovery-key.")
+    };
+}
+
+static string ReadCredential(VaultCredentialType credentialType)
+{
+    return credentialType switch
+    {
+        VaultCredentialType.Password => ReadPassword("Vault password: "),
+        VaultCredentialType.RecoveryKey => NormalizeRecoveryKey(
+            ReadPassword("Offline recovery key: ")),
+        _ => throw new VaultException(
+            VaultErrorCode.InvalidInput,
+            "Unsupported credential type.")
+    };
+}
+
 static VaultSessionOptions CreateSessionOptions(string[] arguments)
 {
     var idleMinutes = GetIntegerOption(
@@ -483,7 +517,7 @@ static void PrintHelp()
           init                --vault <directory>
           status              --vault <directory>
           backup              --vault <directory> --to <file.cvbackup>
-          restore             --backup <file.cvbackup> --to <new-directory>
+          restore             --backup <file.cvbackup> --to <new-directory> [--credential password|recovery-key]
           verify              --vault <directory>
           change-password     --vault <directory>
           rotate-recovery     --vault <directory>

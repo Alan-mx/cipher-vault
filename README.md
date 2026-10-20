@@ -28,6 +28,27 @@ Windows 11 local encrypted Markdown/TXT vault with a STDIO MCP interface.
   destination filesystem paths.
 - Windows administrators, kernel malware and active process-memory attacks are outside scope.
 
+## First use and recovery
+
+1. Choose a new Vault directory, enter a password of at least 12 characters and
+   initialize the Vault.
+2. Save the offline recovery key outside the Vault, this machine and the backup
+   files, then re-enter it to confirm that it was saved correctly.
+3. Content remains inaccessible until recovery-key confirmation succeeds.
+4. Unlock with either the password or the offline recovery key. The desktop
+   credential selector and backup-restore selector both support this choice.
+5. A backup can be restored with `--credential recovery-key` when the password is
+   unavailable:
+
+```powershell
+.\CipherVault.Cli.exe restore --backup .\vault.cvbackup --to .\restored `
+  --credential recovery-key
+```
+
+Losing both the password and the offline recovery key makes the Vault
+unrecoverable. Rotating the recovery key remains pending until the new key is
+entered and confirmed.
+
 ## MCP trust boundary
 
 CipherVault protects data at rest and controls access to decrypted content through
@@ -85,6 +106,10 @@ default_tools_approval_mode = "prompt"
 ```
 
 Outputs are written under `artifacts\publish`.
+
+## License
+
+CipherVault is released under the MIT License. See `LICENSE`.
 
 ## Desktop behavior
 

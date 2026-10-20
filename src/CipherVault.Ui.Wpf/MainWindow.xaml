@@ -51,8 +51,16 @@
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="密码" VerticalAlignment="Center" Margin="0,0,12,0" />
+                        <ComboBox x:Name="CredentialTypeComboBox" Width="110" MinHeight="32"
+                                  Margin="0,0,12,0" SelectedIndex="0"
+                                  SelectionChanged="CredentialTypeComboBox_SelectionChanged">
+                            <ComboBoxItem Content="密码" />
+                            <ComboBoxItem Content="恢复密钥" />
+                        </ComboBox>
                         <PasswordBox x:Name="PasswordBox" Grid.Column="1" MinHeight="32" Padding="8,4" VerticalContentAlignment="Center" />
+                        <PasswordBox x:Name="RecoveryKeyUnlockBox" Grid.Column="1" MinHeight="32"
+                                     Padding="8,4" VerticalContentAlignment="Center" FontFamily="Consolas"
+                                     Visibility="Collapsed" ToolTip="可粘贴离线恢复密钥，空格和连字符会自动忽略。" />
                         <Button Grid.Column="2" Content="解锁" MinWidth="90" Margin="12,0,0,0" Padding="12,5" Click="UnlockButton_Click" />
                         <Button Grid.Column="3" Content="锁定" MinWidth="90" Margin="8,0,0,0" Padding="12,5" Click="LockButton_Click" />
                     </Grid>
@@ -172,6 +180,23 @@
                         <Separator Margin="0,16" />
                         <TextBlock Text="备份与恢复" FontWeight="SemiBold" />
                         <Button Content="保存加密备份" HorizontalAlignment="Left" MinWidth="170" Margin="0,6,0,8" Click="BackupButton_Click" />
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <ComboBox x:Name="RestoreCredentialTypeComboBox" Width="110" MinHeight="30"
+                                      Margin="0,0,8,0" SelectedIndex="0"
+                                      SelectionChanged="RestoreCredentialTypeComboBox_SelectionChanged">
+                                <ComboBoxItem Content="备份密码" />
+                                <ComboBoxItem Content="恢复密钥" />
+                            </ComboBox>
+                            <PasswordBox x:Name="RestorePasswordBox" Grid.Column="1" MinHeight="30"
+                                         Padding="8,4" VerticalContentAlignment="Center" />
+                            <PasswordBox x:Name="RestoreRecoveryKeyBox" Grid.Column="1" MinHeight="30"
+                                         Padding="8,4" VerticalContentAlignment="Center" FontFamily="Consolas"
+                                         Visibility="Collapsed" ToolTip="可粘贴离线恢复密钥，空格和连字符会自动忽略。" />
+                        </Grid>
                         <DockPanel Margin="0,0,0,8">
                             <Button Content="打开备份" MinWidth="100" DockPanel.Dock="Left" Click="OpenBackupFileButton_Click" />
                             <TextBox x:Name="RestoreBackupTextBox" Margin="8,0,0,0" MinHeight="30" Padding="8,4" />
