@@ -113,6 +113,36 @@ public sealed class VaultToolsTests
         Assert.True(snapshot.SystemIdleTime >= TimeSpan.Zero);
     }
 
+    [Fact]
+    public async Task ReadOnlyModeBlocksWritesWithoutPromptingButAllowsReads()
+    {
+        await using var fixture = await VaultToolsFixture.CreateAsync();
+        var prompt = new FakePrompt(true, Password);
+        var tools = new VaultTools(
+            fixture.Service,
+            fixture.VaultPath,
+            prompt,
+            readOnly: true);
+
+        using var writeDocument = JsonDocument.Parse(
+            await tools.CreateNote(
+                "blocked",
+                "must not be created",
+                cancellationToken: CancellationToken.None));
+        Assert.Equal(
+            "read_only",
+            writeDocument.RootElement
+                .GetProperty("error")
+                .GetProperty("code")
+                .GetString());
+        Assert.Equal(0, prompt.CallCount);
+
+        using var readDocument = JsonDocument.Parse(
+            await tools.ListCatalog(cancellationToken: CancellationToken.None));
+        Assert.True(readDocument.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal(1, prompt.CallCount);
+    }
+
     private sealed class FakePrompt : ICredentialPrompt
     {
         private readonly bool _confirmed;

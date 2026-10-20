@@ -14,6 +14,15 @@ public static class VaultKeyring
     public const int Argon2Iterations = 3;
     public const int Argon2Parallelism = 1;
     public const int PasswordMinimumLength = 12;
+    public const int MaxArgon2MemoryKiB = 256 * 1024;
+    public const int MaxArgon2Iterations = 10;
+    public const int MaxArgon2Parallelism = 16;
+    internal const long MaxEnvelopeBytes = 1024 * 1024;
+    private const string FormatName = "cipher-vault-keyring";
+    private const int CurrentFormatVersion = 1;
+    private const int SaltBytes = 16;
+    private const int NonceBytes = 12;
+    private const int WrappedMasterKeyBytes = 48;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -41,8 +50,8 @@ public static class VaultKeyring
 
         var envelope = new VaultKeyEnvelope
         {
-            Format = "cipher-vault-keyring",
-            FormatVersion = 1,
+            Format = FormatName,
+            FormatVersion = CurrentFormatVersion,
             VaultId = vaultId,
             KeyGeneration = 1,
             CreatedAt = DateTimeOffset.UtcNow,
@@ -82,6 +91,7 @@ public static class VaultKeyring
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        ValidateEnvelope(envelope);
         try
         {
             var masterKey = credentialType switch
@@ -110,14 +120,33 @@ public static class VaultKeyring
     {
         try
         {
+            var fileLength = new FileInfo(keyPath).Length;
+            if (fileLength <= 0 || fileLength > MaxEnvelopeBytes)
+            {
+                throw new VaultException(
+                    VaultErrorCode.CorruptVault,
+                    "Vault key envelope size is invalid.");
+            }
             await using var stream = File.OpenRead(keyPath);
             var envelope = await JsonSerializer.DeserializeAsync<VaultKeyEnvelope>(
                 stream,
                 JsonOptions,
                 cancellationToken).ConfigureAwait(false);
-            return envelope ?? throw new VaultException(
+            if (envelope is null)
+            {
+                throw new VaultException(
+                    VaultErrorCode.CorruptVault,
+                    "Vault key envelope is empty.");
+            }
+            ValidateEnvelope(envelope);
+            return envelope;
+        }
+        catch (FormatException exception)
+        {
+            throw new VaultException(
                 VaultErrorCode.CorruptVault,
-                "Vault key envelope is empty.");
+                "Vault key envelope is invalid.",
+                exception);
         }
         catch (JsonException exception)
         {
@@ -250,23 +279,12 @@ public static class VaultKeyring
     {
         ValidatePassword(password);
         var slot = envelope.PasswordSlot;
-        if (!string.Equals(slot.Kdf, "argon2id", StringComparison.Ordinal) ||
-            slot.MemoryCostKiB is null ||
-            slot.Iterations is null ||
-            slot.Parallelism is null ||
-            slot.MemoryCostKiB < Argon2MemoryKiB ||
-            slot.Iterations < Argon2Iterations ||
-            slot.Parallelism < 1)
-        {
-            throw new VaultException(VaultErrorCode.CorruptVault, "Password KDF parameters are invalid.");
-        }
-
         var kek = DerivePasswordKey(
             password,
-            Convert.FromBase64String(slot.SaltB64),
-            slot.MemoryCostKiB.Value,
-            slot.Iterations.Value,
-            slot.Parallelism.Value);
+            DecodeBase64(slot.SaltB64, "password salt"),
+            slot.MemoryCostKiB.GetValueOrDefault(),
+            slot.Iterations.GetValueOrDefault(),
+            slot.Parallelism.GetValueOrDefault());
         return Unwrap(slot, kek, envelope.VaultId, "password");
     }
 
@@ -277,7 +295,7 @@ public static class VaultKeyring
             HashAlgorithmName.SHA256,
             rawRecoveryKey,
             32,
-            Convert.FromBase64String(envelope.RecoverySlot.SaltB64),
+            DecodeBase64(envelope.RecoverySlot.SaltB64, "recovery salt"),
             Encoding.UTF8.GetBytes("pv/recovery/v1"));
         return Unwrap(envelope.RecoverySlot, recoveryKek, envelope.VaultId, "recovery");
     }
@@ -339,12 +357,8 @@ public static class VaultKeyring
         Guid vaultId,
         string slotKind)
     {
-        var nonce = Convert.FromBase64String(slot.NonceB64);
-        var wrapped = Convert.FromBase64String(slot.WrappedMasterKeyB64);
-        if (nonce.Length != 12 || wrapped.Length != 48)
-        {
-            throw new VaultException(VaultErrorCode.CorruptVault, "Key slot is invalid.");
-        }
+        var nonce = DecodeBase64(slot.NonceB64, "key slot nonce");
+        var wrapped = DecodeBase64(slot.WrappedMasterKeyB64, "wrapped master key");
 
         var ciphertext = wrapped[..32];
         var tag = wrapped[32..];
@@ -353,5 +367,108 @@ public static class VaultKeyring
         using var aes = new AesGcm(kek, 16);
         aes.Decrypt(nonce, ciphertext, tag, masterKey, aad);
         return masterKey;
+    }
+
+    private static void ValidateEnvelope(VaultKeyEnvelope envelope)
+    {
+        if (envelope is null ||
+            !string.Equals(envelope.Format, FormatName, StringComparison.Ordinal) ||
+            envelope.FormatVersion != CurrentFormatVersion ||
+            envelope.VaultId == Guid.Empty ||
+            envelope.KeyGeneration < 1 ||
+            envelope.PasswordSlot is null ||
+            envelope.RecoverySlot is null)
+        {
+            throw new VaultException(
+                VaultErrorCode.CorruptVault,
+                "Vault key envelope format is unsupported.");
+        }
+
+        ValidateSlot(
+            envelope.PasswordSlot,
+            "argon2id",
+            requireArgon2: true,
+            "password");
+        ValidateSlot(
+            envelope.RecoverySlot,
+            "hkdf-sha256",
+            requireArgon2: false,
+            "recovery");
+    }
+
+    private static void ValidateSlot(
+        VaultKeySlot slot,
+        string expectedKdf,
+        bool requireArgon2,
+        string slotName)
+    {
+        if (slot is null ||
+            !string.Equals(slot.Kdf, expectedKdf, StringComparison.Ordinal))
+        {
+            throw new VaultException(
+                VaultErrorCode.CorruptVault,
+                $"{slotName} key slot KDF is unsupported.");
+        }
+
+        if (requireArgon2)
+        {
+            if (slot.MemoryCostKiB is null ||
+                slot.Iterations is null ||
+                slot.Parallelism is null ||
+                slot.MemoryCostKiB < Argon2MemoryKiB ||
+                slot.MemoryCostKiB > MaxArgon2MemoryKiB ||
+                slot.Iterations < Argon2Iterations ||
+                slot.Iterations > MaxArgon2Iterations ||
+                slot.Parallelism < Argon2Parallelism ||
+                slot.Parallelism > MaxArgon2Parallelism)
+            {
+                throw new VaultException(
+                    VaultErrorCode.CorruptVault,
+                    $"{slotName} KDF parameters are invalid.");
+            }
+        }
+        else if (slot.MemoryCostKiB is not null ||
+                 slot.Iterations is not null ||
+                 slot.Parallelism is not null)
+        {
+            throw new VaultException(
+                VaultErrorCode.CorruptVault,
+                $"{slotName} key slot KDF parameters are invalid.");
+        }
+
+        if (string.IsNullOrWhiteSpace(slot.SaltB64) ||
+            string.IsNullOrWhiteSpace(slot.NonceB64) ||
+            string.IsNullOrWhiteSpace(slot.WrappedMasterKeyB64) ||
+            DecodeBase64(slot.SaltB64, $"{slotName} salt").Length != SaltBytes ||
+            DecodeBase64(slot.NonceB64, $"{slotName} nonce").Length != NonceBytes ||
+            DecodeBase64(
+                slot.WrappedMasterKeyB64,
+                $"{slotName} wrapped master key").Length != WrappedMasterKeyBytes)
+        {
+            throw new VaultException(
+                VaultErrorCode.CorruptVault,
+                $"{slotName} key slot is invalid.");
+        }
+    }
+
+    private static byte[] DecodeBase64(string value, string fieldName)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new VaultException(
+                VaultErrorCode.CorruptVault,
+                $"Vault keyring {fieldName} is invalid.");
+        }
+        try
+        {
+            return Convert.FromBase64String(value);
+        }
+        catch (FormatException exception)
+        {
+            throw new VaultException(
+                VaultErrorCode.CorruptVault,
+                $"Vault keyring {fieldName} is invalid.",
+                exception);
+        }
     }
 }

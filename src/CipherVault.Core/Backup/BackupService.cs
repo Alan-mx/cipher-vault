@@ -16,6 +16,9 @@ internal static class BackupService
     private const string DatabaseName = "vault.db";
     private const string KeysName = "vault.keys";
     private const string BackupFormat = "cipher-vault-backup";
+    internal const long MaxArchiveBytes = 1024L * 1024 * 1024;
+    internal const long MaxDatabaseBytes = 2L * 1024 * 1024 * 1024;
+    internal const long MaxMetadataBytes = 1024 * 1024;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true
@@ -126,6 +129,7 @@ internal static class BackupService
         {
             throw new VaultException(VaultErrorCode.NotFound, "Backup file was not found.");
         }
+        ValidateArchiveLength(new FileInfo(fullBackupPath).Length);
         if (Directory.Exists(fullTargetPath) || File.Exists(fullTargetPath))
         {
             throw new VaultException(VaultErrorCode.AlreadyExists, "Restore target must not exist.");
@@ -141,7 +145,10 @@ internal static class BackupService
         VaultFileSecurity.ProtectDirectory(temporaryDirectory);
         try
         {
-            ExtractSafely(fullBackupPath, temporaryDirectory);
+            await ExtractSafelyAsync(
+                fullBackupPath,
+                temporaryDirectory,
+                cancellationToken).ConfigureAwait(false);
             var manifestPath = Path.Combine(temporaryDirectory, ManifestName);
             var manifest = JsonSerializer.Deserialize<BackupManifest>(
                 await File.ReadAllTextAsync(manifestPath, cancellationToken).ConfigureAwait(false))
@@ -209,7 +216,42 @@ internal static class BackupService
         }
     }
 
-    private static void ExtractSafely(string backupPath, string targetDirectory)
+    internal static void ValidateArchiveLength(long length)
+    {
+        if (length <= 0 || length > MaxArchiveBytes)
+        {
+            throw new VaultException(
+                VaultErrorCode.CorruptVault,
+                "Backup archive size is invalid.");
+        }
+    }
+
+    internal static long ValidateEntryLength(string entryName, long length, long total)
+    {
+        var entryLimit = entryName.Equals(DatabaseName, StringComparison.OrdinalIgnoreCase)
+            ? MaxDatabaseBytes
+            : MaxMetadataBytes;
+        if (length < 0 || length > entryLimit)
+        {
+            throw new VaultException(
+                VaultErrorCode.CorruptVault,
+                "Backup entry size is invalid.");
+        }
+
+        var maximumTotal = MaxDatabaseBytes + (MaxMetadataBytes * 2);
+        if (length > maximumTotal - total)
+        {
+            throw new VaultException(
+                VaultErrorCode.CorruptVault,
+                "Backup expands beyond the allowed size.");
+        }
+        return total + length;
+    }
+
+    private static async Task ExtractSafelyAsync(
+        string backupPath,
+        string targetDirectory,
+        CancellationToken cancellationToken)
     {
         using var archive = ZipFile.OpenRead(backupPath);
         var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -218,11 +260,15 @@ internal static class BackupService
             DatabaseName,
             KeysName
         };
+        var entryNames = archive.Entries
+            .Select(entry => entry.FullName)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (archive.Entries.Count != allowed.Count ||
-            archive.Entries.Any(entry => !allowed.Contains(entry.FullName)))
+            !entryNames.SetEquals(allowed))
         {
             throw new VaultException(VaultErrorCode.CorruptVault, "Backup contains unexpected entries.");
         }
+
         foreach (var entry in archive.Entries)
         {
             if (entry.FullName.Contains("..", StringComparison.Ordinal) ||
@@ -230,7 +276,72 @@ internal static class BackupService
             {
                 throw new VaultException(VaultErrorCode.CorruptVault, "Backup contains an unsafe entry.");
             }
-            entry.ExtractToFile(Path.Combine(targetDirectory, entry.FullName));
+        }
+
+        var entries = archive.Entries.ToDictionary(
+            entry => entry.FullName,
+            StringComparer.OrdinalIgnoreCase);
+        var total = ValidateEntryLength(ManifestName, entries[ManifestName].Length, 0);
+        total = ValidateEntryLength(
+            DatabaseName,
+            entries[DatabaseName].Length,
+            total);
+        total = ValidateEntryLength(
+            KeysName,
+            entries[KeysName].Length,
+            total);
+
+        foreach (var entry in archive.Entries)
+        {
+            var canonicalName = allowed.Single(name =>
+                name.Equals(entry.FullName, StringComparison.OrdinalIgnoreCase));
+            var destinationPath = Path.Combine(targetDirectory, canonicalName);
+            await using var source = entry.Open();
+            await using var destination = new FileStream(
+                destinationPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                bufferSize: 64 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            var limit = canonicalName.Equals(DatabaseName, StringComparison.OrdinalIgnoreCase)
+                ? MaxDatabaseBytes
+                : MaxMetadataBytes;
+            await CopyWithLimitAsync(
+                source,
+                destination,
+                canonicalName,
+                limit,
+                cancellationToken).ConfigureAwait(false);
+            await destination.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task CopyWithLimitAsync(
+        Stream source,
+        Stream destination,
+        string entryName,
+        long limit,
+        CancellationToken cancellationToken)
+    {
+        var buffer = new byte[64 * 1024];
+        long copied = 0;
+        while (true)
+        {
+            var read = await source.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            if (read == 0)
+            {
+                return;
+            }
+            copied += read;
+            if (copied > limit)
+            {
+                throw new VaultException(
+                    VaultErrorCode.CorruptVault,
+                    $"Backup entry {entryName} exceeds the allowed size.");
+            }
+            await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken)
+                .ConfigureAwait(false);
         }
     }
 

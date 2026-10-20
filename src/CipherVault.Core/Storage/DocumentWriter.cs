@@ -8,7 +8,7 @@ namespace CipherVault.Core.Storage;
 
 internal static class DocumentWriter
 {
-    private const int MaxContentBytes = 256 * 1024;
+    internal const int MaxContentBytes = 256 * 1024;
     private const int MaxDocumentBytes = 4 * 1024 * 1024;
     private const int MaxTags = 50;
     private static readonly TimeSpan RevisionLifetime = TimeSpan.FromDays(90);

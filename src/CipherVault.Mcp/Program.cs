@@ -13,8 +13,13 @@ using CipherVault.Core.Session;
 
 var vaultPath = GetOption(args, "--vault")
     ?? Environment.GetEnvironmentVariable("CIPHER_VAULT_PATH");
+var readOnly = HasFlag(args, "--read-only") ||
+    string.Equals(
+        Environment.GetEnvironmentVariable("CIPHER_VAULT_READ_ONLY"),
+        "1",
+        StringComparison.OrdinalIgnoreCase);
 await using var vault = new VaultService(new WindowsSystemActivityProvider());
-var tools = new VaultTools(vault, vaultPath, new WindowsCredentialPrompt());
+var tools = new VaultTools(vault, vaultPath, new WindowsCredentialPrompt(), readOnly);
 
 var builder = Host.CreateApplicationBuilder(Array.Empty<string>());
 builder.Logging.ClearProviders();
@@ -35,6 +40,12 @@ static string? GetOption(string[] arguments, string option)
         }
     }
     return null;
+}
+
+static bool HasFlag(string[] arguments, string flag)
+{
+    return arguments.Any(argument =>
+        string.Equals(argument, flag, StringComparison.OrdinalIgnoreCase));
 }
 
 public interface ICredentialPrompt
@@ -68,17 +79,20 @@ public sealed class VaultTools
     private readonly IVaultService _vault;
     private readonly string? _vaultPath;
     private readonly ICredentialPrompt _credentialPrompt;
+    private readonly bool _readOnly;
     private readonly SemaphoreSlim _authGate = new(1, 1);
     private DateTimeOffset _deniedUntil = DateTimeOffset.MinValue;
 
     public VaultTools(
         IVaultService vault,
         string? vaultPath,
-        ICredentialPrompt credentialPrompt)
+        ICredentialPrompt credentialPrompt,
+        bool readOnly = false)
     {
         _vault = vault;
         _vaultPath = vaultPath;
         _credentialPrompt = credentialPrompt;
+        _readOnly = readOnly;
     }
 
     [McpServerTool(Name = "vault_status")]
@@ -94,7 +108,11 @@ public sealed class VaultTools
         return Serialize(new
         {
             ok = true,
-            vault = new { configured = true },
+            vault = new
+            {
+                configured = true,
+                accessMode = _readOnly ? "readOnly" : "readWrite"
+            },
             session = status
         });
     }
@@ -227,6 +245,12 @@ public sealed class VaultTools
         string[]? tags = null,
         CancellationToken cancellationToken = default)
     {
+        var accessError = EnsureWritable();
+        if (accessError is not null)
+        {
+            return accessError;
+        }
+
         var authorizationError = await EnsureUnlockedAsync(cancellationToken);
         if (authorizationError is not null)
         {
@@ -259,6 +283,12 @@ public sealed class VaultTools
         string content,
         CancellationToken cancellationToken = default)
     {
+        var accessError = EnsureWritable();
+        if (accessError is not null)
+        {
+            return accessError;
+        }
+
         var authorizationError = await EnsureUnlockedAsync(cancellationToken);
         if (authorizationError is not null)
         {
@@ -297,6 +327,12 @@ public sealed class VaultTools
         string[]? tags = null,
         CancellationToken cancellationToken = default)
     {
+        var accessError = EnsureWritable();
+        if (accessError is not null)
+        {
+            return accessError;
+        }
+
         var authorizationError = await EnsureUnlockedAsync(cancellationToken);
         if (authorizationError is not null)
         {
@@ -331,6 +367,12 @@ public sealed class VaultTools
         int expectedRevision,
         CancellationToken cancellationToken = default)
     {
+        var accessError = EnsureWritable();
+        if (accessError is not null)
+        {
+            return accessError;
+        }
+
         var authorizationError = await EnsureUnlockedAsync(cancellationToken);
         if (authorizationError is not null)
         {
@@ -417,6 +459,15 @@ public sealed class VaultTools
         {
             _authGate.Release();
         }
+    }
+
+    private string? EnsureWritable()
+    {
+        return _readOnly
+            ? Serialize(Error(
+                "read_only",
+                "This CipherVault MCP server is configured for read-only access."))
+            : null;
     }
 
     private static object Error(string code, string message)

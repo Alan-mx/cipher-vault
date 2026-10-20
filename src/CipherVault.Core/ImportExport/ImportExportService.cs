@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
+using CipherVault.Core.Security;
 using CipherVault.Core.Session;
 using CipherVault.Core.Storage;
 
@@ -16,6 +17,7 @@ internal static class ImportExportService
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
+    private static readonly TimeSpan StaleExportDirectoryAge = TimeSpan.FromHours(24);
 
     public static async Task<VaultImportPreview> PreviewImportAsync(
         string vaultPath,
@@ -49,6 +51,7 @@ internal static class ImportExportService
         }
 
         var supported = new List<ImportCandidate>();
+        var unsupportedItems = new List<VaultImportPreviewItem>();
         var unsupported = 0;
         var enumeration = new EnumerationOptions
         {
@@ -76,17 +79,39 @@ internal static class ImportExportService
                 continue;
             }
 
-            var source = await ReadTextAndHashAsync(file, cancellationToken).ConfigureAwait(false);
             var title = Path.GetFileNameWithoutExtension(file);
             var folder = Path.GetDirectoryName(relative)?.Replace('\\', '/');
             var normalized = relative.ToLowerInvariant();
             var conflict = activePaths.Contains(normalized);
+            var rejectionReason = ValidateImportCandidate(title, folder, format, file);
+            if (rejectionReason is not null)
+            {
+                unsupported++;
+                unsupportedItems.Add(new VaultImportPreviewItem(
+                    relative,
+                    format,
+                    GetFileLength(file),
+                    "unsupported",
+                    rejectionReason));
+                continue;
+            }
+
+            var source = await ReadMetadataAndHashAsync(file, cancellationToken)
+                .ConfigureAwait(false);
+            if (source.SizeBytes > DocumentWriter.MaxContentBytes)
+            {
+                unsupported++;
+                unsupportedItems.Add(new VaultImportPreviewItem(
+                    relative,
+                    format,
+                    source.SizeBytes,
+                    "unsupported",
+                    "content_too_large"));
+                continue;
+            }
             supported.Add(new ImportCandidate(
                 relative,
                 format,
-                title,
-                folder,
-                source.Content,
                 source.Hash,
                 source.SizeBytes,
                 conflict));
@@ -159,6 +184,7 @@ internal static class ImportExportService
                 candidate.SizeBytes,
                 candidate.Conflict ? "skipped" : "pending",
                 candidate.Conflict ? "active_path_conflict" : null))
+            .Concat(unsupportedItems)
             .ToList();
         return new VaultImportPreview(
             jobId,
@@ -326,10 +352,12 @@ internal static class ImportExportService
         var temporaryDirectory = Path.Combine(
             parent,
             $".{Path.GetFileName(fullDestination)}.export-{Guid.NewGuid():N}");
+        CleanupStaleExportDirectories(parent, Path.GetFileName(fullDestination));
         Directory.CreateDirectory(temporaryDirectory);
         var exported = new List<ExportedFile>();
         try
         {
+            VaultFileSecurity.ProtectDirectory(temporaryDirectory);
             using var command = connection.CreateCommand();
             command.CommandText =
                 """
@@ -403,7 +431,10 @@ internal static class ImportExportService
                 exported.Select(item => $"{item.Sha256}  {item.RelativePath}"),
                 cancellationToken).ConfigureAwait(false);
             Directory.Move(temporaryDirectory, fullDestination);
-            return new VaultExportResult(fullDestination, exported.Count, manifestPath);
+            return new VaultExportResult(
+                fullDestination,
+                exported.Count,
+                Path.Combine(fullDestination, "vault-export-manifest.json"));
         }
         catch
         {
@@ -538,6 +569,12 @@ internal static class ImportExportService
             FileShare.Read,
             bufferSize: 64 * 1024,
             FileOptions.Asynchronous | FileOptions.SequentialScan);
+        if (stream.Length > DocumentWriter.MaxContentBytes)
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "Document content exceeds 256 KB.");
+        }
         using var buffer = new MemoryStream();
         await stream.CopyToAsync(buffer, cancellationToken).ConfigureAwait(false);
         var bytes = buffer.ToArray();
@@ -550,12 +587,86 @@ internal static class ImportExportService
             bytes.LongLength);
     }
 
+    private static async Task<(byte[] Hash, long SizeBytes)> ReadMetadataAndHashAsync(
+        string path,
+        CancellationToken cancellationToken)
+    {
+        await using var stream = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            bufferSize: 64 * 1024,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        var hash = await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false);
+        return (hash, stream.Length);
+    }
+
+    private static string? ValidateImportCandidate(
+        string title,
+        string? folder,
+        string format,
+        string path)
+    {
+        if (string.IsNullOrWhiteSpace(title) || title.Length > 200)
+        {
+            return "invalid_title";
+        }
+        try
+        {
+            VirtualPathPolicy.BuildDocumentPath(title, folder, format);
+        }
+        catch (VaultException)
+        {
+            return "invalid_path";
+        }
+
+        return GetFileLength(path) > DocumentWriter.MaxContentBytes
+            ? "content_too_large"
+            : null;
+    }
+
+    private static long GetFileLength(string path)
+    {
+        try
+        {
+            return new FileInfo(path).Length;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException)
+        {
+            return 0;
+        }
+    }
+
+    private static void CleanupStaleExportDirectories(string parent, string destinationName)
+    {
+        var cutoff = DateTime.UtcNow - StaleExportDirectoryAge;
+        var pattern = $".{destinationName}.export-*";
+        foreach (var directory in Directory.EnumerateDirectories(
+            parent,
+            pattern,
+            SearchOption.TopDirectoryOnly))
+        {
+            try
+            {
+                if (Directory.GetLastWriteTimeUtc(directory) >= cutoff)
+                {
+                    continue;
+                }
+                Directory.Delete(directory, recursive: true);
+            }
+            catch (Exception exception) when (
+                exception is IOException or UnauthorizedAccessException)
+            {
+                // A stale directory is best-effort cleanup and must not block a new export.
+            }
+        }
+    }
+
     private sealed record ImportCandidate(
         string RelativePath,
         string Format,
-        string Title,
-        string? Folder,
-        string Content,
         byte[] SourceHash,
         long SizeBytes,
         bool Conflict);
