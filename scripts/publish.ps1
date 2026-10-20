@@ -6,9 +6,9 @@ param(
 $ErrorActionPreference = "Stop"
 
 $projects = @(
-    @{ Name = "ui"; Project = "src\PersonalVault.Ui.Wpf\PersonalVault.Ui.Wpf.csproj" },
-    @{ Name = "mcp"; Project = "src\PersonalVault.Mcp\PersonalVault.Mcp.csproj" },
-    @{ Name = "cli"; Project = "src\PersonalVault.Cli\PersonalVault.Cli.csproj" }
+    @{ Name = "ui"; Project = "src\CipherVault.Ui.Wpf\CipherVault.Ui.Wpf.csproj" },
+    @{ Name = "mcp"; Project = "src\CipherVault.Mcp\CipherVault.Mcp.csproj" },
+    @{ Name = "cli"; Project = "src\CipherVault.Cli\CipherVault.Cli.csproj" }
 )
 
 foreach ($item in $projects) {

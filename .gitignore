@@ -3,7 +3,7 @@
 artifacts/
 poc/artifacts/
 poc/codex-home/
-*.pvbackup
+*.cvbackup
 vault.db
 vault.db-journal
 vault.db-wal

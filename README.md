@@ -1,4 +1,4 @@
-# Personal Vault
+# CipherVault
 
 Windows 11 local encrypted Markdown/TXT vault with a STDIO MCP interface.
 
@@ -17,24 +17,27 @@ Windows 11 local encrypted Markdown/TXT vault with a STDIO MCP interface.
 
 ## Projects
 
-- `PersonalVault.Core`: encryption, SQLCipher storage, search and document operations
-- `PersonalVault.Mcp`: STDIO MCP server and WPF authorization prompt
-- `PersonalVault.Cli`: management commands
-- `PersonalVault.Ui.Wpf`: Windows desktop UI
+- `CipherVault.Core`: encryption, SQLCipher storage, search and document operations
+- `CipherVault.Mcp`: STDIO MCP server and WPF authorization prompt
+- `CipherVault.Cli`: management commands
+- `CipherVault.Ui.Wpf`: Windows desktop UI
+
+The current backup extension is `.cvbackup`; `CIPHER_VAULT_PATH` is the
+supported environment variable for the MCP server.
 
 ## Build and test
 
 ```powershell
-dotnet build .\PersonalVault.sln -c Release
-dotnet test .\PersonalVault.sln -c Release --no-build
+dotnet build .\CipherVault.sln -c Release
+dotnet test .\CipherVault.sln -c Release --no-build
 ```
 
 ## MCP configuration
 
 ```toml
-[mcp_servers.personal_vault]
-command = 'D:\path\to\personal-vault-mcp.exe'
-args = ['--vault', 'D:\PersonalVault']
+[mcp_servers.cipher_vault]
+command = 'D:\path\to\CipherVault.Mcp.exe'
+args = ['--vault', 'D:\CipherVault']
 tool_timeout_sec = 120
 default_tools_approval_mode = "prompt"
 ```
