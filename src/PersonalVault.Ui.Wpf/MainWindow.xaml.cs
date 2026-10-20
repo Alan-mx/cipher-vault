@@ -72,7 +72,7 @@ public partial class MainWindow : Window
         var password = PasswordBox.Password;
         if (string.IsNullOrWhiteSpace(path) || string.IsNullOrEmpty(password))
         {
-            ShowInfo("Vault folder and password are required.");
+            ShowInfo("请输入资料库文件夹和密码。");
             return;
         }
         await RunBusyAsync(async () =>
@@ -96,7 +96,7 @@ public partial class MainWindow : Window
         var password = PasswordBox.Password;
         if (string.IsNullOrWhiteSpace(path) || string.IsNullOrEmpty(password))
         {
-            ShowInfo("Vault folder and password are required.");
+            ShowInfo("请输入资料库文件夹和密码。");
             return;
         }
         await RunBusyAsync(async () =>
@@ -142,7 +142,7 @@ public partial class MainWindow : Window
         var recoveryKey = NormalizeRecoveryKey(RecoveryConfirmTextBox.Text);
         if (string.IsNullOrEmpty(recoveryKey))
         {
-            ShowInfo("Re-enter the recovery key to confirm it was saved.");
+            ShowInfo("请重新输入恢复密钥，确认已保存。");
             return;
         }
         await RunBusyAsync(async () =>
@@ -195,7 +195,8 @@ public partial class MainWindow : Window
         {
             var page = await _service.SearchNotesAsync(query, null, null, 20);
             CatalogGrid.ItemsSource = page.Hits;
-            MaintenanceOutput.Text = $"matched={page.Coverage.MatchedDocuments}, scanned={page.Coverage.ScannedDocuments}";
+            MaintenanceOutput.Text =
+                $"匹配 {page.Coverage.MatchedDocuments} 篇，扫描 {page.Coverage.ScannedDocuments} 篇";
         });
     }
 
@@ -219,8 +220,8 @@ public partial class MainWindow : Window
         {
             var document = await _service.ReadNoteAsync(id, 0, 16_000);
             DocumentViewer.Text =
-                $"{document.Title}\n{document.VirtualPath}\nrevision {document.Revision}\n\n{document.Content}" +
-                (document.Done ? string.Empty : "\n\n[... use the API to request the next offset ...]");
+                $"{document.Title}\n{document.VirtualPath}\n版本 {document.Revision}\n\n{document.Content}" +
+                (document.Done ? string.Empty : "\n\n[... 内容未完全显示，请继续读取 ...]");
         });
     }
 
@@ -233,7 +234,7 @@ public partial class MainWindow : Window
     {
         if (TrashGrid.SelectedItem is not VaultTrashItem item)
         {
-            ShowInfo("Select a document to restore.");
+            ShowInfo("请选择要恢复的文档。");
             return;
         }
         await RunBusyAsync(async () =>
@@ -252,13 +253,13 @@ public partial class MainWindow : Window
     {
         if (TrashGrid.SelectedItem is not VaultTrashItem item)
         {
-            ShowInfo("Select a document to permanently delete.");
+            ShowInfo("请选择要永久删除的文档。");
             return;
         }
         if (MessageBox.Show(
                 this,
-                $"Permanently delete '{item.Title}'? This cannot be undone from the Vault.",
-                "Permanent delete",
+                $"永久删除“{item.Title}”？此操作无法从资料库中撤销。",
+                "永久删除",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Warning) != MessageBoxResult.Yes)
         {
@@ -273,7 +274,7 @@ public partial class MainWindow : Window
 
     private void BrowseImportButton_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFolderDialog { Title = "Select a folder to import" };
+        var dialog = new OpenFolderDialog { Title = "选择要导入的文件夹" };
         if (dialog.ShowDialog(this) == true)
         {
             ImportSourceTextBox.Text = dialog.FolderName;
@@ -282,23 +283,23 @@ public partial class MainWindow : Window
 
     private void BrowseExportButton_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFolderDialog { Title = "Select an export parent folder" };
+        var dialog = new OpenFolderDialog { Title = "选择导出父文件夹" };
         if (dialog.ShowDialog(this) == true)
         {
             ExportDestinationTextBox.Text = Path.Combine(
                 dialog.FolderName,
-                $"VaultExport-{DateTime.Now:yyyyMMdd-HHmmss}");
+                $"资料库导出-{DateTime.Now:yyyyMMdd-HHmmss}");
         }
     }
 
     private void BrowseRestoreTargetButton_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFolderDialog { Title = "Select a restore parent folder" };
+        var dialog = new OpenFolderDialog { Title = "选择恢复父文件夹" };
         if (dialog.ShowDialog(this) == true)
         {
             RestoreTargetTextBox.Text = Path.Combine(
                 dialog.FolderName,
-                $"VaultRestore-{DateTime.Now:yyyyMMdd-HHmmss}");
+                $"资料库恢复-{DateTime.Now:yyyyMMdd-HHmmss}");
         }
     }
 
@@ -326,7 +327,7 @@ public partial class MainWindow : Window
         }
         if (_importJobId is null)
         {
-            ShowInfo("Preview an import first.");
+            ShowInfo("请先预览导入内容。");
             return;
         }
         await RunBusyAsync(async () =>
@@ -363,7 +364,7 @@ public partial class MainWindow : Window
         }
         var dialog = new SaveFileDialog
         {
-            Filter = "Personal Vault backup (*.pvbackup)|*.pvbackup",
+            Filter = "Personal Vault 备份 (*.pvbackup)|*.pvbackup",
             DefaultExt = ".pvbackup",
             AddExtension = true,
             FileName = $"PersonalVault-{DateTime.Now:yyyyMMdd}.pvbackup"
@@ -386,7 +387,7 @@ public partial class MainWindow : Window
     {
         var dialog = new OpenFileDialog
         {
-            Filter = "Personal Vault backup (*.pvbackup)|*.pvbackup|All files (*.*)|*.*"
+            Filter = "Personal Vault 备份 (*.pvbackup)|*.pvbackup|所有文件 (*.*)|*.*"
         };
         if (dialog.ShowDialog(this) == true)
         {
@@ -399,7 +400,7 @@ public partial class MainWindow : Window
         var password = MaintenancePasswordBox.Password;
         if (string.IsNullOrEmpty(password))
         {
-            ShowInfo("Enter the backup password.");
+            ShowInfo("请输入备份密码。");
             return;
         }
         await RunBusyAsync(async () =>
@@ -433,7 +434,7 @@ public partial class MainWindow : Window
         await RunBusyAsync(async () =>
         {
             var count = await _service.RebuildSearchIndexAsync(VaultActorKind.UserUi);
-            MaintenanceOutput.Text = $"fts_rows={count}";
+            MaintenanceOutput.Text = $"搜索索引行数：{count}";
         });
     }
 
@@ -453,7 +454,7 @@ public partial class MainWindow : Window
         var confirmation = ConfirmNewPasswordBox.Password;
         if (string.IsNullOrEmpty(current) || !string.Equals(next, confirmation, StringComparison.Ordinal))
         {
-            ShowInfo("Enter the current password and matching new passwords.");
+            ShowInfo("请输入当前密码，并确认两次新密码一致。");
             return;
         }
         await RunBusyAsync(async () =>
@@ -466,7 +467,7 @@ public partial class MainWindow : Window
             MaintenancePasswordBox.Clear();
             NewPasswordBox.Clear();
             ConfirmNewPasswordBox.Clear();
-            MaintenanceOutput.Text = "Password changed.";
+            MaintenanceOutput.Text = "密码已修改。";
         });
     }
 
@@ -475,7 +476,7 @@ public partial class MainWindow : Window
         var current = MaintenancePasswordBox.Password;
         if (string.IsNullOrEmpty(current))
         {
-            ShowInfo("Enter the current password.");
+            ShowInfo("请输入当前密码。");
             return;
         }
         await RunBusyAsync(async () =>
@@ -488,7 +489,7 @@ public partial class MainWindow : Window
             RecoveryKeyTextBox.Text = recoveryKey;
             RecoveryConfirmTextBox.Clear();
             RecoveryPanel.Visibility = Visibility.Visible;
-            MaintenanceOutput.Text = "Recovery key rotated. Save and confirm the new key.";
+            MaintenanceOutput.Text = "恢复密钥已轮换。请保存并确认新密钥。";
         });
     }
 
@@ -508,12 +509,12 @@ public partial class MainWindow : Window
             if (!status.RecoveryVerified)
             {
                 ShowInfo(
-                    "Confirm the recovery key first. If the key was not saved, rotate recovery with the current password.");
+                    "请先确认恢复密钥。如果尚未保存，请使用当前密码重新轮换恢复密钥。");
                 return false;
             }
             return true;
         }
-        ShowInfo("Unlock the Vault first.");
+        ShowInfo("请先解锁资料库。");
         MainTabs.SelectedIndex = 0;
         return false;
     }
@@ -523,21 +524,21 @@ public partial class MainWindow : Window
         try
         {
             var status = await _service.GetStatusAsync();
-            StatusText.Text = status.State.ToString().ToUpperInvariant();
+            StatusText.Text = GetStateText(status.State);
             if (status.State == VaultSessionState.Locked)
             {
-                SessionDetailText.Text = "Vault is locked. Enter the password above and click Unlock.";
+                SessionDetailText.Text = "资料库已锁定。请输入上方密码并点击“解锁”。";
             }
             else if (!status.RecoveryVerified)
             {
-                StatusText.Text = "RECOVERY UNCONFIRMED";
+                StatusText.Text = "恢复密钥未确认";
                 SessionDetailText.Text =
-                    "Confirm the recovery key, or rotate recovery with the current password, before accessing content.";
+                    "请先确认恢复密钥，或使用当前密码重新轮换恢复密钥，然后才能访问内容。";
             }
             else
             {
                 SessionDetailText.Text =
-                    $"Session {status.SessionId} | idle until {status.IdleExpiresAt:u} | hard stop {status.HardExpiresAt:u}";
+                    $"会话 {status.SessionId} | 空闲锁定时间 {status.IdleExpiresAt:u} | 最迟锁定时间 {status.HardExpiresAt:u}";
             }
         }
         catch (Exception exception)
@@ -579,7 +580,7 @@ public partial class MainWindow : Window
         }
         catch (VaultException exception)
         {
-            ShowInfo($"{exception.Code}: {exception.Message}");
+            ShowInfo($"错误 {exception.Code}：{exception.Message}");
         }
         catch (Exception exception)
         {
@@ -598,7 +599,7 @@ public partial class MainWindow : Window
 
     private void ShowInfo(string message)
     {
-        MessageBox.Show(this, message, "Personal Vault", MessageBoxButton.OK, MessageBoxImage.Information);
+        MessageBox.Show(this, message, "个人资料库", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private static string NormalizeRecoveryKey(string value)
@@ -608,5 +609,18 @@ public partial class MainWindow : Window
                 .Where(character => !char.IsWhiteSpace(character) && character != '-')
                 .Select(char.ToUpperInvariant)
                 .ToArray());
+    }
+
+    private static string GetStateText(VaultSessionState state)
+    {
+        return state switch
+        {
+            VaultSessionState.Locked => "已锁定",
+            VaultSessionState.Unlocking => "解锁中",
+            VaultSessionState.Unlocked => "已解锁",
+            VaultSessionState.Expiring => "即将锁定",
+            VaultSessionState.Locking => "锁定中",
+            _ => "未知状态"
+        };
     }
 }

@@ -82,7 +82,7 @@ public static class WindowsPasswordPrompt
             if (startupException is not null || _application is null)
             {
                 throw new InvalidOperationException(
-                    "Unable to start the Windows authentication dispatcher.",
+                    "无法启动 Windows 授权窗口。",
                     startupException);
             }
 
@@ -113,7 +113,7 @@ public static class WindowsPasswordPrompt
 
             var approveButton = new Button
             {
-                Content = "Unlock",
+                Content = "解锁",
                 MinWidth = 90,
                 Margin = new Thickness(0, 0, 8, 0),
                 IsDefault = true
@@ -122,7 +122,7 @@ public static class WindowsPasswordPrompt
 
             var cancelButton = new Button
             {
-                Content = "Cancel",
+                Content = "取消",
                 MinWidth = 90,
                 IsCancel = true
             };
@@ -147,7 +147,7 @@ public static class WindowsPasswordPrompt
             });
             panel.Children.Add(new TextBlock
             {
-                Text = "Vault password:",
+                Text = "资料库密码：",
                 Margin = new Thickness(0, 12, 0, 0)
             });
             panel.Children.Add(_passwordBox);

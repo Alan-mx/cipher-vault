@@ -389,8 +389,8 @@ public sealed class VaultTools
             }
 
             var prompt = await _credentialPrompt.RequestAsync(
-                "Personal Vault authorization",
-                "The AI requested access to your encrypted Vault.",
+                "个人资料库授权",
+                "AI 请求访问你的加密资料库。",
                 cancellationToken);
             if (!prompt.Confirmed || string.IsNullOrEmpty(prompt.Password))
             {
