@@ -1,0 +1,198 @@
+<Window x:Class="PersonalVault.Ui.Wpf.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Personal Vault"
+        Width="1060"
+        Height="760"
+        MinWidth="900"
+        MinHeight="650"
+        WindowStartupLocation="CenterScreen">
+    <Grid Margin="22">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <DockPanel Grid.Row="0" Margin="0,0,0,14">
+            <TextBlock Text="Personal Vault" FontSize="28" FontWeight="SemiBold" VerticalAlignment="Center" />
+            <Border Background="#EEF2F7" CornerRadius="4" Padding="12,6" HorizontalAlignment="Right">
+                <TextBlock x:Name="StatusText" Text="LOCKED" FontWeight="SemiBold" Foreground="#344054" />
+            </Border>
+        </DockPanel>
+
+        <TabControl x:Name="MainTabs" Grid.Row="1" SelectionChanged="MainTabs_SelectionChanged">
+            <TabItem Header="Vault">
+                <Grid Margin="16">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0"
+                               Text="Encrypted local Markdown and TXT. One authorization covers this process session."
+                               Foreground="#667085"
+                               TextWrapping="Wrap"
+                               Margin="0,0,0,16" />
+                    <Grid Grid.Row="1" Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Vault folder" VerticalAlignment="Center" Margin="0,0,12,0" />
+                        <TextBox x:Name="VaultPathTextBox" Grid.Column="1" MinHeight="32" Padding="8,4" VerticalContentAlignment="Center" />
+                        <Button Grid.Column="2" Content="Initialize" MinWidth="100" Margin="12,0,0,0" Padding="12,5" Click="InitializeButton_Click" />
+                    </Grid>
+                    <Grid Grid.Row="2" Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Password" VerticalAlignment="Center" Margin="0,0,12,0" />
+                        <PasswordBox x:Name="PasswordBox" Grid.Column="1" MinHeight="32" Padding="8,4" VerticalContentAlignment="Center" />
+                        <Button Grid.Column="2" Content="Unlock" MinWidth="90" Margin="12,0,0,0" Padding="12,5" Click="UnlockButton_Click" />
+                        <Button Grid.Column="3" Content="Lock" MinWidth="90" Margin="8,0,0,0" Padding="12,5" Click="LockButton_Click" />
+                    </Grid>
+                    <StackPanel Grid.Row="3">
+                        <Border x:Name="RecoveryPanel"
+                                Visibility="Collapsed"
+                                BorderBrush="#D0D5DD"
+                                BorderThickness="1"
+                                CornerRadius="4"
+                                Padding="16"
+                                Margin="0,0,0,16">
+                            <StackPanel>
+                                <TextBlock Text="Save this offline recovery key" FontWeight="SemiBold" FontSize="16" />
+                                <TextBlock Margin="0,6,0,10" Foreground="#667085" TextWrapping="Wrap"
+                                           Text="Store it outside this computer and outside the Vault backup. It is shown only during initialization or rotation." />
+                                <TextBox x:Name="RecoveryKeyTextBox" IsReadOnly="True" TextWrapping="Wrap"
+                                         MinHeight="60" Padding="8" FontFamily="Consolas" />
+                                <Button Content="Copy key" HorizontalAlignment="Left" Margin="0,8,0,10"
+                                        Padding="10,4" Click="CopyRecoveryButton_Click" />
+                                <TextBlock Text="Re-enter the recovery key to confirm it was saved:" />
+                                <TextBox x:Name="RecoveryConfirmTextBox" MinHeight="32" Padding="8,4" Margin="0,6,0,0" />
+                                <Button Content="Confirm recovery key" HorizontalAlignment="Left" Margin="0,8,0,0"
+                                        Padding="12,5" Click="ConfirmRecoveryButton_Click" />
+                            </StackPanel>
+                        </Border>
+                        <TextBlock x:Name="SessionDetailText" Foreground="#475467" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Browse">
+                <Grid Margin="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="220" />
+                    </Grid.RowDefinitions>
+                    <Grid Grid.Row="0" Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="SearchTextBox" Grid.Column="0" MinHeight="30" Padding="8,4" />
+                        <Button Grid.Column="1" Content="Search" MinWidth="80" Margin="8,0,0,0" Click="SearchButton_Click" />
+                        <Button Grid.Column="2" Content="Refresh" MinWidth="80" Margin="8,0,0,0" Click="RefreshCatalogButton_Click" />
+                    </Grid>
+                    <DataGrid x:Name="CatalogGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True"
+                              SelectionMode="Single" SelectionChanged="CatalogGrid_SelectionChanged">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="2*" />
+                            <DataGridTextColumn Header="Virtual path" Binding="{Binding VirtualPath}" Width="3*" />
+                            <DataGridTextColumn Header="Revision" Binding="{Binding Revision}" Width="90" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBox x:Name="DocumentViewer" Grid.Row="2" IsReadOnly="True" AcceptsReturn="True"
+                             TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                             Margin="0,10,0,0" Padding="10" FontFamily="Consolas" />
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Trash">
+                <Grid Margin="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
+                        <Button Content="Refresh" MinWidth="80" Click="RefreshTrashButton_Click" />
+                        <Button Content="Restore" MinWidth="80" Margin="8,0,0,0" Click="RestoreTrashButton_Click" />
+                        <Button Content="Permanent delete" MinWidth="120" Margin="8,0,0,0" Click="PurgeButton_Click" />
+                    </StackPanel>
+                    <DataGrid x:Name="TrashGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="2*" />
+                            <DataGridTextColumn Header="Virtual path" Binding="{Binding VirtualPath}" Width="3*" />
+                            <DataGridTextColumn Header="Purge after" Binding="{Binding PurgeAfter}" Width="180" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Maintenance">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="16">
+                        <TextBlock Text="Current password" />
+                        <PasswordBox x:Name="MaintenancePasswordBox" MinHeight="30" Padding="8,4" Margin="0,4,0,12" />
+
+                        <TextBlock Text="Import from Markdown/TXT folder" FontWeight="SemiBold" />
+                        <DockPanel Margin="0,6,0,8">
+                            <Button Content="Browse" MinWidth="80" DockPanel.Dock="Left" Click="BrowseImportButton_Click" />
+                            <TextBox x:Name="ImportSourceTextBox" Margin="8,0,0,0" MinHeight="30" Padding="8,4" />
+                        </DockPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="Preview import" MinWidth="110" Click="ImportPreviewButton_Click" />
+                            <Button Content="Apply preview" MinWidth="110" Margin="8,0,0,0" Click="ImportApplyButton_Click" />
+                        </StackPanel>
+
+                        <Separator Margin="0,16" />
+                        <TextBlock Text="Export plaintext snapshot" FontWeight="SemiBold" />
+                        <DockPanel Margin="0,6,0,8">
+                            <Button Content="Browse" MinWidth="80" DockPanel.Dock="Left" Click="BrowseExportButton_Click" />
+                            <TextBox x:Name="ExportDestinationTextBox" Margin="8,0,0,0" MinHeight="30" Padding="8,4" />
+                        </DockPanel>
+                        <Button Content="Export snapshot" HorizontalAlignment="Left" MinWidth="130" Click="ExportButton_Click" />
+
+                        <Separator Margin="0,16" />
+                        <TextBlock Text="Backup and restore" FontWeight="SemiBold" />
+                        <Button Content="Save encrypted backup" HorizontalAlignment="Left" MinWidth="170" Margin="0,6,0,8" Click="BackupButton_Click" />
+                        <DockPanel Margin="0,0,0,8">
+                            <Button Content="Open backup" MinWidth="100" DockPanel.Dock="Left" Click="OpenBackupFileButton_Click" />
+                            <TextBox x:Name="RestoreBackupTextBox" Margin="8,0,0,0" MinHeight="30" Padding="8,4" />
+                        </DockPanel>
+                        <DockPanel Margin="0,0,0,8">
+                            <Button Content="Restore target" MinWidth="100" DockPanel.Dock="Left" Click="BrowseRestoreTargetButton_Click" />
+                            <TextBox x:Name="RestoreTargetTextBox" Margin="8,0,0,0" MinHeight="30" Padding="8,4" />
+                        </DockPanel>
+                        <Button Content="Restore backup" HorizontalAlignment="Left" MinWidth="130" Margin="0,0,0,8" Click="RestoreBackupButton_Click" />
+
+                        <Separator Margin="0,16" />
+                        <TextBlock Text="Maintenance" FontWeight="SemiBold" />
+                        <StackPanel Orientation="Horizontal" Margin="0,6,0,8">
+                            <Button Content="Verify" MinWidth="90" Click="VerifyButton_Click" />
+                            <Button Content="Rebuild search" MinWidth="110" Margin="8,0,0,0" Click="RebuildButton_Click" />
+                            <Button Content="Audit" MinWidth="90" Margin="8,0,0,0" Click="AuditButton_Click" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="Change password" MinWidth="120" Click="ChangePasswordButton_Click" />
+                            <Button Content="Rotate recovery key" MinWidth="140" Margin="8,0,0,0" Click="RotateRecoveryButton_Click" />
+                        </StackPanel>
+                        <TextBlock Text="New password" Margin="0,12,0,0" />
+                        <PasswordBox x:Name="NewPasswordBox" MinHeight="30" Padding="8,4" Margin="0,4,0,6" />
+                        <TextBlock Text="Confirm new password" />
+                        <PasswordBox x:Name="ConfirmNewPasswordBox" MinHeight="30" Padding="8,4" Margin="0,4,0,12" />
+                        <TextBox x:Name="MaintenanceOutput" IsReadOnly="True" AcceptsReturn="True"
+                                 TextWrapping="Wrap" MinHeight="160" VerticalScrollBarVisibility="Auto"
+                                 Padding="10" FontFamily="Consolas" />
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+    </Grid>
+</Window>
