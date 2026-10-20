@@ -144,6 +144,18 @@ default_tools_approval_mode = "prompt"
 Use `--config <file>` or `--vault <directory>` for an MCP server that should not
 use the shared defaults.
 
+`default_tools_approval_mode` is the MCP client's tool approval policy, not a
+CipherVault access setting. Prefer `prompt`, or `writes` when only non-read-only
+tools should require confirmation. A client configured with
+`approval_policy = "never"` may reject `prompt` or `auto` before the request
+reaches CipherVault. `approve` bypasses per-tool client confirmation; use it only
+when the CipherVault password prompt is the intended authorization gate and you
+accept that tool calls can run without further client approval while that MCP
+process remains unlocked.
+
+Keep machine-specific paths and personal `~/.codex/config.toml` entries out of
+this repository. The example above is a reusable configuration template.
+
 ## Publish
 
 ```powershell

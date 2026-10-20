@@ -674,9 +674,31 @@ public partial class MainWindow : Window
         try
         {
             var status = await _service.GetStatusAsync();
-            StatusText.Text = GetStateText(status.State);
             if (status.State == VaultSessionState.Locked)
             {
+                switch (GetVaultPathState(VaultPathTextBox.Text.Trim()))
+                {
+                    case VaultPathState.Missing:
+                        StatusText.Text = "未初始化";
+                        SessionDetailText.Text =
+                            "资料库尚未初始化。请输入密码并点击“初始化”。";
+                        ClearSensitiveUi("资料库尚未初始化。");
+                        return;
+                    case VaultPathState.Uninitialized:
+                        StatusText.Text = "未初始化";
+                        SessionDetailText.Text =
+                            "该目录已存在，但未检测到 CipherVault 文件。初始化需要新目录；请换一个目录，或确认无需保留后移除该目录。";
+                        ClearSensitiveUi("资料库尚未初始化。");
+                        return;
+                    case VaultPathState.Incomplete:
+                        StatusText.Text = "资料库异常";
+                        SessionDetailText.Text =
+                            "资料库文件不完整：需要同时存在 vault.keys 和 vault.db。请检查路径，或从备份恢复。";
+                        ClearSensitiveUi("资料库不可用。");
+                        return;
+                }
+
+                StatusText.Text = GetStateText(status.State);
                 SessionDetailText.Text = "资料库已锁定。请输入上方密码并点击“解锁”。";
                 ClearSensitiveUi();
             }
@@ -689,6 +711,7 @@ public partial class MainWindow : Window
             }
             else
             {
+                StatusText.Text = GetStateText(status.State);
                 var idleRemaining = FormatRemaining(status.IdleExpiresAt, DateTimeOffset.UtcNow);
                 var hardRemaining = FormatRemaining(status.HardExpiresAt, DateTimeOffset.UtcNow);
                 SessionDetailText.Text =
@@ -786,7 +809,7 @@ public partial class MainWindow : Window
         LoadMoreTrashButton.IsEnabled = hasMore;
     }
 
-    private void ClearSensitiveUi()
+    private void ClearSensitiveUi(string summary = "资料库已锁定。")
     {
         _catalogCursor = null;
         _searchCursor = null;
@@ -798,10 +821,45 @@ public partial class MainWindow : Window
         TrashGrid.ItemsSource = null;
         DocumentViewer.Clear();
         MaintenanceOutput.Clear();
-        CatalogSummaryText.Text = "资料库已锁定。";
-        TrashSummaryText.Text = "资料库已锁定。";
+        CatalogSummaryText.Text = summary;
+        TrashSummaryText.Text = summary;
         LoadMoreCatalogButton.IsEnabled = false;
         LoadMoreTrashButton.IsEnabled = false;
+    }
+
+    private static VaultPathState GetVaultPathState(string vaultPath)
+    {
+        if (string.IsNullOrWhiteSpace(vaultPath))
+        {
+            return VaultPathState.Missing;
+        }
+
+        var fullPath = Path.GetFullPath(vaultPath);
+        if (!Directory.Exists(fullPath))
+        {
+            return VaultPathState.Missing;
+        }
+
+        var keyExists = File.Exists(Path.Combine(fullPath, "vault.keys"));
+        var databaseExists = File.Exists(Path.Combine(fullPath, "vault.db"));
+        if (!keyExists && !databaseExists)
+        {
+            return VaultPathState.Uninitialized;
+        }
+        if (!keyExists || !databaseExists)
+        {
+            return VaultPathState.Incomplete;
+        }
+
+        return VaultPathState.Initialized;
+    }
+
+    private enum VaultPathState
+    {
+        Missing,
+        Uninitialized,
+        Incomplete,
+        Initialized
     }
 
     private static string FormatRemaining(DateTimeOffset? expiresAt, DateTimeOffset now)

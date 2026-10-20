@@ -134,6 +134,116 @@ public sealed class MainWindowTests
     }
 
     [Fact]
+    public async Task MissingVaultPathIsShownAsUninitialized()
+    {
+        if (!ShouldRunInteractiveUiTests())
+        {
+            return;
+        }
+
+        using var uiLock = UiAutomationLock.Acquire();
+        await RunOnStaAsync(async () =>
+        {
+            using var fixture = new WindowFixture();
+            var window = fixture.CreateWindow();
+            try
+            {
+                window.Show();
+
+                await WaitUntilAsync(
+                    () => Find<TextBlock>(window, "StatusText").Text == "未初始化",
+                    TimeSpan.FromSeconds(10));
+                Assert.Contains(
+                    "请输入密码并点击“初始化”",
+                    Find<TextBlock>(window, "SessionDetailText").Text,
+                    StringComparison.Ordinal);
+                Assert.Equal(
+                    "资料库尚未初始化。",
+                    Find<TextBlock>(window, "CatalogSummaryText").Text);
+            }
+            finally
+            {
+                await fixture.DisposeWindowAsync(window);
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task ExistingUninitializedDirectoryRequiresNewPath()
+    {
+        if (!ShouldRunInteractiveUiTests())
+        {
+            return;
+        }
+
+        using var uiLock = UiAutomationLock.Acquire();
+        await RunOnStaAsync(async () =>
+        {
+            using var fixture = new WindowFixture();
+            Directory.CreateDirectory(Path.Combine(fixture.Root, "vault"));
+            var window = fixture.CreateWindow();
+            try
+            {
+                window.Show();
+
+                await WaitUntilAsync(
+                    () => Find<TextBlock>(window, "StatusText").Text == "未初始化",
+                    TimeSpan.FromSeconds(10));
+                var detail = Find<TextBlock>(window, "SessionDetailText").Text;
+                Assert.Contains("目录已存在", detail, StringComparison.Ordinal);
+                Assert.Contains("初始化需要新目录", detail, StringComparison.Ordinal);
+                Assert.Equal(
+                    "资料库尚未初始化。",
+                    Find<TextBlock>(window, "CatalogSummaryText").Text);
+            }
+            finally
+            {
+                await fixture.DisposeWindowAsync(window);
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task IncompleteVaultFilesAreShownAsVaultError()
+    {
+        if (!ShouldRunInteractiveUiTests())
+        {
+            return;
+        }
+
+        using var uiLock = UiAutomationLock.Acquire();
+        await RunOnStaAsync(async () =>
+        {
+            using var fixture = new WindowFixture();
+            var vaultPath = Path.Combine(fixture.Root, "vault");
+            Directory.CreateDirectory(vaultPath);
+            File.WriteAllText(Path.Combine(vaultPath, "vault.keys"), "{}");
+            var window = fixture.CreateWindow();
+            try
+            {
+                window.Show();
+
+                await WaitUntilAsync(
+                    () => Find<TextBlock>(window, "StatusText").Text == "资料库异常",
+                    TimeSpan.FromSeconds(10));
+                var detail = Find<TextBlock>(window, "SessionDetailText").Text;
+                Assert.Contains("vault.keys", detail, StringComparison.Ordinal);
+                Assert.Contains("vault.db", detail, StringComparison.Ordinal);
+                Assert.Equal(
+                    "资料库不可用。",
+                    Find<TextBlock>(window, "CatalogSummaryText").Text);
+            }
+            finally
+            {
+                await fixture.DisposeWindowAsync(window);
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
     public Task ClearingSensitiveUiRemovesDecryptedState()
     {
         return RunOnStaAsync(async () =>
@@ -150,7 +260,7 @@ public sealed class MainWindowTests
                 Find<Button>(window, "LoadMoreTrashButton").IsEnabled = true;
                 SetField(window, "_importJobId", (Guid?)Guid.NewGuid());
 
-                InvokePrivate(window, "ClearSensitiveUi");
+                InvokePrivate(window, "ClearSensitiveUi", "资料库已锁定。");
 
                 Assert.Empty(Find<TextBox>(window, "DocumentViewer").Text);
                 Assert.Empty(Find<TextBox>(window, "MaintenanceOutput").Text);
@@ -205,13 +315,16 @@ public sealed class MainWindowTests
             ?? throw new InvalidOperationException($"Control {name} was not found.");
     }
 
-    private static object? InvokePrivate(object target, string methodName)
+    private static object? InvokePrivate(
+        object target,
+        string methodName,
+        params object?[] arguments)
     {
         var method = target.GetType().GetMethod(
             methodName,
             BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new InvalidOperationException($"Method {methodName} was not found.");
-        return method.Invoke(target, null);
+        return method.Invoke(target, arguments);
     }
 
     private static object? InvokePrivateStatic(
