@@ -1,10 +1,92 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text.Json;
+using CipherVault.Auth.Win;
+using CipherVault.Core;
+using CipherVault.Core.Documents;
+using CipherVault.Core.Session;
 
 namespace CipherVault.Mcp.Tests;
 
 public sealed class McpStdioProcessTests
 {
+    private const string PromptPassword = "mcp prompt password";
+
+    [Fact]
+    public async Task RealToolCallPromptsForPasswordAndReturnsDocument()
+    {
+        if (!Environment.UserInteractive)
+        {
+            return;
+        }
+
+        using var uiLock = UiAutomationLock.Acquire();
+        using var fixture = new ProcessFixture(accessMode: "readWrite");
+        await fixture.InitializeVaultAsync();
+        await using var server = McpServerProcess.Start(fixture.ConfigPath);
+        using var initialize = await server.RequestAsync(
+            1,
+            "initialize",
+            new
+            {
+                protocolVersion = "2025-11-25",
+                capabilities = new { },
+                clientInfo = new
+                {
+                    name = "CipherVault.Mcp.Tests",
+                    version = "1.0.0"
+                }
+            });
+        await server.NotifyAsync("notifications/initialized");
+
+        var createTask = server.RequestAsync(
+            2,
+            "tools/call",
+            new
+            {
+                name = "create_note",
+                arguments = new
+                {
+                    title = "real prompt document",
+                    content = "content through the real Windows prompt",
+                    folder = "integration"
+                }
+            });
+        var promptWindow = await WaitForWindowAsync("CipherVault 授权");
+        FocusWindow(promptWindow);
+        SubmitPassword(promptWindow, PromptPassword);
+        using var created = await createTask.WaitAsync(TimeSpan.FromSeconds(15));
+        var createdText = GetToolText(created);
+        using var createdDocument = JsonDocument.Parse(createdText);
+        Assert.True(createdDocument.RootElement.GetProperty("ok").GetBoolean());
+        var documentId = createdDocument.RootElement
+            .GetProperty("document")
+            .GetProperty("documentId")
+            .GetGuid();
+
+        using var read = await server.RequestAsync(
+            3,
+            "tools/call",
+            new
+            {
+                name = "read_note",
+                arguments = new
+                {
+                    documentId = documentId.ToString("D")
+                }
+            });
+        using var readDocument = JsonDocument.Parse(GetToolText(read));
+        Assert.Equal(
+            "content through the real Windows prompt",
+            readDocument.RootElement
+                .GetProperty("document")
+                .GetProperty("content")
+                .GetString());
+
+        await server.CloseInputAndWaitAsync();
+        Assert.Equal(0, server.ExitCode);
+    }
+
     [Fact]
     public async Task ProcessRejectsMissingExplicitConfigWithoutWritingProtocolOutput()
     {
@@ -136,7 +218,7 @@ public sealed class McpStdioProcessTests
 
     private sealed class ProcessFixture : IDisposable
     {
-        public ProcessFixture()
+        public ProcessFixture(string accessMode = "readOnly")
         {
             Root = Path.Combine(
                 Path.GetTempPath(),
@@ -156,13 +238,25 @@ public sealed class McpStdioProcessTests
                     },
                     mcp = new
                     {
-                        accessMode = "readOnly"
+                        accessMode
                     }
                 }));
         }
 
         public string Root { get; }
         public string ConfigPath { get; }
+        public string VaultPath => Path.Combine(Root, "vault");
+
+        public async Task InitializeVaultAsync()
+        {
+            await using var service = new VaultService(
+                new AlwaysActiveActivityProvider());
+            var initialized = await service.InitializeAsync(VaultPath, PromptPassword);
+            await service.ConfirmRecoveryKeyAsync(
+                VaultPath,
+                initialized.RecoveryKey,
+                VaultActorKind.UserUi);
+        }
 
         public void Dispose()
         {
@@ -170,6 +264,128 @@ public sealed class McpStdioProcessTests
             {
                 Directory.Delete(Root, recursive: true);
             }
+        }
+    }
+
+    private static string GetToolText(JsonDocument response)
+    {
+        return response.RootElement
+            .GetProperty("result")
+            .GetProperty("content")[0]
+            .GetProperty("text")
+            .GetString()
+            ?? throw new InvalidOperationException("Tool result text was empty.");
+    }
+
+    private static async Task<IntPtr> WaitForWindowAsync(string title)
+    {
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(10);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            var window = NativeMethods.FindWindow(null, title);
+            if (window != IntPtr.Zero)
+            {
+                return window;
+            }
+            await Task.Delay(25);
+        }
+        throw new TimeoutException($"Window '{title}' did not appear.");
+    }
+
+    private static void FocusWindow(IntPtr window)
+    {
+        _ = NativeMethods.ShowWindow(window, 5);
+        _ = NativeMethods.SetForegroundWindow(window);
+        Thread.Sleep(100);
+    }
+
+    private static void SubmitPassword(IntPtr window, string password)
+    {
+        foreach (var character in password)
+        {
+            _ = NativeMethods.PostMessage(
+                window,
+                0x0102,
+                (IntPtr)character,
+                IntPtr.Zero);
+        }
+        _ = NativeMethods.PostMessage(
+            window,
+            0x0100,
+            (IntPtr)0x0D,
+            IntPtr.Zero);
+        _ = NativeMethods.PostMessage(
+            window,
+            0x0101,
+            (IntPtr)0x0D,
+            IntPtr.Zero);
+        Thread.Sleep(100);
+    }
+
+    private static class NativeMethods
+    {
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern IntPtr FindWindow(string? className, string windowName);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool SetForegroundWindow(IntPtr window);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool ShowWindow(IntPtr window, int command);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool PostMessage(
+            IntPtr window,
+            uint message,
+            IntPtr wParam,
+            IntPtr lParam);
+    }
+
+    private static class UiAutomationLock
+    {
+        private const string Name = @"Local\CipherVault.WindowsUiAutomationTests";
+
+        public static IDisposable Acquire()
+        {
+            var semaphore = new Semaphore(1, 1, Name);
+            if (!semaphore.WaitOne(TimeSpan.FromSeconds(30)))
+            {
+                semaphore.Dispose();
+                throw new TimeoutException("Timed out waiting for Windows UI automation lock.");
+            }
+            return new Releaser(semaphore);
+        }
+
+        private sealed class Releaser : IDisposable
+        {
+            private Semaphore? _semaphore;
+
+            public Releaser(Semaphore semaphore)
+            {
+                _semaphore = semaphore;
+            }
+
+            public void Dispose()
+            {
+                var semaphore = Interlocked.Exchange(ref _semaphore, null);
+                if (semaphore is null)
+                {
+                    return;
+                }
+                semaphore.Release();
+                semaphore.Dispose();
+            }
+        }
+    }
+
+    private sealed class AlwaysActiveActivityProvider : ISystemActivityProvider
+    {
+        public SystemActivitySnapshot GetSnapshot()
+        {
+            return new SystemActivitySnapshot(TimeSpan.Zero, false);
         }
     }
 

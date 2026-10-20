@@ -61,8 +61,8 @@
                         <PasswordBox x:Name="RecoveryKeyUnlockBox" Grid.Column="1" MinHeight="32"
                                      Padding="8,4" VerticalContentAlignment="Center" FontFamily="Consolas"
                                      Visibility="Collapsed" ToolTip="可粘贴离线恢复密钥，空格和连字符会自动忽略。" />
-                        <Button Grid.Column="2" Content="解锁" MinWidth="90" Margin="12,0,0,0" Padding="12,5" Click="UnlockButton_Click" />
-                        <Button Grid.Column="3" Content="锁定" MinWidth="90" Margin="8,0,0,0" Padding="12,5" Click="LockButton_Click" />
+                        <Button x:Name="UnlockButton" Grid.Column="2" Content="解锁" MinWidth="90" Margin="12,0,0,0" Padding="12,5" Click="UnlockButton_Click" />
+                        <Button x:Name="LockButton" Grid.Column="3" Content="锁定" MinWidth="90" Margin="8,0,0,0" Padding="12,5" Click="LockButton_Click" />
                     </Grid>
                     <StackPanel Grid.Row="3">
                         <Border x:Name="RecoveryPanel"

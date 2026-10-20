@@ -23,6 +23,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CipherVault.Mcp.Tests", "te
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CipherVault.Ui.Wpf.Tests", "tests\CipherVault.Ui.Wpf.Tests\CipherVault.Ui.Wpf.Tests.csproj", "{9DBF1DD2-3A86-418D-BD3E-437756C6EB75}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CipherVault.Auth.Win.Tests", "tests\CipherVault.Auth.Win.Tests\CipherVault.Auth.Win.Tests.csproj", "{11F0C054-4E6A-4518-AB38-AD7C09EE83BE}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -129,6 +131,18 @@ Global
 		{9DBF1DD2-3A86-418D-BD3E-437756C6EB75}.Release|x64.Build.0 = Release|Any CPU
 		{9DBF1DD2-3A86-418D-BD3E-437756C6EB75}.Release|x86.ActiveCfg = Release|Any CPU
 		{9DBF1DD2-3A86-418D-BD3E-437756C6EB75}.Release|x86.Build.0 = Release|Any CPU
+		{11F0C054-4E6A-4518-AB38-AD7C09EE83BE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{11F0C054-4E6A-4518-AB38-AD7C09EE83BE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{11F0C054-4E6A-4518-AB38-AD7C09EE83BE}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{11F0C054-4E6A-4518-AB38-AD7C09EE83BE}.Debug|x64.Build.0 = Debug|Any CPU
+		{11F0C054-4E6A-4518-AB38-AD7C09EE83BE}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{11F0C054-4E6A-4518-AB38-AD7C09EE83BE}.Debug|x86.Build.0 = Debug|Any CPU
+		{11F0C054-4E6A-4518-AB38-AD7C09EE83BE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{11F0C054-4E6A-4518-AB38-AD7C09EE83BE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{11F0C054-4E6A-4518-AB38-AD7C09EE83BE}.Release|x64.ActiveCfg = Release|Any CPU
+		{11F0C054-4E6A-4518-AB38-AD7C09EE83BE}.Release|x64.Build.0 = Release|Any CPU
+		{11F0C054-4E6A-4518-AB38-AD7C09EE83BE}.Release|x86.ActiveCfg = Release|Any CPU
+		{11F0C054-4E6A-4518-AB38-AD7C09EE83BE}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -142,5 +156,6 @@ Global
 		{55F46819-E729-4194-882B-44B70875B0A0} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{540419DD-C2C8-4ADD-B7B0-2858603D7E68} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{9DBF1DD2-3A86-418D-BD3E-437756C6EB75} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{11F0C054-4E6A-4518-AB38-AD7C09EE83BE} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal

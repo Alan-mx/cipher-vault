@@ -5,12 +5,70 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
 using CipherVault.Core;
+using CipherVault.Core.Documents;
+using CipherVault.Core.Session;
 using CipherVault.Ui.Wpf;
 
 namespace CipherVault.Ui.Wpf.Tests;
 
 public sealed class MainWindowTests
 {
+    private const string Password = "wpf integration password";
+
+    [Fact]
+    public async Task WindowUnlocksLoadsCatalogAndClearsAfterLock()
+    {
+        if (!Environment.UserInteractive)
+        {
+            return;
+        }
+
+        using var uiLock = UiAutomationLock.Acquire();
+        await RunOnStaAsync(async () =>
+        {
+            using var fixture = new WindowFixture();
+            await fixture.InitializeVaultAsync();
+            var window = fixture.CreateWindow();
+            try
+            {
+                window.Show();
+                await WaitUntilAsync(
+                    () => Find<TextBox>(window, "VaultPathTextBox").Text ==
+                        Path.Combine(fixture.Root, "vault"),
+                    TimeSpan.FromSeconds(10));
+                Find<PasswordBox>(window, "PasswordBox").Password = Password;
+                Find<Button>(window, "UnlockButton").RaiseEvent(
+                    new RoutedEventArgs(Button.ClickEvent));
+
+                await WaitUntilAsync(
+                    () => Find<TextBlock>(window, "StatusText").Text == "已解锁",
+                    TimeSpan.FromSeconds(10));
+                await WaitUntilAsync(
+                    () => Find<TextBlock>(window, "CatalogSummaryText").Text.Contains(
+                        "当前显示 0 篇",
+                        StringComparison.Ordinal),
+                    TimeSpan.FromSeconds(10));
+                Assert.Empty(Find<PasswordBox>(window, "PasswordBox").Password);
+
+                Find<TextBox>(window, "DocumentViewer").Text = "decrypted content";
+                Find<Button>(window, "LockButton").RaiseEvent(
+                    new RoutedEventArgs(Button.ClickEvent));
+                await WaitUntilAsync(
+                    () => Find<TextBlock>(window, "StatusText").Text == "已锁定",
+                    TimeSpan.FromSeconds(10));
+
+                Assert.Empty(Find<TextBox>(window, "DocumentViewer").Text);
+                Assert.Null(Find<DataGrid>(window, "CatalogGrid").ItemsSource);
+                Assert.Equal("资料库已锁定。", Find<TextBlock>(window, "CatalogSummaryText").Text);
+            }
+            finally
+            {
+                await fixture.DisposeWindowAsync(window);
+                window.Close();
+            }
+        });
+    }
+
     [Fact]
     public Task CredentialSelectorsTogglePasswordAndRecoveryInputs()
     {
@@ -192,20 +250,26 @@ public sealed class MainWindowTests
             TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
-            try
+            var dispatcher = Dispatcher.CurrentDispatcher;
+            SynchronizationContext.SetSynchronizationContext(
+                new DispatcherSynchronizationContext(dispatcher));
+            dispatcher.BeginInvoke(new Action(async () =>
             {
-                var dispatcher = Dispatcher.CurrentDispatcher;
-                test().GetAwaiter().GetResult();
-                completion.SetResult(true);
-            }
-            catch (Exception exception)
-            {
-                completion.SetException(exception);
-            }
-            finally
-            {
-                Dispatcher.CurrentDispatcher.InvokeShutdown();
-            }
+                try
+                {
+                    await test();
+                    completion.SetResult(true);
+                }
+                catch (Exception exception)
+                {
+                    completion.SetException(exception);
+                }
+                finally
+                {
+                    dispatcher.BeginInvokeShutdown(DispatcherPriority.Background);
+                }
+            }));
+            Dispatcher.Run();
         })
         {
             IsBackground = true
@@ -214,6 +278,21 @@ public sealed class MainWindowTests
         thread.Start();
         await completion.Task.WaitAsync(TimeSpan.FromSeconds(20));
         thread.Join(TimeSpan.FromSeconds(5));
+    }
+
+    private static async Task WaitUntilAsync(
+        Func<bool> condition,
+        TimeSpan timeout)
+    {
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        while (!condition())
+        {
+            if (DateTimeOffset.UtcNow >= deadline)
+            {
+                throw new TimeoutException("WPF condition was not met before timeout.");
+            }
+            await Task.Delay(25);
+        }
     }
 
     private sealed class WindowFixture : IDisposable
@@ -256,6 +335,18 @@ public sealed class MainWindowTests
             return new MainWindow();
         }
 
+        public async Task InitializeVaultAsync()
+        {
+            await using var service = new VaultService(new AlwaysActiveActivityProvider());
+            var initialized = await service.InitializeAsync(
+                Path.Combine(Root, "vault"),
+                Password);
+            await service.ConfirmRecoveryKeyAsync(
+                Path.Combine(Root, "vault"),
+                initialized.RecoveryKey,
+                VaultActorKind.UserUi);
+        }
+
         public async Task DisposeWindowAsync(MainWindow window)
         {
             var field = typeof(MainWindow).GetField(
@@ -294,4 +385,49 @@ public sealed class MainWindowTests
         "CIPHER_VAULT_ACCESS_MODE",
         "CIPHER_VAULT_READ_ONLY"
     ];
+
+    private sealed class AlwaysActiveActivityProvider : ISystemActivityProvider
+    {
+        public SystemActivitySnapshot GetSnapshot()
+        {
+            return new SystemActivitySnapshot(TimeSpan.Zero, false);
+        }
+    }
+
+    private static class UiAutomationLock
+    {
+        private const string Name = @"Local\CipherVault.WindowsUiAutomationTests";
+
+        public static IDisposable Acquire()
+        {
+            var semaphore = new Semaphore(1, 1, Name);
+            if (!semaphore.WaitOne(TimeSpan.FromSeconds(30)))
+            {
+                semaphore.Dispose();
+                throw new TimeoutException("Timed out waiting for Windows UI automation lock.");
+            }
+            return new Releaser(semaphore);
+        }
+
+        private sealed class Releaser : IDisposable
+        {
+            private Semaphore? _semaphore;
+
+            public Releaser(Semaphore semaphore)
+            {
+                _semaphore = semaphore;
+            }
+
+            public void Dispose()
+            {
+                var semaphore = Interlocked.Exchange(ref _semaphore, null);
+                if (semaphore is null)
+                {
+                    return;
+                }
+                semaphore.Release();
+                semaphore.Dispose();
+            }
+        }
+    }
 }
