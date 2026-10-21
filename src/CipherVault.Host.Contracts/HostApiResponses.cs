@@ -17,3 +17,26 @@ public sealed record HostHealthData(
     string Status,
     string HostVersion,
     string ProtocolVersion);
+
+public sealed record HostStatusData(
+    string Status,
+    string HostVersion,
+    string ProtocolVersion,
+    HostEndpointStatusData Endpoint,
+    HostSessionStatusData Session);
+
+public sealed record HostEndpointStatusData(
+    string BaseUrl,
+    string McpPath,
+    string AdminPath);
+
+public sealed record HostSessionStatusData(
+    string State,
+    Guid? SessionId,
+    DateTimeOffset? StartedAt,
+    DateTimeOffset? LastUserActivityAt,
+    DateTimeOffset? IdleExpiresAt,
+    DateTimeOffset? HardExpiresAt,
+    string? LockReason,
+    int ActiveLeases,
+    int ConnectedClients);

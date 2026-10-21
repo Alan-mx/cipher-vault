@@ -254,6 +254,15 @@ public static class CipherVaultHostConfiguration
                 VaultErrorCode.InvalidInput,
                 "host.mcpPath and host.adminPath must be different.");
         }
+        if (string.Equals(mcpPath, "/", StringComparison.Ordinal) ||
+            string.Equals(adminPath, "/", StringComparison.Ordinal) ||
+            IsPathUnder(mcpPath, adminPath) ||
+            IsPathUnder(adminPath, mcpPath))
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "host.mcpPath and host.adminPath must be non-root, non-overlapping paths.");
+        }
 
         var maxRequestBodyBytes = endpoint?.MaxRequestBodyBytes
             ?? DefaultMaxRequestBodyBytes;
@@ -419,5 +428,10 @@ public static class CipherVaultHostConfiguration
             clientId.All(character =>
                 char.IsAsciiLetterOrDigit(character) ||
                 character is '.' or '_' or '-');
+    }
+
+    private static bool IsPathUnder(string path, string parent)
+    {
+        return path.StartsWith(parent + "/", StringComparison.OrdinalIgnoreCase);
     }
 }

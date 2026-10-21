@@ -124,7 +124,9 @@ public sealed class HostConfigurationTests
     [InlineData("{ \"configVersion\": 2, \"token\": \"secret\" }")]
     [InlineData("{ \"configVersion\": 2, \"host\": { \"bindAddress\": \"0.0.0.0\" } }")]
     [InlineData("{ \"configVersion\": 2, \"host\": { \"port\": 70000 } }")]
+    [InlineData("{ \"configVersion\": 2, \"host\": { \"mcpPath\": \"/\" } }")]
     [InlineData("{ \"configVersion\": 2, \"host\": { \"mcpPath\": \"/mcp?x=1\" } }")]
+    [InlineData("{ \"configVersion\": 2, \"host\": { \"mcpPath\": \"/admin/v1/mcp\" } }")]
     [InlineData("{ \"configVersion\": 2, \"host\": { \"allowedOrigins\": [\"*\"] } }")]
     [InlineData("{ \"configVersion\": 2, \"host\": { \"allowedOrigins\": [\"http://localhost:3000/path\"] } }")]
     public void InvalidHostConfigIsRejected(string json)
