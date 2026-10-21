@@ -1,23 +1,20 @@
 using System.ComponentModel;
+using System.Net;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
+using CipherVault.Core.Configuration;
+using CipherVault.Core.Errors;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
-using CipherVault.Auth.Win;
-using CipherVault.Core;
-using CipherVault.Core.Configuration;
-using CipherVault.Core.Documents;
-using CipherVault.Core.Errors;
-using CipherVault.Core.Session;
 
-ResolvedCipherVaultConfig configuration;
+BridgeSettings settings;
 try
 {
-    configuration = CipherVaultConfiguration.Load(
-        CreateCommandLineOverrides(args),
-        GetOption(args, "--config"));
+    settings = BridgeSettings.Load(args);
 }
 catch (VaultException exception)
 {
@@ -32,28 +29,95 @@ catch (ArgumentException exception)
     return;
 }
 
-var vaultPath = configuration.VaultPath;
-var readOnly = configuration.McpAccessMode == McpAccessMode.ReadOnly;
-await using var vault = new VaultService(
-    new WindowsSystemActivityProvider(),
-    sessionOptions: configuration.SessionOptions);
-var tools = new VaultTools(vault, vaultPath, new WindowsCredentialPrompt(), readOnly);
-
+var bridge = new HostMcpBridgeClient(settings);
+var tools = new BridgeVaultTools(bridge, settings.ReadOnly);
 var builder = Host.CreateApplicationBuilder(Array.Empty<string>());
 builder.Logging.ClearProviders();
 builder.Services
     .AddMcpServer()
     .WithStdioServerTransport()
-    .WithTools<VaultTools>(tools);
+    .WithTools<BridgeVaultTools>(tools);
 
 await builder.Build().RunAsync();
 
-static string? GetOption(string[] arguments, string option)
+public sealed record BridgeSettings(
+    Uri McpEndpoint,
+    string AgentToken,
+    bool ReadOnly)
 {
-    for (var index = 0; index < arguments.Length - 1; index++)
+    public static BridgeSettings Load(string[] arguments)
     {
-        if (string.Equals(arguments[index], option, StringComparison.OrdinalIgnoreCase))
+        var configuration = CipherVaultHostConfiguration.Load(
+            new CipherVaultHostConfigOverrides
+            {
+                VaultPath = GetOption(arguments, "--vault"),
+                IdleMinutes = ParseOptionalInteger(
+                    GetOption(arguments, "--idle-minutes"),
+                    "--idle-minutes"),
+                HardHours = ParseOptionalInteger(
+                    GetOption(arguments, "--hard-hours"),
+                    "--hard-hours")
+            },
+            GetOption(arguments, "--config"));
+        var tokenEnvironmentName = GetOption(arguments, "--token-env")
+            ?? "CIPHER_VAULT_MCP_TOKEN";
+        var token = Environment.GetEnvironmentVariable(tokenEnvironmentName);
+        if (string.IsNullOrWhiteSpace(token))
         {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                $"Set {tokenEnvironmentName} to the Agent Bearer Token.");
+        }
+
+        var mcpUrl = GetOption(arguments, "--mcp-url");
+        var endpoint = mcpUrl is null
+            ? new Uri(
+                $"http://{configuration.Endpoint.BindAddress}:" +
+                $"{configuration.Endpoint.Port}{configuration.Endpoint.McpPath}")
+            : new Uri(mcpUrl, UriKind.Absolute);
+        return new BridgeSettings(
+            endpoint,
+            token.Trim(),
+            ParseReadOnly(arguments));
+    }
+
+    private static bool ParseReadOnly(string[] arguments)
+    {
+        var accessMode = GetOption(arguments, "--access-mode");
+        var readOnly = arguments.Any(argument =>
+            string.Equals(argument, "--read-only", StringComparison.OrdinalIgnoreCase));
+        if (readOnly)
+        {
+            if (accessMode is not null &&
+                !string.Equals(accessMode, "readOnly", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new VaultException(
+                    VaultErrorCode.InvalidInput,
+                    "--read-only conflicts with --access-mode readWrite.");
+            }
+            return true;
+        }
+        return accessMode?.ToLowerInvariant() switch
+        {
+            null or "" or "readonly" => true,
+            "readwrite" => false,
+            _ => throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "--access-mode must be readOnly or readWrite.")
+        };
+    }
+
+    private static string? GetOption(string[] arguments, string option)
+    {
+        for (var index = 0; index < arguments.Length - 1; index++)
+        {
+            if (!string.Equals(
+                    arguments[index],
+                    option,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
             if (arguments[index + 1].StartsWith("--", StringComparison.Ordinal))
             {
                 throw new VaultException(
@@ -62,275 +126,282 @@ static string? GetOption(string[] arguments, string option)
             }
             return arguments[index + 1];
         }
-    }
-    if (arguments.Any(argument =>
-            string.Equals(argument, option, StringComparison.OrdinalIgnoreCase)))
-    {
-        throw new VaultException(
-            VaultErrorCode.InvalidInput,
-            $"Option {option} requires a value.");
-    }
-    return null;
-}
-
-static bool HasFlag(string[] arguments, string flag)
-{
-    return arguments.Any(argument =>
-        string.Equals(argument, flag, StringComparison.OrdinalIgnoreCase));
-}
-
-static CipherVaultConfigOverrides CreateCommandLineOverrides(string[] arguments)
-{
-    var accessMode = ParseAccessMode(GetOption(arguments, "--access-mode"));
-    if (HasFlag(arguments, "--read-only"))
-    {
-        if (accessMode is not null and not McpAccessMode.ReadOnly)
+        if (arguments.Any(argument =>
+                string.Equals(argument, option, StringComparison.OrdinalIgnoreCase)))
         {
             throw new VaultException(
                 VaultErrorCode.InvalidInput,
-                "--read-only conflicts with --access-mode readWrite.");
+                $"Option {option} requires a value.");
         }
-        accessMode = McpAccessMode.ReadOnly;
-    }
-
-    return new CipherVaultConfigOverrides
-    {
-        VaultPath = GetOption(arguments, "--vault"),
-        IdleMinutes = ParseOptionalInteger(
-            GetOption(arguments, "--idle-minutes"),
-            "--idle-minutes"),
-        HardHours = ParseOptionalInteger(
-            GetOption(arguments, "--hard-hours"),
-            "--hard-hours"),
-        AccessMode = accessMode
-    };
-}
-
-static McpAccessMode? ParseAccessMode(string? value)
-{
-    if (string.IsNullOrWhiteSpace(value))
-    {
         return null;
     }
-    return value.ToLowerInvariant() switch
-    {
-        "readonly" => McpAccessMode.ReadOnly,
-        "readwrite" => McpAccessMode.ReadWrite,
-        _ => throw new VaultException(
-            VaultErrorCode.InvalidInput,
-            "--access-mode must be readOnly or readWrite.")
-    };
-}
 
-static int? ParseOptionalInteger(
-    string? value,
-    string option)
-{
-    if (string.IsNullOrWhiteSpace(value))
+    private static int? ParseOptionalInteger(
+        string? value,
+        string option)
     {
-        return null;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+        if (!int.TryParse(value, out var parsed))
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                $"{option} must be an integer.");
+        }
+        return parsed;
     }
-    if (!int.TryParse(value, out var parsed))
+}
+
+public sealed class HostMcpBridgeClient
+{
+    private const string ProtocolVersion = "2026-07-28";
+    private static readonly JsonSerializerOptions JsonOptions =
+        new(JsonSerializerDefaults.Web);
+    private readonly BridgeSettings _settings;
+    private readonly HttpClient _http;
+
+    public HostMcpBridgeClient(BridgeSettings settings)
     {
-        throw new VaultException(
-            VaultErrorCode.InvalidInput,
-            $"{option} must be an integer.");
+        _settings = settings;
+        _http = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
     }
-    return parsed;
-}
 
-public interface ICredentialPrompt
-{
-    Task<PasswordPromptResult> RequestAsync(
-        string title,
-        string message,
-        CancellationToken cancellationToken);
-}
-
-public sealed class WindowsCredentialPrompt : ICredentialPrompt
-{
-    public Task<PasswordPromptResult> RequestAsync(
-        string title,
-        string message,
+    public async Task<string> CallToolAsync(
+        string name,
+        IReadOnlyDictionary<string, object?> arguments,
         CancellationToken cancellationToken)
     {
-        return WindowsPasswordPrompt.RequestAsync(title, message, cancellationToken);
+        using var request = new HttpRequestMessage(HttpMethod.Post, _settings.McpEndpoint)
+        {
+            Content = new StringContent(
+                JsonSerializer.Serialize(
+                    new
+                    {
+                        jsonrpc = "2.0",
+                        id = Guid.NewGuid().ToString("N"),
+                        method = "tools/call",
+                        @params = new Dictionary<string, object?>
+                        {
+                            ["name"] = name,
+                            ["arguments"] = arguments,
+                            ["_meta"] = new Dictionary<string, object>
+                            {
+                                ["io.modelcontextprotocol/protocolVersion"] =
+                                    ProtocolVersion,
+                                ["io.modelcontextprotocol/clientCapabilities"] =
+                                    new { }
+                            }
+                        }
+                    },
+                    JsonOptions),
+                Encoding.UTF8,
+                "application/json")
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            _settings.AgentToken);
+        request.Headers.Accept.Add(
+            new MediaTypeWithQualityHeaderValue("application/json"));
+        request.Headers.Accept.Add(
+            new MediaTypeWithQualityHeaderValue("text/event-stream"));
+        request.Headers.TryAddWithoutValidation(
+            "MCP-Protocol-Version",
+            ProtocolVersion);
+        request.Headers.TryAddWithoutValidation("Mcp-Method", "tools/call");
+        request.Headers.TryAddWithoutValidation("Mcp-Name", name);
+
+        try
+        {
+            using var response = await _http.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken).ConfigureAwait(false);
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                return Error("invalid_token", "Host rejected the Agent Token.");
+            }
+            if (!response.IsSuccessStatusCode)
+            {
+                return Error(
+                    "host_error",
+                    $"Host returned HTTP {(int)response.StatusCode}.");
+            }
+
+            var body = await response.Content.ReadAsStringAsync(cancellationToken)
+                .ConfigureAwait(false);
+            var json = ExtractJson(body, response.Content.Headers.ContentType?.MediaType);
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.TryGetProperty("error", out var rpcError))
+            {
+                return Error(
+                    "mcp_error",
+                    rpcError.TryGetProperty("message", out var message)
+                        ? message.GetString() ?? "Host MCP request failed."
+                        : "Host MCP request failed.");
+            }
+
+            var result = document.RootElement.GetProperty("result");
+            if (result.TryGetProperty("content", out var content) &&
+                content.ValueKind == JsonValueKind.Array)
+            {
+                var parts = content.EnumerateArray()
+                    .Where(item =>
+                        item.TryGetProperty("type", out var type) &&
+                        string.Equals(
+                            type.GetString(),
+                            "text",
+                            StringComparison.Ordinal) &&
+                        item.TryGetProperty("text", out _))
+                    .Select(item => item.GetProperty("text").GetString())
+                    .Where(text => text is not null)
+                    .ToList();
+                if (parts.Count > 0)
+                {
+                    return string.Join(Environment.NewLine, parts);
+                }
+            }
+            return result.GetRawText();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is HttpRequestException or
+                TaskCanceledException or
+                JsonException or
+                InvalidOperationException or
+                KeyNotFoundException)
+        {
+            return Error(
+                "host_unavailable",
+                "CipherVault Host is unavailable. Start the Host and try again.");
+        }
+    }
+
+    private static string ExtractJson(string body, string? mediaType)
+    {
+        if (!string.Equals(
+                mediaType,
+                "text/event-stream",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return body;
+        }
+        return body
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Where(line => line.StartsWith("data:", StringComparison.Ordinal))
+            .Select(line => line["data:".Length..].Trim())
+            .LastOrDefault()
+            ?? throw new JsonException("MCP event stream did not contain a data event.");
+    }
+
+    private static string Error(string code, string message)
+    {
+        return JsonSerializer.Serialize(
+            new
+            {
+                ok = false,
+                error = new
+                {
+                    code,
+                    message
+                }
+            },
+            JsonOptions);
     }
 }
 
 [McpServerToolType]
-public sealed class VaultTools
+public sealed class BridgeVaultTools
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
-    };
-
-    private readonly IVaultService _vault;
-    private readonly string? _vaultPath;
-    private readonly ICredentialPrompt _credentialPrompt;
+    private readonly HostMcpBridgeClient _bridge;
     private readonly bool _readOnly;
-    private readonly SemaphoreSlim _authGate = new(1, 1);
-    private DateTimeOffset _deniedUntil = DateTimeOffset.MinValue;
 
-    public VaultTools(
-        IVaultService vault,
-        string? vaultPath,
-        ICredentialPrompt credentialPrompt,
-        bool readOnly = false)
+    public BridgeVaultTools(HostMcpBridgeClient bridge, bool readOnly)
     {
-        _vault = vault;
-        _vaultPath = vaultPath;
-        _credentialPrompt = credentialPrompt;
+        _bridge = bridge;
         _readOnly = readOnly;
     }
 
     [McpServerTool(Name = "vault_status")]
     [Description("Return the Vault lock state and session deadlines. This tool never returns document content.")]
-    public async Task<string> VaultStatus(CancellationToken cancellationToken)
+    public Task<string> VaultStatus(CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(_vaultPath))
-        {
-            return Serialize(Error(
-                "not_configured",
-                "Set vaultPath in the CipherVault configuration, --vault, or CIPHER_VAULT_PATH."));
-        }
-
-        var status = await _vault.GetStatusAsync(cancellationToken);
-        return Serialize(new
-        {
-            ok = true,
-            vault = new
-            {
-                configured = true,
-                accessMode = _readOnly ? "readOnly" : "readWrite"
-            },
-            session = status
-        });
+        return CallAsync("vault_status", Empty(), cancellationToken);
     }
 
     [McpServerTool(Name = "list_catalog")]
     [Description("List active document titles, virtual folders, headings and tags without returning the real filesystem path.")]
-    public async Task<string> ListCatalog(
+    public Task<string> ListCatalog(
         string? folder = null,
         string? cursor = null,
         int limit = 50,
         CancellationToken cancellationToken = default)
     {
-        var authorizationError = await EnsureUnlockedAsync(cancellationToken);
-        if (authorizationError is not null)
-        {
-            return authorizationError;
-        }
-
-        try
-        {
-            var page = await _vault.ListCatalogAsync(
-                folder,
-                cursor,
-                limit,
-                cancellationToken);
-            return Serialize(new { ok = true, page });
-        }
-        catch (VaultException exception)
-        {
-            return Serialize(Error(ToCode(exception.Code), exception.Message));
-        }
+        return CallAsync(
+            "list_catalog",
+            Arguments(
+                ("folder", folder),
+                ("cursor", cursor),
+                ("limit", limit)),
+            cancellationToken);
     }
 
     [McpServerTool(Name = "search_notes")]
     [Description("Search active Markdown/TXT documents with FTS5 or a bounded short-query scan and return snippets.")]
-    public async Task<string> SearchNotes(
+    public Task<string> SearchNotes(
         string query,
         string? folder = null,
         string? cursor = null,
         int limit = 10,
         CancellationToken cancellationToken = default)
     {
-        var authorizationError = await EnsureUnlockedAsync(cancellationToken);
-        if (authorizationError is not null)
-        {
-            return authorizationError;
-        }
-
-        try
-        {
-            var page = await _vault.SearchNotesAsync(
-                query,
-                folder,
-                cursor,
-                limit,
-                cancellationToken);
-            return Serialize(new { ok = true, page });
-        }
-        catch (VaultException exception)
-        {
-            return Serialize(Error(ToCode(exception.Code), exception.Message));
-        }
+        return CallAsync(
+            "search_notes",
+            Arguments(
+                ("query", query),
+                ("folder", folder),
+                ("cursor", cursor),
+                ("limit", limit)),
+            cancellationToken);
     }
 
     [McpServerTool(Name = "read_note")]
     [Description("Read a bounded character range from one active document and verify its application-level integrity HMAC.")]
-    public async Task<string> ReadNote(
+    public Task<string> ReadNote(
         string documentId,
         int offset = 0,
         int maxChars = 8_000,
         CancellationToken cancellationToken = default)
     {
-        var authorizationError = await EnsureUnlockedAsync(cancellationToken);
-        if (authorizationError is not null)
-        {
-            return authorizationError;
-        }
-
-        if (!Guid.TryParse(documentId, out var parsedDocumentId))
-        {
-            return Serialize(Error("invalid_input", "documentId must be a UUID."));
-        }
-
-        try
-        {
-            var result = await _vault.ReadNoteAsync(
-                parsedDocumentId,
-                offset,
-                maxChars,
-                cancellationToken);
-            return Serialize(new { ok = true, document = result });
-        }
-        catch (VaultException exception)
-        {
-            return Serialize(Error(ToCode(exception.Code), exception.Message));
-        }
+        return CallAsync(
+            "read_note",
+            Arguments(
+                ("documentId", documentId),
+                ("offset", offset),
+                ("maxChars", maxChars)),
+            cancellationToken);
     }
 
     [McpServerTool(Name = "scan_notes")]
     [Description("Page through active document summaries without returning document content.")]
-    public async Task<string> ScanNotes(
+    public Task<string> ScanNotes(
         string? cursor = null,
         int limit = 50,
         CancellationToken cancellationToken = default)
     {
-        var authorizationError = await EnsureUnlockedAsync(cancellationToken);
-        if (authorizationError is not null)
-        {
-            return authorizationError;
-        }
-
-        try
-        {
-            var page = await _vault.ScanNotesAsync(cursor, limit, cancellationToken);
-            return Serialize(new { ok = true, page });
-        }
-        catch (VaultException exception)
-        {
-            return Serialize(Error(ToCode(exception.Code), exception.Message));
-        }
+        return CallAsync(
+            "scan_notes",
+            Arguments(("cursor", cursor), ("limit", limit)),
+            cancellationToken);
     }
 
     [McpServerTool(Name = "create_note")]
     [Description("Create an encrypted Markdown or TXT document in the Vault.")]
-    public async Task<string> CreateNote(
+    public Task<string> CreateNote(
         string title,
         string content,
         string? folder = null,
@@ -338,80 +409,37 @@ public sealed class VaultTools
         string[]? tags = null,
         CancellationToken cancellationToken = default)
     {
-        var accessError = EnsureWritable();
-        if (accessError is not null)
-        {
-            return accessError;
-        }
-
-        var authorizationError = await EnsureUnlockedAsync(cancellationToken);
-        if (authorizationError is not null)
-        {
-            return authorizationError;
-        }
-
-        try
-        {
-            var result = await _vault.CreateNoteAsync(
-                title,
-                folder,
-                format,
-                content,
-                tags,
-                VaultActorKind.Mcp,
-                cancellationToken);
-            return Serialize(new { ok = true, document = result });
-        }
-        catch (VaultException exception)
-        {
-            return Serialize(Error(ToCode(exception.Code), exception.Message));
-        }
+        return CallWriteAsync(
+            "create_note",
+            Arguments(
+                ("title", title),
+                ("content", content),
+                ("folder", folder),
+                ("format", format),
+                ("tags", tags)),
+            cancellationToken);
     }
 
     [McpServerTool(Name = "append_note")]
     [Description("Append content to an existing document using optimistic revision concurrency.")]
-    public async Task<string> AppendNote(
+    public Task<string> AppendNote(
         string documentId,
         int expectedRevision,
         string content,
         CancellationToken cancellationToken = default)
     {
-        var accessError = EnsureWritable();
-        if (accessError is not null)
-        {
-            return accessError;
-        }
-
-        var authorizationError = await EnsureUnlockedAsync(cancellationToken);
-        if (authorizationError is not null)
-        {
-            return authorizationError;
-        }
-
-        if (!Guid.TryParse(documentId, out var parsedDocumentId))
-        {
-            return Serialize(Error("invalid_input", "documentId must be a UUID."));
-        }
-
-        try
-        {
-            var result = await _vault.AppendNoteAsync(
-                parsedDocumentId,
-                expectedRevision,
-                content,
-                VaultActorKind.Mcp,
-                cancellationToken);
-            return Serialize(new { ok = true, document = result });
-        }
-        catch (VaultException exception)
-        {
-            return Serialize(Error(ToCode(exception.Code), exception.Message));
-        }
+        return CallWriteAsync(
+            "append_note",
+            Arguments(
+                ("documentId", documentId),
+                ("expectedRevision", expectedRevision),
+                ("content", content)),
+            cancellationToken);
     }
 
     [McpServerTool(Name = "update_note")]
     [Description("Update title, virtual folder, content or tags using optimistic revision concurrency.")]
-    public async Task<string> UpdateNote(
+    public Task<string> UpdateNote(
         string documentId,
         int expectedRevision,
         string? title = null,
@@ -420,185 +448,80 @@ public sealed class VaultTools
         string[]? tags = null,
         CancellationToken cancellationToken = default)
     {
-        var accessError = EnsureWritable();
-        if (accessError is not null)
-        {
-            return accessError;
-        }
-
-        var authorizationError = await EnsureUnlockedAsync(cancellationToken);
-        if (authorizationError is not null)
-        {
-            return authorizationError;
-        }
-
-        if (!Guid.TryParse(documentId, out var parsedDocumentId))
-        {
-            return Serialize(Error("invalid_input", "documentId must be a UUID."));
-        }
-
-        try
-        {
-            var result = await _vault.UpdateNoteAsync(
-                parsedDocumentId,
-                expectedRevision,
-                new VaultNotePatch(title, folder, content, tags),
-                VaultActorKind.Mcp,
-                cancellationToken);
-            return Serialize(new { ok = true, document = result });
-        }
-        catch (VaultException exception)
-        {
-            return Serialize(Error(ToCode(exception.Code), exception.Message));
-        }
+        return CallWriteAsync(
+            "update_note",
+            Arguments(
+                ("documentId", documentId),
+                ("expectedRevision", expectedRevision),
+                ("title", title),
+                ("folder", folder),
+                ("content", content),
+                ("tags", tags)),
+            cancellationToken);
     }
 
     [McpServerTool(Name = "delete_note")]
     [Description("Move a document to the encrypted recycle bin using optimistic revision concurrency.")]
-    public async Task<string> DeleteNote(
+    public Task<string> DeleteNote(
         string documentId,
         int expectedRevision,
         CancellationToken cancellationToken = default)
     {
-        var accessError = EnsureWritable();
-        if (accessError is not null)
-        {
-            return accessError;
-        }
-
-        var authorizationError = await EnsureUnlockedAsync(cancellationToken);
-        if (authorizationError is not null)
-        {
-            return authorizationError;
-        }
-
-        if (!Guid.TryParse(documentId, out var parsedDocumentId))
-        {
-            return Serialize(Error("invalid_input", "documentId must be a UUID."));
-        }
-
-        try
-        {
-            var result = await _vault.DeleteNoteAsync(
-                parsedDocumentId,
-                expectedRevision,
-                VaultActorKind.Mcp,
-                cancellationToken);
-            return Serialize(new { ok = true, document = result });
-        }
-        catch (VaultException exception)
-        {
-            return Serialize(Error(ToCode(exception.Code), exception.Message));
-        }
+        return CallWriteAsync(
+            "delete_note",
+            Arguments(
+                ("documentId", documentId),
+                ("expectedRevision", expectedRevision)),
+            cancellationToken);
     }
 
-    private async Task<string?> EnsureUnlockedAsync(CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(_vaultPath))
-        {
-            return Serialize(Error(
-                "not_configured",
-                "Set vaultPath in the CipherVault configuration, --vault, or CIPHER_VAULT_PATH."));
-        }
-
-        await _authGate.WaitAsync(cancellationToken);
-        try
-        {
-            var status = await _vault.GetStatusAsync(cancellationToken);
-            if (status.State is VaultSessionState.Unlocked or VaultSessionState.Expiring)
-            {
-                return null;
-            }
-
-            var now = DateTimeOffset.UtcNow;
-            if (now < _deniedUntil)
-            {
-                return Serialize(new
-                {
-                    ok = false,
-                    error = new
-                    {
-                        code = "auth_denied",
-                        message = "Vault authorization is cooling down after a denied request.",
-                        retryAfterMs = (int)(_deniedUntil - now).TotalMilliseconds
-                    }
-                });
-            }
-
-            var prompt = await _credentialPrompt.RequestAsync(
-                "CipherVault 授权",
-                "AI 请求访问你的 CipherVault 加密资料库。",
-                cancellationToken);
-            if (!prompt.Confirmed || string.IsNullOrEmpty(prompt.Password))
-            {
-                _deniedUntil = DateTimeOffset.UtcNow.AddSeconds(30);
-                return Serialize(Error("auth_denied", "Vault authorization was cancelled."));
-            }
-
-            try
-            {
-                await _vault.UnlockAsync(
-                    _vaultPath,
-                    prompt.Password,
-                    VaultCredentialType.Password,
-                    cancellationToken);
-                return null;
-            }
-            catch (VaultException exception)
-            {
-                _deniedUntil = DateTimeOffset.UtcNow.AddSeconds(30);
-                return Serialize(Error(ToCode(exception.Code), exception.Message));
-            }
-        }
-        finally
-        {
-            _authGate.Release();
-        }
-    }
-
-    private string? EnsureWritable()
+    private Task<string> CallWriteAsync(
+        string name,
+        IReadOnlyDictionary<string, object?> arguments,
+        CancellationToken cancellationToken)
     {
         return _readOnly
-            ? Serialize(Error(
+            ? Task.FromResult(ErrorMessage(
                 "read_only",
-                "This CipherVault MCP server is configured for read-only access."))
-            : null;
+                "This CipherVault MCP bridge is configured for read-only access."))
+            : CallAsync(name, arguments, cancellationToken);
     }
 
-    private static object Error(string code, string message)
+    private Task<string> CallAsync(
+        string name,
+        IReadOnlyDictionary<string, object?> arguments,
+        CancellationToken cancellationToken)
     {
-        return new
-        {
-            ok = false,
-            error = new
+        return _bridge.CallToolAsync(name, arguments, cancellationToken);
+    }
+
+    private static IReadOnlyDictionary<string, object?> Empty()
+    {
+        return new Dictionary<string, object?>();
+    }
+
+    private static IReadOnlyDictionary<string, object?> Arguments(
+        params (string Name, object? Value)[] values)
+    {
+        return values
+            .Where(value => value.Value is not null)
+            .ToDictionary(
+                value => value.Name,
+                value => value.Value,
+                StringComparer.Ordinal);
+    }
+
+    private static string ErrorMessage(string code, string message)
+    {
+        return JsonSerializer.Serialize(
+            new
             {
-                code,
-                message
-            }
-        };
-    }
-
-    private static string Serialize(object value)
-    {
-        return JsonSerializer.Serialize(value, JsonOptions);
-    }
-
-    private static string ToCode(VaultErrorCode code)
-    {
-        return code switch
-        {
-            VaultErrorCode.InvalidInput => "invalid_input",
-            VaultErrorCode.AlreadyExists => "already_exists",
-            VaultErrorCode.NotFound => "not_found",
-            VaultErrorCode.InvalidCredential => "auth_denied",
-            VaultErrorCode.Conflict => "conflict",
-            VaultErrorCode.CorruptVault => "integrity_error",
-            VaultErrorCode.SessionLocked => "auth_required",
-            VaultErrorCode.SessionExpired => "session_expired",
-            VaultErrorCode.RecoveryVerificationRequired => "recovery_verification_required",
-            VaultErrorCode.UnsupportedPlatform => "unsupported_platform",
-            VaultErrorCode.StorageError => "storage_error",
-            _ => "storage_error"
-        };
+                ok = false,
+                error = new
+                {
+                    code,
+                    message
+                }
+            });
     }
 }

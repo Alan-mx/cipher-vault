@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Text.Json;
-using CipherVault.Auth.Win;
 using CipherVault.Core;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Security;

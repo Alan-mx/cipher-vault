@@ -7,7 +7,6 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using CipherVault.Auth.Win;
 using CipherVault.Core;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Session;

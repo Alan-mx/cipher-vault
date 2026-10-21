@@ -14,7 +14,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\CipherVault.Auth.Win\CipherVault.Auth.Win.csproj" />
     <ProjectReference Include="..\CipherVault.Core\CipherVault.Core.csproj" />
   </ItemGroup>
 
