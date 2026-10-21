@@ -125,6 +125,34 @@ public static class HostApplication
                 }
             });
         app.MapPost(
+            configuration.Endpoint.AdminPath + "/clients/{clientId}/rotate",
+            async (
+                string clientId,
+                AgentTokenStore clients,
+                HttpContext context,
+                CancellationToken cancellationToken) =>
+            {
+                try
+                {
+                    var rotated = await clients.RotateAsync(
+                        clientId,
+                        cancellationToken);
+                    return Results.Json(
+                        new HostApiResponse<HostCreateClientData>(
+                            true,
+                            rotated));
+                }
+                catch (HostException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception.Code),
+                        exception.Code,
+                        exception.Message);
+                    return Results.Empty;
+                }
+            });
+        app.MapPost(
             configuration.Endpoint.AdminPath + "/session/unlock",
             async (
                 HostUnlockRequest request,

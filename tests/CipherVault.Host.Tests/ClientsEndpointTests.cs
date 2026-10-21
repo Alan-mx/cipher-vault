@@ -162,6 +162,55 @@ public sealed class ClientsEndpointTests
         Assert.Equal("not_found", payload.Error.Code);
     }
 
+    [Fact]
+    public async Task RotateClientReturnsNewTokenAndReplacesHash()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        using var create = CreateCreateRequest(
+            new HostCreateClientRequest("codex", "readOnly", false));
+        using var createResponse = await fixture.Client.SendAsync(create);
+        var created = await createResponse.Content.ReadFromJsonAsync<
+            HostApiResponse<HostCreateClientData>>(JsonOptions);
+        Assert.NotNull(created);
+        var configBefore = await File.ReadAllTextAsync(fixture.ConfigPath);
+
+        using var rotate = new HttpRequestMessage(
+            HttpMethod.Post,
+            "/admin/v1/clients/codex/rotate");
+        rotate.Headers.Host = "127.0.0.1:43127";
+        rotate.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            HostTestFixture.AdminToken);
+        using var rotateResponse = await fixture.Client.SendAsync(rotate);
+
+        Assert.Equal(HttpStatusCode.OK, rotateResponse.StatusCode);
+        var rotated = await rotateResponse.Content.ReadFromJsonAsync<
+            HostApiResponse<HostCreateClientData>>(JsonOptions);
+        Assert.NotNull(rotated);
+        Assert.NotEqual(created.Data.Token, rotated.Data.Token);
+        Assert.Equal("codex", rotated.Data.Client.Id);
+        var configAfter = await File.ReadAllTextAsync(fixture.ConfigPath);
+        Assert.NotEqual(configBefore, configAfter);
+        Assert.DoesNotContain(rotated.Data.Token, configAfter, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RotateMissingClientReturnsNotFound()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            "/admin/v1/clients/missing/rotate");
+        request.Headers.Host = "127.0.0.1:43127";
+        request.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            HostTestFixture.AdminToken);
+
+        using var response = await fixture.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
     private static HttpRequestMessage CreateRequest()
     {
         var request = new HttpRequestMessage(HttpMethod.Get, "/admin/v1/clients");
