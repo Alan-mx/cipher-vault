@@ -785,6 +785,37 @@ public static class HostApplication
                 }
             });
         app.MapPost(
+            configuration.Endpoint.AdminPath + "/maintenance/password/change",
+            async (
+                HostSessionCoordinator sessions,
+                HttpContext context,
+                CancellationToken cancellationToken) =>
+            {
+                try
+                {
+                    await sessions.ChangePasswordAsync(cancellationToken);
+                    return Results.NoContent();
+                }
+                catch (HostException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception.Code),
+                        exception.Code,
+                        exception.Message);
+                    return Results.Empty;
+                }
+                catch (VaultException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception),
+                        HostHttpResponses.ToHostErrorCode(exception),
+                        exception.Message);
+                    return Results.Empty;
+                }
+            });
+        app.MapPost(
             configuration.Endpoint.AdminPath + "/session/unlock",
             async (
                 HostUnlockRequest request,

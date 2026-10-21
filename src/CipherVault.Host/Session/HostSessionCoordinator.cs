@@ -420,6 +420,56 @@ public sealed class HostSessionCoordinator
         }
     }
 
+    public async Task ChangePasswordAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await ExecuteMaintenanceAsync(
+            async (vault, token) =>
+            {
+                var current = await _credentialPrompt.RequestAsync(
+                    HostCredentialPreference.Password,
+                    "输入当前资料库密码。",
+                    token).ConfigureAwait(false);
+                if (!current.Confirmed || string.IsNullOrEmpty(current.Credential))
+                {
+                    throw new HostException(
+                        HostErrorCode.AccessDenied,
+                        "Password change authorization was cancelled.");
+                }
+
+                var next = await _credentialPrompt.RequestAsync(
+                    HostCredentialPreference.Password,
+                    "输入新的资料库密码。",
+                    token).ConfigureAwait(false);
+                var confirmation = await _credentialPrompt.RequestAsync(
+                    HostCredentialPreference.Password,
+                    "再次输入新的资料库密码。",
+                    token).ConfigureAwait(false);
+                if (!next.Confirmed ||
+                    string.IsNullOrEmpty(next.Credential) ||
+                    !confirmation.Confirmed ||
+                    string.IsNullOrEmpty(confirmation.Credential) ||
+                    !string.Equals(
+                        next.Credential,
+                        confirmation.Credential,
+                        StringComparison.Ordinal))
+                {
+                    throw new HostException(
+                        HostErrorCode.InvalidInput,
+                        "New passwords do not match.");
+                }
+
+                await vault.ChangePasswordAsync(
+                    _configuration.VaultPath,
+                    current.Credential,
+                    next.Credential,
+                    VaultActorKind.UserUi,
+                    token).ConfigureAwait(false);
+                return true;
+            },
+            cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task<HostSessionSnapshot> FinalizeLockAsync(
         string reason,
         CancellationToken cancellationToken)
