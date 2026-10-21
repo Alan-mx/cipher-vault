@@ -39,3 +39,6 @@ public sealed record HostUpdateNoteRequest(
     string? Folder,
     string? Content,
     IReadOnlyList<string>? Tags);
+
+public sealed record HostTrashNoteRequest(
+    int ExpectedRevision);
