@@ -111,6 +111,43 @@ public static class HostApplication
                 }
             });
         app.MapPost(
+            configuration.Endpoint.AdminPath + "/session/lock",
+            async (
+                HostLockRequest request,
+                HostSessionCoordinator sessions,
+                HttpContext context,
+                CancellationToken cancellationToken) =>
+            {
+                var reason = string.IsNullOrWhiteSpace(request.Reason)
+                    ? "user-requested"
+                    : request.Reason.Trim();
+                if (reason.Length > 200)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        StatusCodes.Status400BadRequest,
+                        HostErrorCode.InvalidInput,
+                        "Lock reason is too long.");
+                    return Results.Empty;
+                }
+
+                var snapshot = await sessions.LockAsync(reason, cancellationToken);
+                if (snapshot.State != VaultSessionState.Locked)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        StatusCodes.Status409Conflict,
+                        HostErrorCode.LockInProgress,
+                        "Vault lock is still in progress.");
+                    return Results.Empty;
+                }
+
+                return Results.Json(
+                    new HostApiResponse<HostSessionStatusData>(
+                        true,
+                        HostDtoMapper.ToSessionStatus(snapshot)));
+            });
+        app.MapPost(
             configuration.Endpoint.AdminPath + "/host/stop",
             async (
                 HostStopRequest request,

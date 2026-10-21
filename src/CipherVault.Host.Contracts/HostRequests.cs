@@ -5,3 +5,6 @@ public sealed record HostStopRequest(
 
 public sealed record HostUnlockRequest(
     string? CredentialType);
+
+public sealed record HostLockRequest(
+    string? Reason);
