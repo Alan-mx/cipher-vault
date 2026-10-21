@@ -95,7 +95,52 @@ public static class HostApplication
                 {
                     await HostHttpResponses.WriteErrorAsync(
                         context,
-                        StatusCodes.Status403Forbidden,
+                        HostHttpResponses.ToStatusCode(exception.Code),
+                        exception.Code,
+                        exception.Message);
+                    return Results.Empty;
+                }
+                catch (VaultException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        StatusCodes.Status400BadRequest,
+                        HostErrorCode.InvalidInput,
+                        exception.Message);
+                    return Results.Empty;
+                }
+            });
+        app.MapPost(
+            configuration.Endpoint.AdminPath + "/vault/initialize",
+            async (
+                HostInitializeRequest request,
+                HostSessionCoordinator sessions,
+                HttpContext context,
+                CancellationToken cancellationToken) =>
+            {
+                if (string.IsNullOrWhiteSpace(request.VaultPath))
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        StatusCodes.Status400BadRequest,
+                        HostErrorCode.InvalidInput,
+                        "vaultPath is required.");
+                    return Results.Empty;
+                }
+
+                try
+                {
+                    var result = await sessions.InitializeAsync(
+                        request.VaultPath,
+                        cancellationToken);
+                    return Results.Json(
+                        new HostApiResponse<HostInitializeData>(true, result));
+                }
+                catch (HostException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception.Code),
                         exception.Code,
                         exception.Message);
                     return Results.Empty;

@@ -40,3 +40,9 @@ public sealed record HostSessionStatusData(
     string? LockReason,
     int ActiveLeases,
     int ConnectedClients);
+
+public sealed record HostInitializeData(
+    Guid VaultId,
+    string VaultPath,
+    string RecoveryKey,
+    DateTimeOffset CreatedAt);

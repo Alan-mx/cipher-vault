@@ -4,6 +4,7 @@ public enum HostErrorCode
 {
     HostUnavailable,
     VaultInUse,
+    AlreadyExists,
     InvalidInput,
     InvalidToken,
     InvalidCredential,

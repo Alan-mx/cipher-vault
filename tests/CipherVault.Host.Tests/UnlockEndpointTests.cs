@@ -45,7 +45,7 @@ public sealed class UnlockEndpointTests
         await using var fixture = await HostTestFixture.CreateAsync();
         fixture.CredentialPrompt.Result = new HostCredentialPromptResult(
             true,
-            fixture.RecoveryKey,
+            Assert.IsType<string>(fixture.RecoveryKey),
             VaultCredentialType.RecoveryKey);
         using var request = CreateRequest("recoveryKey");
 

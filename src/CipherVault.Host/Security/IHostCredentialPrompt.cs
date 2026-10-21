@@ -18,5 +18,6 @@ public interface IHostCredentialPrompt
 {
     Task<HostCredentialPromptResult> RequestAsync(
         HostCredentialPreference preference,
+        string? message = null,
         CancellationToken cancellationToken = default);
 }

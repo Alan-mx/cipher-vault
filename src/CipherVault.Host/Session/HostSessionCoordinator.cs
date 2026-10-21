@@ -1,3 +1,4 @@
+using System.IO;
 using CipherVault.Core;
 using CipherVault.Core.Configuration;
 using CipherVault.Core.Errors;
@@ -75,6 +76,7 @@ public sealed class HostSessionCoordinator
 
             var prompt = await _credentialPrompt.RequestAsync(
                 preference,
+                message: null,
                 cancellationToken).ConfigureAwait(false);
             if (!prompt.Confirmed || string.IsNullOrEmpty(prompt.Credential))
             {
@@ -176,6 +178,82 @@ public sealed class HostSessionCoordinator
                 status.SessionId,
                 leaseToken,
                 ReleaseLease);
+        }
+    }
+
+    public async Task<HostInitializeData> InitializeAsync(
+        string vaultPath,
+        CancellationToken cancellationToken = default)
+    {
+        var fullPath = Path.GetFullPath(vaultPath);
+        if (!string.Equals(
+                fullPath,
+                Path.GetFullPath(_configuration.VaultPath),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new HostException(
+                HostErrorCode.InvalidInput,
+                "Initialization target must match the configured Vault path.");
+        }
+        if (Directory.Exists(fullPath) || File.Exists(fullPath))
+        {
+            throw new HostException(
+                HostErrorCode.AlreadyExists,
+                "Vault initialization requires a path that does not already exist.");
+        }
+
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var first = await _credentialPrompt.RequestAsync(
+                HostCredentialPreference.Password,
+                "设置新的资料库密码。",
+                cancellationToken).ConfigureAwait(false);
+            if (!first.Confirmed || string.IsNullOrEmpty(first.Credential))
+            {
+                throw new HostException(
+                    HostErrorCode.AccessDenied,
+                    "Vault initialization was cancelled.");
+            }
+
+            var second = await _credentialPrompt.RequestAsync(
+                HostCredentialPreference.Password,
+                "再次输入资料库密码以确认。",
+                cancellationToken).ConfigureAwait(false);
+            if (!second.Confirmed ||
+                string.IsNullOrEmpty(second.Credential) ||
+                !string.Equals(
+                    first.Credential,
+                    second.Credential,
+                    StringComparison.Ordinal))
+            {
+                throw new HostException(
+                    HostErrorCode.InvalidInput,
+                    "Passwords do not match.");
+            }
+
+            var result = await _vault.InitializeAsync(fullPath, first.Credential, cancellationToken)
+                .ConfigureAwait(false);
+            return new HostInitializeData(
+                result.VaultId,
+                result.VaultPath,
+                result.RecoveryKey,
+                result.CreatedAt);
+        }
+        catch (VaultException exception) when (
+            exception.Code is VaultErrorCode.InvalidInput or
+                VaultErrorCode.AlreadyExists)
+        {
+            throw new HostException(
+                exception.Code == VaultErrorCode.AlreadyExists
+                    ? HostErrorCode.AlreadyExists
+                    : HostErrorCode.InvalidInput,
+                exception.Message,
+                exception);
+        }
+        finally
+        {
+            _operationGate.Release();
         }
     }
 

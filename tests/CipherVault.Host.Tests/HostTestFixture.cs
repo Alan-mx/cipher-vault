@@ -21,12 +21,14 @@ internal sealed class HostTestFixture : IAsyncDisposable
 
     private HostTestFixture(
         string root,
-        string recoveryKey,
+        string vaultPath,
+        string? recoveryKey,
         WebApplication app,
         HttpClient client,
         TestCredentialPrompt credentialPrompt)
     {
         Root = root;
+        VaultPath = vaultPath;
         RecoveryKey = recoveryKey;
         App = app;
         Client = client;
@@ -34,7 +36,8 @@ internal sealed class HostTestFixture : IAsyncDisposable
     }
 
     public string Root { get; }
-    public string RecoveryKey { get; }
+    public string VaultPath { get; }
+    public string? RecoveryKey { get; }
     public WebApplication App { get; }
     public HttpClient Client { get; }
     public TestCredentialPrompt CredentialPrompt { get; }
@@ -42,16 +45,19 @@ internal sealed class HostTestFixture : IAsyncDisposable
         App.Services.GetRequiredService<IHostApplicationLifetime>();
 
     public static async Task<HostTestFixture> CreateAsync(
-        string[]? allowedOrigins = null)
+        string[]? allowedOrigins = null,
+        bool initializeVault = true)
     {
         var root = Path.Combine(
             Path.GetTempPath(),
             $"cipher-vault-host-test-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
         var vaultPath = Path.Combine(root, "vault");
-        string recoveryKey;
-        await using (var initializer = new VaultService(new AlwaysActiveActivityProvider()))
+        string? recoveryKey = null;
+        if (initializeVault)
         {
+            await using var initializer = new VaultService(
+                new AlwaysActiveActivityProvider());
             var initialized = await initializer.InitializeAsync(vaultPath, VaultPassword);
             recoveryKey = initialized.RecoveryKey;
             await initializer.ConfirmRecoveryKeyAsync(
@@ -86,6 +92,7 @@ internal sealed class HostTestFixture : IAsyncDisposable
         await app.StartAsync();
         return new HostTestFixture(
             root,
+            vaultPath,
             recoveryKey,
             app,
             app.GetTestClient(),
@@ -114,18 +121,28 @@ internal sealed class HostTestFixture : IAsyncDisposable
     {
         public int RequestCount { get; private set; }
         public HostCredentialPreference? LastPreference { get; private set; }
+        public string? LastMessage { get; private set; }
         public HostCredentialPromptResult Result { get; set; } = new(
             true,
             VaultPassword,
             VaultCredentialType.Password);
+        private readonly Queue<HostCredentialPromptResult> _results = new();
+
+        public void EnqueueResult(HostCredentialPromptResult result)
+        {
+            _results.Enqueue(result);
+        }
 
         public Task<HostCredentialPromptResult> RequestAsync(
             HostCredentialPreference preference,
+            string? message = null,
             CancellationToken cancellationToken = default)
         {
             RequestCount++;
             LastPreference = preference;
-            return Task.FromResult(Result);
+            LastMessage = message;
+            return Task.FromResult(
+                _results.Count > 0 ? _results.Dequeue() : Result);
         }
     }
 

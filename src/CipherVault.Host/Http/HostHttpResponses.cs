@@ -25,12 +25,33 @@ internal static class HostHttpResponses
                 new HostApiError(ToCode(code), message, requestId)));
     }
 
+    public static int ToStatusCode(HostErrorCode code)
+    {
+        return code switch
+        {
+            HostErrorCode.InvalidInput => StatusCodes.Status400BadRequest,
+            HostErrorCode.InvalidToken => StatusCodes.Status401Unauthorized,
+            HostErrorCode.InvalidCredential => StatusCodes.Status403Forbidden,
+            HostErrorCode.InvalidOrigin => StatusCodes.Status403Forbidden,
+            HostErrorCode.InvalidHost => StatusCodes.Status403Forbidden,
+            HostErrorCode.AccessDenied => StatusCodes.Status403Forbidden,
+            HostErrorCode.RateLimited => StatusCodes.Status429TooManyRequests,
+            HostErrorCode.LockInProgress => StatusCodes.Status409Conflict,
+            HostErrorCode.VaultInUse => StatusCodes.Status409Conflict,
+            HostErrorCode.AlreadyExists => StatusCodes.Status409Conflict,
+            HostErrorCode.MaintenanceInProgress => StatusCodes.Status423Locked,
+            HostErrorCode.HostUnavailable => StatusCodes.Status503ServiceUnavailable,
+            _ => StatusCodes.Status503ServiceUnavailable
+        };
+    }
+
     private static string ToCode(HostErrorCode code)
     {
         return code switch
         {
             HostErrorCode.HostUnavailable => "host_unavailable",
             HostErrorCode.VaultInUse => "vault_in_use",
+            HostErrorCode.AlreadyExists => "already_exists",
             HostErrorCode.InvalidInput => "invalid_input",
             HostErrorCode.InvalidToken => "invalid_token",
             HostErrorCode.InvalidCredential => "invalid_credential",

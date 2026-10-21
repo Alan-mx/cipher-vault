@@ -8,3 +8,6 @@ public sealed record HostUnlockRequest(
 
 public sealed record HostLockRequest(
     string? Reason);
+
+public sealed record HostInitializeRequest(
+    string? VaultPath);
