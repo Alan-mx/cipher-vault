@@ -233,11 +233,11 @@ public sealed class CliOnlineHostTests
         var path = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "CipherVault",
-            "admin-token.bin");
+            "admin-cli-token.bin");
         var protectedBytes = File.ReadAllBytes(path);
         var plainBytes = ProtectedData.Unprotect(
             protectedBytes,
-            Encoding.UTF8.GetBytes("CipherVault.Host.AdminToken.v1"),
+            Encoding.UTF8.GetBytes("CipherVault.Host.AdminToken.v2.cli"),
             DataProtectionScope.CurrentUser);
         try
         {

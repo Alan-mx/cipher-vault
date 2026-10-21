@@ -7,9 +7,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\CipherVault.Core\CipherVault.Core.csproj" />
     <ProjectReference Include="..\CipherVault.Host.Contracts\CipherVault.Host.Contracts.csproj" />
-    <ProjectReference Include="..\CipherVault.Host\CipherVault.Host.csproj" />
   </ItemGroup>
 
 </Project>

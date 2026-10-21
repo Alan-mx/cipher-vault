@@ -5,6 +5,7 @@ using CipherVault.Core.Configuration;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Session;
 using CipherVault.Host.Security;
+using CipherVault.Host.Client.Security;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
@@ -16,6 +17,7 @@ namespace CipherVault.Host.Tests;
 internal sealed class HostTestFixture : IAsyncDisposable
 {
     public const string AdminToken = "test-admin-token";
+    public const string CliAdminToken = "test-admin-cli-token";
     public const string VaultPassword = "host integration password";
     public const string BaseUrl = "http://127.0.0.1:43127";
 
@@ -179,9 +181,34 @@ internal sealed class HostTestFixture : IAsyncDisposable
 
     private sealed class TestAdminTokenStore(string token) : IAdminTokenStore
     {
-        public Task<string> GetTokenAsync(CancellationToken cancellationToken = default)
+        public Task<string> GetTokenAsync(
+            CipherVault.Host.Contracts.HostAdminClientKind clientKind,
+            CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(token);
+            return Task.FromResult(
+                clientKind == CipherVault.Host.Contracts.HostAdminClientKind.Cli
+                    ? CliAdminToken
+                    : token);
+        }
+
+        public Task<CipherVault.Host.Contracts.HostAdminClientKind?> AuthenticateAsync(
+            string rawToken,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.Equals(rawToken, token, StringComparison.Ordinal))
+            {
+                return Task.FromResult<
+                    CipherVault.Host.Contracts.HostAdminClientKind?>(
+                    CipherVault.Host.Contracts.HostAdminClientKind.Ui);
+            }
+            if (string.Equals(rawToken, CliAdminToken, StringComparison.Ordinal))
+            {
+                return Task.FromResult<
+                    CipherVault.Host.Contracts.HostAdminClientKind?>(
+                    CipherVault.Host.Contracts.HostAdminClientKind.Cli);
+            }
+            return Task.FromResult<
+                CipherVault.Host.Contracts.HostAdminClientKind?>(null);
         }
     }
 

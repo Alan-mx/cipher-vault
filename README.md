@@ -93,11 +93,12 @@ The Host, WPF, CLI and STDIO bridge use `configVersion: 2`:
 }
 ```
 
-Do not put passwords, recovery keys, Agent Tokens or the Admin Token in this file.
-The Admin Token is stored as a DPAPI-protected file at:
+Do not put passwords, recovery keys, Agent Tokens or Admin Tokens in this file.
+WPF and CLI use separate DPAPI-protected Admin Tokens:
 
 ```text
-%LOCALAPPDATA%\CipherVault\admin-token.bin
+%LOCALAPPDATA%\CipherVault\admin-ui-token.bin
+%LOCALAPPDATA%\CipherVault\admin-cli-token.bin
 ```
 
 `--config` or `CIPHER_VAULT_CONFIG` can select another configuration file.

@@ -1,9 +1,8 @@
 using System.Net.Http.Headers;
-using System.Security.Cryptography;
-using System.Text;
 using CipherVault.Core.Configuration;
 using CipherVault.Core.Documents;
 using CipherVault.Host.Contracts;
+using CipherVault.Host.Client.Security;
 using CipherVault.Host.Security;
 
 namespace CipherVault.Host.Http;
@@ -69,8 +68,10 @@ internal sealed class AdminTokenAuthenticationMiddleware
             return;
         }
 
-        var expectedToken = await _tokenStore.GetTokenAsync(context.RequestAborted);
-        if (!TokensEqual(presentedToken, expectedToken))
+        var clientKind = await _tokenStore.AuthenticateAsync(
+            presentedToken,
+            context.RequestAborted);
+        if (clientKind is null)
         {
             _rateLimiter.RecordFailure();
             await LogAsync(
@@ -82,17 +83,10 @@ internal sealed class AdminTokenAuthenticationMiddleware
         }
 
         _rateLimiter.RecordSuccess();
-        if (!TryResolveActor(context.Request, out var actor))
-        {
-            await HostHttpResponses.WriteErrorAsync(
-                context,
-                StatusCodes.Status400BadRequest,
-                HostErrorCode.InvalidInput,
-                $"{HostAdminContext.ClientKindHeader} must be ui or cli.");
-            return;
-        }
-
-        context.Items[HostAdminContext.ActorItem] = actor;
+        context.Items[HostAdminContext.ActorItem] =
+            clientKind == HostAdminClientKind.Cli
+                ? VaultActorKind.UserCli
+                : VaultActorKind.UserUi;
         context.Items[HostHttpContextKeys.AdminAuthenticated] = true;
         context.Response.Headers.CacheControl = "no-store";
         context.Response.Headers.Pragma = "no-cache";
@@ -117,43 +111,6 @@ internal sealed class AdminTokenAuthenticationMiddleware
         }
         token = authorization.Parameter;
         return true;
-    }
-
-    private static bool TokensEqual(string presented, string expected)
-    {
-        var presentedBytes = Encoding.UTF8.GetBytes(presented);
-        var expectedBytes = Encoding.UTF8.GetBytes(expected);
-        try
-        {
-            return CryptographicOperations.FixedTimeEquals(
-                presentedBytes,
-                expectedBytes);
-        }
-        finally
-        {
-            CryptographicOperations.ZeroMemory(presentedBytes);
-            CryptographicOperations.ZeroMemory(expectedBytes);
-        }
-    }
-
-    private static bool TryResolveActor(
-        HttpRequest request,
-        out VaultActorKind actor)
-    {
-        var value = request.Headers[HostAdminContext.ClientKindHeader].ToString();
-        switch (value.Trim().ToLowerInvariant())
-        {
-            case "":
-            case "ui":
-                actor = VaultActorKind.UserUi;
-                return true;
-            case "cli":
-                actor = VaultActorKind.UserCli;
-                return true;
-            default:
-                actor = VaultActorKind.UserUi;
-                return false;
-        }
     }
 
     private static Task RejectAsync(HttpContext context)

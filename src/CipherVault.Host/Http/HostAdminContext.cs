@@ -4,7 +4,6 @@ namespace CipherVault.Host.Http;
 
 internal static class HostAdminContext
 {
-    public const string ClientKindHeader = "X-CipherVault-Client-Kind";
     public const string ActorItem = "CipherVault.AdminActor";
 
     public static VaultActorKind GetActor(HttpContext context)

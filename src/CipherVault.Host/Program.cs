@@ -3,6 +3,7 @@ using CipherVault.Core.Configuration;
 using CipherVault.Core.Errors;
 using CipherVault.Core.Security;
 using CipherVault.Host;
+using CipherVault.Host.Client.Security;
 using CipherVault.Host.Security;
 
 try

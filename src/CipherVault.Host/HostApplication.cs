@@ -7,6 +7,7 @@ using CipherVault.Core.Errors;
 using CipherVault.Core.ImportExport;
 using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
+using CipherVault.Host.Client.Security;
 using CipherVault.Host.Http;
 using CipherVault.Host.Mcp;
 using CipherVault.Host.Security;

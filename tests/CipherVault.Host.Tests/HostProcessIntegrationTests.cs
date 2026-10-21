@@ -13,6 +13,7 @@ using CipherVault.Core.Errors;
 using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Client;
+using CipherVault.Host.Client.Security;
 using CipherVault.Host.Security;
 
 namespace CipherVault.Host.Tests;
@@ -69,7 +70,8 @@ public sealed class HostProcessIntegrationTests
                 }));
 
             first = StartHost(configPath);
-            var token = await new DpapiAdminTokenStore().GetTokenAsync();
+            var token = await new DpapiAdminTokenStore().GetTokenAsync(
+                HostAdminClientKind.Ui);
             await WaitForHealthAsync(port, token, TimeSpan.FromSeconds(15));
             var initialStatus = await GetStatusAsync(port, token);
             Assert.Equal("locked", initialStatus.State);

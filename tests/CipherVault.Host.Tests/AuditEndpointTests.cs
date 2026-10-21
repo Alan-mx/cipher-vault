@@ -74,10 +74,7 @@ public sealed class AuditEndpointTests
         createRequest.Headers.Host = "127.0.0.1:43127";
         createRequest.Headers.Authorization = new AuthenticationHeaderValue(
             "Bearer",
-            HostTestFixture.AdminToken);
-        createRequest.Headers.TryAddWithoutValidation(
-            "X-CipherVault-Client-Kind",
-            "cli");
+            HostTestFixture.CliAdminToken);
         using var createResponse = await fixture.Client.SendAsync(createRequest);
         createResponse.EnsureSuccessStatusCode();
 

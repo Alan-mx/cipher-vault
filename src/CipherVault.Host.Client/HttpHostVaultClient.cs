@@ -12,7 +12,7 @@ using CipherVault.Core.Errors;
 using CipherVault.Core.ImportExport;
 using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
-using CipherVault.Host.Security;
+using CipherVault.Host.Client.Security;
 
 namespace CipherVault.Host.Client;
 
@@ -47,7 +47,9 @@ public sealed class HttpHostVaultClient : IHostVaultClient
         HostAdminClientKind clientKind,
         CancellationToken cancellationToken = default)
     {
-        var token = await new DpapiAdminTokenStore().GetTokenAsync(cancellationToken)
+        var token = await new DpapiAdminTokenStore().GetTokenAsync(
+                clientKind,
+                cancellationToken)
             .ConfigureAwait(false);
         var baseAddress = new Uri(
             $"http://{configuration.Endpoint.BindAddress}:{configuration.Endpoint.Port}");
@@ -601,9 +603,6 @@ public sealed class HttpHostVaultClient : IHostVaultClient
         request.Headers.Authorization = new AuthenticationHeaderValue(
             "Bearer",
             _adminToken);
-        request.Headers.TryAddWithoutValidation(
-            "X-CipherVault-Client-Kind",
-            _clientKind == HostAdminClientKind.Cli ? "cli" : "ui");
         if (body is not null)
         {
             request.Content = JsonContent.Create(body, options: JsonOptions);
