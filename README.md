@@ -17,6 +17,7 @@ CipherVault.Ui.Wpf / CipherVault.Cli / CipherVault.Mcp
 
 - `CipherVault.Host.exe` owns the only active Vault session, SQLCipher connection,
   keys, lock timeout and audit stream.
+- Only one Host process may run for each Windows user, regardless of Vault or port.
 - WPF and CLI use the protected `/admin/v1` API.
 - AI clients use Streamable HTTP at `/mcp` with a per-client Bearer Token.
 - `CipherVault.Mcp.exe` remains a thin STDIO adapter for clients without HTTP
@@ -36,6 +37,8 @@ CipherVault.Ui.Wpf / CipherVault.Cli / CipherVault.Mcp
   or rotated.
 - MCP clients default to `readOnly`; write access must be assigned explicitly.
 - Admin and Agent Tokens use separate routes and cannot substitute for each other.
+- WPF and CLI use separate DPAPI-protected Admin Tokens, so audit identity is
+  derived from the authenticated token rather than a client-supplied header.
 - Static Bearer Tokens are a trusted-local-client model, not full MCP OAuth.
 - Requests with an `Origin` header are rejected unless the exact origin is listed
   in `host.allowedOrigins`.
@@ -103,7 +106,7 @@ WPF and CLI use separate DPAPI-protected Admin Tokens:
 
 `--config` or `CIPHER_VAULT_CONFIG` can select another configuration file.
 Relative `vaultPath` values are resolved against that file's directory.
-Configurations with `configVersion: 1` do not silently fall back to direct mode.
+Configurations with `configVersion: 1` are rejected; only version 2 is supported.
 
 ## Starting Host
 
