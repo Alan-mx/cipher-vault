@@ -22,14 +22,14 @@ internal sealed class AgentTokenAuthenticationMiddleware
     public AgentTokenAuthenticationMiddleware(
         RequestDelegate next,
         AgentTokenStore tokenStore,
-        HostAuthenticationRateLimiter rateLimiter,
+        HostAuthenticationRateLimiters rateLimiters,
         ISecurityEventLog securityLog,
         HostSessionCoordinator sessions,
         ResolvedCipherVaultHostConfig configuration)
     {
         _next = next;
         _tokenStore = tokenStore;
-        _rateLimiter = rateLimiter;
+        _rateLimiter = rateLimiters.Agent;
         _securityLog = securityLog;
         _sessions = sessions;
         _mcpPath = configuration.Endpoint.McpPath;
@@ -145,7 +145,8 @@ internal sealed class AgentTokenAuthenticationMiddleware
                 out var value)
             ? value as string
             : null;
-        return _securityLog.WriteAsync(
+        return SecurityLogSafety.TryWriteAsync(
+            _securityLog,
             new HostSecurityLogEvent(
                 DateTimeOffset.UtcNow,
                 eventType,

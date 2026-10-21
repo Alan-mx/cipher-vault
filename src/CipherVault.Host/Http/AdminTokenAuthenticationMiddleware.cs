@@ -19,13 +19,13 @@ internal sealed class AdminTokenAuthenticationMiddleware
     public AdminTokenAuthenticationMiddleware(
         RequestDelegate next,
         IAdminTokenStore tokenStore,
-        HostAuthenticationRateLimiter rateLimiter,
+        HostAuthenticationRateLimiters rateLimiters,
         ISecurityEventLog securityLog,
         ResolvedCipherVaultHostConfig configuration)
     {
         _next = next;
         _tokenStore = tokenStore;
-        _rateLimiter = rateLimiter;
+        _rateLimiter = rateLimiters.Admin;
         _securityLog = securityLog;
         _adminPath = configuration.Endpoint.AdminPath;
     }
@@ -176,7 +176,8 @@ internal sealed class AdminTokenAuthenticationMiddleware
                 out var value)
             ? value as string
             : null;
-        return _securityLog.WriteAsync(
+        return SecurityLogSafety.TryWriteAsync(
+            _securityLog,
             new HostSecurityLogEvent(
                 DateTimeOffset.UtcNow,
                 eventType,

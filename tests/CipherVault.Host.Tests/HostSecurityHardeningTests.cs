@@ -66,6 +66,37 @@ public sealed class HostSecurityHardeningTests
     }
 
     [Fact]
+    public async Task AgentSuccessDoesNotResetAdminAuthenticationRateLimit()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var agentToken = await CreateAgentAsync(fixture.Client);
+        for (var attempt = 0; attempt < 4; attempt++)
+        {
+            using var invalid = await SendHealthAsync(
+                fixture.Client,
+                adminToken: "wrong-token");
+            Assert.Equal(HttpStatusCode.Unauthorized, invalid.StatusCode);
+        }
+
+        using (var validAgentRequest = CreateMcpRequest(agentToken))
+        using (var validAgent = await fixture.Client.SendAsync(validAgentRequest))
+        {
+            Assert.NotEqual(HttpStatusCode.Unauthorized, validAgent.StatusCode);
+        }
+
+        using (var fifthFailure = await SendHealthAsync(
+                   fixture.Client,
+                   adminToken: "wrong-token"))
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, fifthFailure.StatusCode);
+        }
+        using var blocked = await SendHealthAsync(
+            fixture.Client,
+            adminToken: "wrong-token");
+        Assert.Equal((HttpStatusCode)429, blocked.StatusCode);
+    }
+
+    [Fact]
     public async Task AgentTokenIsRevokedImmediatelyAndCannotUseAdminApi()
     {
         await using var fixture = await HostTestFixture.CreateAsync();

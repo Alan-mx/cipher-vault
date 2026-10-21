@@ -263,25 +263,17 @@ public sealed class AgentTokenStore
             {
                 _clients = next;
             }
-            try
-            {
-                await _securityLog.WriteAsync(
-                    new HostSecurityLogEvent(
-                        DateTimeOffset.UtcNow,
-                        "token_revoked",
-                        clientId,
-                        ConnectionId: null,
-                        requestId,
-                        "success",
-                        ReasonCode: null),
-                    cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception exception) when (
-                exception is IOException or
-                    UnauthorizedAccessException)
-            {
-                Console.Error.WriteLine("security_event_log_failed");
-            }
+            await SecurityLogSafety.TryWriteAsync(
+                _securityLog,
+                new HostSecurityLogEvent(
+                    DateTimeOffset.UtcNow,
+                    "token_revoked",
+                    clientId,
+                    ConnectionId: null,
+                    requestId,
+                    "success",
+                    ReasonCode: null),
+                cancellationToken).ConfigureAwait(false);
         }
         finally
         {

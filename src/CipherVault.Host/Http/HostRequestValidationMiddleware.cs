@@ -99,7 +99,8 @@ internal sealed class HostRequestValidationMiddleware
                 out var value)
             ? value as string
             : null;
-        return _securityLog.WriteAsync(
+        return SecurityLogSafety.TryWriteAsync(
+            _securityLog,
             new HostSecurityLogEvent(
                 DateTimeOffset.UtcNow,
                 eventType,

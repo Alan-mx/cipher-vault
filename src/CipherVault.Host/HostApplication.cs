@@ -27,14 +27,14 @@ public static class HostApplication
         IHostCredentialPrompt credentialPrompt,
         ISystemActivityProvider? activityProvider = null,
         ISecurityEventLog? securityEventLog = null,
-        HostAuthenticationRateLimiter? authenticationRateLimiter = null)
+        HostAuthenticationRateLimiters? authenticationRateLimiters = null)
     {
         builder.Services.AddSingleton(configuration);
         builder.Services.AddSingleton(adminTokenStore);
         builder.Services.AddSingleton(credentialPrompt);
         builder.Services.AddSingleton<AgentTokenStore>();
         builder.Services.AddSingleton(
-            authenticationRateLimiter ?? new HostAuthenticationRateLimiter());
+            authenticationRateLimiters ?? new HostAuthenticationRateLimiters());
         builder.Services.AddSingleton<ISecurityEventLog>(
             securityEventLog ?? new JsonlSecurityEventLog());
         builder.Services.AddSingleton<IVaultService>(_ => new VaultService(
