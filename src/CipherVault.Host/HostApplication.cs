@@ -247,6 +247,61 @@ public static class HostApplication
                     return Results.Empty;
                 }
             });
+        app.MapDelete(
+            configuration.Endpoint.McpPath + "/access-grants/{grantId:guid}",
+            async (
+                Guid grantId,
+                AccessGrantService grants,
+                HttpContext context,
+                CancellationToken cancellationToken) =>
+            {
+                var clientId = context.User.FindFirstValue(
+                    AgentTokenAuthenticationMiddleware.ClientIdClaim);
+                var authorizationMode = context.User.FindFirstValue(
+                    AgentTokenAuthenticationMiddleware.AuthorizationModeClaim);
+                if (string.IsNullOrWhiteSpace(clientId) ||
+                    !string.Equals(
+                        authorizationMode,
+                        "accessGrant",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        StatusCodes.Status403Forbidden,
+                        HostErrorCode.AccessDenied,
+                        "This client does not use accessGrant authorization.");
+                    return Results.Empty;
+                }
+
+                var plaintextSecret = context.Request.Headers[AccessGrantHeaders.Grant]
+                    .ToString();
+                if (string.IsNullOrWhiteSpace(plaintextSecret))
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        StatusCodes.Status403Forbidden,
+                        HostErrorCode.AccessGrantRequired,
+                        "An Access Grant secret is required.");
+                    return Results.Empty;
+                }
+
+                var status = grants.Revoke(
+                    clientId,
+                    grantId,
+                    plaintextSecret,
+                    out _);
+                if (status == AccessGrantRevokeStatus.Invalid)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        StatusCodes.Status403Forbidden,
+                        HostErrorCode.AccessGrantInvalid,
+                        "The Access Grant secret is invalid.");
+                    return Results.Empty;
+                }
+
+                return Results.NoContent();
+            });
         app.MapGet(
             configuration.Endpoint.AdminPath + "/health",
             () => Results.Json(

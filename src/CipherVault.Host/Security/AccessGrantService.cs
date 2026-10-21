@@ -305,7 +305,7 @@ public sealed class AccessGrantService
         }
     }
 
-    public bool TryRevoke(
+    public AccessGrantRevokeStatus Revoke(
         string clientId,
         Guid grantId,
         string plaintextSecret,
@@ -317,8 +317,12 @@ public sealed class AccessGrantService
         {
             lock (_sync)
             {
-                if (!_grants.TryGetValue(grantId, out var record) ||
-                    !string.Equals(
+                if (!_grants.TryGetValue(grantId, out var record))
+                {
+                    revoked = null;
+                    return AccessGrantRevokeStatus.AlreadyRemoved;
+                }
+                if (!string.Equals(
                         record.ClientId,
                         clientId,
                         StringComparison.OrdinalIgnoreCase) ||
@@ -327,12 +331,12 @@ public sealed class AccessGrantService
                         record.SecretHash ?? []))
                 {
                     revoked = null;
-                    return false;
+                    return AccessGrantRevokeStatus.Invalid;
                 }
 
                 revoked = record with { State = AccessGrantState.Revoked };
                 RemoveGrant(record);
-                return true;
+                return AccessGrantRevokeStatus.Revoked;
             }
         }
         finally

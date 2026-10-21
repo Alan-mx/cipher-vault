@@ -269,6 +269,51 @@ public sealed class AccessGrantServiceTests
     }
 
     [Fact]
+    public async Task RevokeRequiresMatchingClientAndSecret()
+    {
+        var now = DateTimeOffset.Parse("2026-10-21T10:00:00Z");
+        var service = new AccessGrantService(
+            timeProvider: new MutableTimeProvider(now));
+        var generation = Generation(now, TimeSpan.FromHours(1));
+        var issued = await ApproveAsync(
+            service,
+            now,
+            McpAccessMode.ReadOnly,
+            AccessGrantScope.Read,
+            generation);
+
+        Assert.Equal(
+            AccessGrantRevokeStatus.Invalid,
+            service.Revoke(
+                "other-agent",
+                issued.Record.GrantId,
+                issued.PlaintextSecret,
+                out _));
+        Assert.Equal(
+            AccessGrantRevokeStatus.Invalid,
+            service.Revoke(
+                "agent",
+                issued.Record.GrantId,
+                "wrong-secret",
+                out _));
+        Assert.Equal(
+            AccessGrantRevokeStatus.Revoked,
+            service.Revoke(
+                "agent",
+                issued.Record.GrantId,
+                issued.PlaintextSecret,
+                out var revoked));
+        Assert.Equal(AccessGrantState.Revoked, revoked!.State);
+        Assert.Equal(
+            AccessGrantRevokeStatus.AlreadyRemoved,
+            service.Revoke(
+                "agent",
+                issued.Record.GrantId,
+                issued.PlaintextSecret,
+                out _));
+    }
+
+    [Fact]
     public void DeleteScopeImpliesReadAndWrite()
     {
         Assert.Equal(

@@ -163,6 +163,78 @@ public sealed class AccessGrantEndpointTests
         Assert.Equal(0, fixture.AccessGrantPrompt.RequestCount);
     }
 
+    [Fact]
+    public async Task RevokeGrantValidatesSecretAndIsIdempotent()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        await UnlockHostAsync(fixture.Client);
+        var token = await CreateAgentAsync(
+            fixture.Client,
+            "grant-agent",
+            "readOnly",
+            "accessGrant");
+        var issued = await CreateGrantAsync(
+            fixture.Client,
+            token,
+            Guid.NewGuid());
+
+        using var wrongSecret = await SendRevokeAsync(
+            fixture.Client,
+            token,
+            issued.Grant.GrantId,
+            "wrong-secret");
+        Assert.Equal(HttpStatusCode.Forbidden, wrongSecret.StatusCode);
+        var wrongError = await wrongSecret.Content.ReadFromJsonAsync<
+            HostApiErrorResponse>(JsonOptions);
+        Assert.NotNull(wrongError);
+        Assert.Equal("access_grant_invalid", wrongError.Error.Code);
+
+        using var revoked = await SendRevokeAsync(
+            fixture.Client,
+            token,
+            issued.Grant.GrantId,
+            issued.Secret);
+        Assert.Equal(HttpStatusCode.NoContent, revoked.StatusCode);
+
+        using var repeated = await SendRevokeAsync(
+            fixture.Client,
+            token,
+            issued.Grant.GrantId,
+            issued.Secret);
+        Assert.Equal(HttpStatusCode.NoContent, repeated.StatusCode);
+    }
+
+    [Fact]
+    public async Task RevokeGrantRequiresGrantSecretHeader()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        await UnlockHostAsync(fixture.Client);
+        var token = await CreateAgentAsync(
+            fixture.Client,
+            "grant-agent",
+            "readOnly",
+            "accessGrant");
+        var issued = await CreateGrantAsync(
+            fixture.Client,
+            token,
+            Guid.NewGuid());
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Delete,
+            $"/mcp/access-grants/{issued.Grant.GrantId:D}");
+        request.Headers.Host = "127.0.0.1:43127";
+        request.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            token);
+        using var response = await fixture.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var error = await response.Content.ReadFromJsonAsync<HostApiErrorResponse>(
+            JsonOptions);
+        Assert.NotNull(error);
+        Assert.Equal("access_grant_required", error.Error.Code);
+    }
+
     private static async Task UnlockHostAsync(HttpClient client)
     {
         using var request = new HttpRequestMessage(
@@ -226,6 +298,42 @@ public sealed class AccessGrantEndpointTests
         request.Headers.Authorization = new AuthenticationHeaderValue(
             "Bearer",
             agentToken);
+        return await client.SendAsync(request);
+    }
+
+    private static async Task<HostIssuedAccessGrantData> CreateGrantAsync(
+        HttpClient client,
+        string agentToken,
+        Guid clientInstanceId)
+    {
+        using var response = await SendGrantRequestAsync(
+            client,
+            agentToken,
+            clientInstanceId,
+            "read");
+        response.EnsureSuccessStatusCode();
+        var payload = await response.Content.ReadFromJsonAsync<
+            HostApiResponse<HostIssuedAccessGrantData>>(JsonOptions);
+        Assert.NotNull(payload);
+        return payload.Data;
+    }
+
+    private static async Task<HttpResponseMessage> SendRevokeAsync(
+        HttpClient client,
+        string agentToken,
+        Guid grantId,
+        string grantSecret)
+    {
+        var request = new HttpRequestMessage(
+            HttpMethod.Delete,
+            $"/mcp/access-grants/{grantId:D}");
+        request.Headers.Host = "127.0.0.1:43127";
+        request.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            agentToken);
+        request.Headers.TryAddWithoutValidation(
+            AccessGrantHeaders.Grant,
+            grantSecret);
         return await client.SendAsync(request);
     }
 }
