@@ -4,6 +4,7 @@ using CipherVault.Core.Backup;
 using CipherVault.Core.Configuration;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
+using CipherVault.Core.ImportExport;
 using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Http;
@@ -936,6 +937,44 @@ public static class HostApplication
                         cancellationToken);
                     return Results.Json(
                         new HostApiResponse<int>(true, rebuilt));
+                }
+                catch (HostException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception.Code),
+                        exception.Code,
+                        exception.Message);
+                    return Results.Empty;
+                }
+                catch (VaultException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception),
+                        HostHttpResponses.ToHostErrorCode(exception),
+                        exception.Message);
+                    return Results.Empty;
+                }
+            });
+        app.MapPost(
+            configuration.Endpoint.AdminPath + "/export",
+            async (
+                HostExportRequest request,
+                HostVaultGateway vault,
+                HttpContext context,
+                CancellationToken cancellationToken) =>
+            {
+                try
+                {
+                    var result = await vault.ExecuteMaintenanceAsync(
+                        (service, token) => service.ExportSnapshotAsync(
+                            request.DestinationPath ?? string.Empty,
+                            VaultActorKind.UserUi,
+                            token),
+                        cancellationToken);
+                    return Results.Json(
+                        new HostApiResponse<VaultExportResult>(true, result));
                 }
                 catch (HostException exception)
                 {

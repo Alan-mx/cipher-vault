@@ -56,3 +56,6 @@ public sealed record HostBackupRequest(
 public sealed record HostRestoreNewRequest(
     string? BackupPath,
     string? TargetPath);
+
+public sealed record HostExportRequest(
+    string? DestinationPath);
