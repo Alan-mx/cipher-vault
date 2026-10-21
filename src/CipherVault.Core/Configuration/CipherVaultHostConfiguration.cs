@@ -120,30 +120,36 @@ public static class CipherVaultHostConfiguration
                 configPath,
                 isExplicit: explicitConfigPath is not null,
                 cancellationToken);
-            var legacyOverrides = new CipherVaultConfigOverrides
-            {
-                VaultPath = commandLineOverrides.VaultPath,
-                IdleMinutes = commandLineOverrides.IdleMinutes,
-                HardHours = commandLineOverrides.HardHours
-            };
-            var environmentOverrides = CipherVaultConfiguration.ReadEnvironmentOverrides(
-                readEnvironment,
-                legacyOverrides,
-                includeAccessMode: false);
+            var environmentVaultPath = CipherVaultConfiguration.GetNonEmpty(
+                readEnvironment("CIPHER_VAULT_PATH"));
+            var environmentIdleMinutes =
+                commandLineOverrides.IdleMinutes is null
+                    ? CipherVaultConfiguration.ParseOptionalInteger(
+                        CipherVaultConfiguration.GetNonEmpty(
+                            readEnvironment("CIPHER_VAULT_IDLE_MINUTES")),
+                        "CIPHER_VAULT_IDLE_MINUTES")
+                    : null;
+            var environmentHardHours =
+                commandLineOverrides.HardHours is null
+                    ? CipherVaultConfiguration.ParseOptionalInteger(
+                        CipherVaultConfiguration.GetNonEmpty(
+                            readEnvironment("CIPHER_VAULT_HARD_HOURS")),
+                        "CIPHER_VAULT_HARD_HOURS")
+                    : null;
             var configDirectory = Path.GetDirectoryName(configPath)
                 ?? Environment.CurrentDirectory;
             var vaultPath = CipherVaultConfiguration.ResolveVaultPath(
                 commandLineOverrides.VaultPath,
-                environmentOverrides.VaultPath,
+                environmentVaultPath,
                 configFile?.VaultPath,
                 configDirectory,
                 defaultVaultPath);
             var idleMinutes = commandLineOverrides.IdleMinutes
-                ?? environmentOverrides.IdleMinutes
+                ?? environmentIdleMinutes
                 ?? configFile?.Session?.IdleMinutes
                 ?? DefaultIdleMinutes;
             var hardHours = commandLineOverrides.HardHours
-                ?? environmentOverrides.HardHours
+                ?? environmentHardHours
                 ?? configFile?.Session?.HardHours
                 ?? DefaultHardHours;
             var sessionOptions = VaultSessionOptions.FromMinutes(idleMinutes, hardHours);

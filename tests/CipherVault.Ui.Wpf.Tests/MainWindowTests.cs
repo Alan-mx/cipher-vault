@@ -688,7 +688,7 @@ public sealed class MainWindowTests
                 configPath,
                 JsonSerializer.Serialize(new
                 {
-                    configVersion = 1,
+                    configVersion = 2,
                     vaultPath = useRelativeVaultPath
                         ? "relative-vault"
                         : VaultPath,
