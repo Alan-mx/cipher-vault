@@ -5,7 +5,7 @@ using CipherVault.Host.Contracts;
 
 namespace CipherVault.Host.Security;
 
-public sealed class AccessGrantService
+public sealed class AccessGrantService : IDisposable
 {
     public static readonly TimeSpan DefaultIdleLifetime = TimeSpan.FromMinutes(30);
     public static readonly TimeSpan DefaultHardLifetime = TimeSpan.FromHours(4);
@@ -29,19 +29,29 @@ public sealed class AccessGrantService
     private readonly Queue<Guid> _terminalGrantOrder = new();
     private readonly Dictionary<string, HashSet<Guid>> _clientTerminalGrants =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly Timer _expirationSweeper;
+    private readonly TimeSpan _sweepInterval;
+    private int _sweepInProgress;
 
     public AccessGrantService(
         TimeProvider? timeProvider = null,
         TimeSpan? idleLifetime = null,
         TimeSpan? hardLifetime = null,
         TimeSpan? denialCooldown = null,
-        ISecurityEventLog? securityLog = null)
+        ISecurityEventLog? securityLog = null,
+        TimeSpan? sweepInterval = null)
     {
         _timeProvider = timeProvider ?? TimeProvider.System;
         _idleLifetime = idleLifetime ?? DefaultIdleLifetime;
         _hardLifetime = hardLifetime ?? DefaultHardLifetime;
         _denialCooldown = denialCooldown ?? DefaultDenialCooldown;
         _securityLog = securityLog;
+        _sweepInterval = sweepInterval ?? TimeSpan.FromMinutes(1);
+        _expirationSweeper = new Timer(
+            _ => SweepExpired(),
+            state: null,
+            dueTime: _sweepInterval,
+            period: _sweepInterval);
         if (_idleLifetime <= TimeSpan.Zero ||
             _hardLifetime <= TimeSpan.Zero ||
             _denialCooldown < TimeSpan.Zero)
@@ -54,6 +64,27 @@ public sealed class AccessGrantService
 
     public TimeSpan IdleLifetime => _idleLifetime;
     public TimeSpan HardLifetime => _hardLifetime;
+
+    public void Dispose()
+    {
+        _expirationSweeper.Dispose();
+    }
+
+    public void SweepExpired()
+    {
+        if (Interlocked.Exchange(ref _sweepInProgress, 1) != 0)
+        {
+            return;
+        }
+        try
+        {
+            PruneExpired();
+        }
+        finally
+        {
+            Volatile.Write(ref _sweepInProgress, 0);
+        }
+    }
 
     public async Task<AccessGrantRequestOutcome> RequestAsync(
         string clientId,
@@ -70,6 +101,7 @@ public sealed class AccessGrantService
 
         var allowed = AccessGrantScopes.Ceiling(tokenAccessMode);
         var effectiveRequest = AccessGrantScopes.Normalize(requestedScopes) & allowed;
+        PruneExpired();
         if (effectiveRequest == AccessGrantScope.None)
         {
             return new AccessGrantRequestOutcome(
@@ -225,6 +257,7 @@ public sealed class AccessGrantService
         string? plaintextSecret,
         AccessGrantVaultGeneration vaultGeneration)
     {
+        PruneExpired();
         var result = ValidateCore(clientId, plaintextSecret, vaultGeneration);
         await LogValidationAsync(clientId, result).ConfigureAwait(false);
         return result;
@@ -431,6 +464,7 @@ public sealed class AccessGrantService
 
     public IReadOnlyList<AccessGrantRecord> List()
     {
+        PruneExpired();
         lock (_sync)
         {
             return _grants.Values
@@ -639,6 +673,22 @@ public sealed class AccessGrantService
         if (terminalState is AccessGrantState.Revoked or AccessGrantState.Expired)
         {
             AddTerminalTombstone(record with { State = terminalState });
+        }
+    }
+
+    private void PruneExpired()
+    {
+        lock (_sync)
+        {
+            var now = _timeProvider.GetUtcNow();
+            foreach (var record in _grants.Values.ToArray())
+            {
+                if ((record.IdleExpiresAt.HasValue && now >= record.IdleExpiresAt) ||
+                    (record.HardExpiresAt.HasValue && now >= record.HardExpiresAt))
+                {
+                    RemoveGrant(record, AccessGrantState.Expired);
+                }
+            }
         }
     }
 

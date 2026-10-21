@@ -204,6 +204,9 @@ public sealed class AccessGrantServiceTests
                 "agent",
                 issued.PlaintextSecret,
                 generation)).Status);
+
+        service.SweepExpired();
+        Assert.Empty(service.List());
     }
 
     [Fact]
