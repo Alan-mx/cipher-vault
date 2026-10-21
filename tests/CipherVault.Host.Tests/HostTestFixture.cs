@@ -46,7 +46,8 @@ internal sealed class HostTestFixture : IAsyncDisposable
 
     public static async Task<HostTestFixture> CreateAsync(
         string[]? allowedOrigins = null,
-        bool initializeVault = true)
+        bool initializeVault = true,
+        IReadOnlyList<AgentClientPolicy>? clients = null)
     {
         var root = Path.Combine(
             Path.GetTempPath(),
@@ -80,7 +81,7 @@ internal sealed class HostTestFixture : IAsyncDisposable
                 new HashSet<string>(
                     allowedOrigins ?? [],
                     StringComparer.OrdinalIgnoreCase)),
-            [],
+            clients ?? [],
             Path.Combine(root, "config.json"));
         var credentialPrompt = new TestCredentialPrompt();
         var app = HostApplication.Configure(

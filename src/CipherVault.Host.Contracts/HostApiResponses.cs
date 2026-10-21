@@ -46,3 +46,9 @@ public sealed record HostInitializeData(
     string VaultPath,
     string RecoveryKey,
     DateTimeOffset CreatedAt);
+
+public sealed record HostClientData(
+    string Id,
+    string AccessMode,
+    bool AllowLock,
+    bool Enabled);

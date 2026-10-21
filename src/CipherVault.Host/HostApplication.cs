@@ -24,6 +24,7 @@ public static class HostApplication
         builder.Services.AddSingleton(configuration);
         builder.Services.AddSingleton(adminTokenStore);
         builder.Services.AddSingleton(credentialPrompt);
+        builder.Services.AddSingleton<AgentTokenStore>();
         builder.Services.AddSingleton<IVaultService>(_ => new VaultService(
             activityProvider ?? new WindowsSystemActivityProvider(),
             sessionOptions: configuration.SessionOptions));
@@ -60,6 +61,15 @@ public static class HostApplication
                                 configuration.Endpoint.McpPath,
                                 configuration.Endpoint.AdminPath),
                             HostDtoMapper.ToSessionStatus(snapshot))));
+            });
+        app.MapGet(
+            configuration.Endpoint.AdminPath + "/clients",
+            async (AgentTokenStore clients, CancellationToken cancellationToken) =>
+            {
+                var items = await clients.ListAsync(cancellationToken);
+                return Results.Json(new HostApiResponse<IReadOnlyList<HostClientData>>(
+                    true,
+                    items));
             });
         app.MapPost(
             configuration.Endpoint.AdminPath + "/session/unlock",
