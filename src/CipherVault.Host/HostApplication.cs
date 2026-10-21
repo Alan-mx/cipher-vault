@@ -751,6 +751,40 @@ public static class HostApplication
                 }
             });
         app.MapPost(
+            configuration.Endpoint.AdminPath + "/maintenance/verify",
+            async (
+                HostVaultGateway vault,
+                HttpContext context,
+                CancellationToken cancellationToken) =>
+            {
+                try
+                {
+                    var report = await vault.ExecuteAsync(
+                        (service, token) => service.VerifyVaultAsync(token),
+                        cancellationToken);
+                    return Results.Json(
+                        new HostApiResponse<VaultIntegrityReport>(true, report));
+                }
+                catch (HostException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception.Code),
+                        exception.Code,
+                        exception.Message);
+                    return Results.Empty;
+                }
+                catch (VaultException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception),
+                        HostHttpResponses.ToHostErrorCode(exception),
+                        exception.Message);
+                    return Results.Empty;
+                }
+            });
+        app.MapPost(
             configuration.Endpoint.AdminPath + "/session/unlock",
             async (
                 HostUnlockRequest request,
