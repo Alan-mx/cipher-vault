@@ -62,6 +62,9 @@
                         <PasswordBox x:Name="RecoveryKeyUnlockBox" Grid.Column="1" MinHeight="32"
                                      Padding="8,4" VerticalContentAlignment="Center" FontFamily="Consolas"
                                      Visibility="Collapsed" ToolTip="可粘贴离线恢复密钥，空格和连字符会自动忽略。" />
+                        <TextBlock x:Name="HostCredentialHintText" Grid.Column="1" Visibility="Collapsed"
+                                   VerticalAlignment="Center" Foreground="#667085"
+                                   Text="点击解锁后，在 Host 授权窗口中输入密码或恢复密钥。" />
                         <Button x:Name="UnlockButton" Grid.Column="2" Content="解锁" MinWidth="90" Margin="12,0,0,0" Padding="12,5" Click="UnlockButton_Click" />
                         <Button x:Name="LockButton" Grid.Column="3" Content="锁定" MinWidth="90" Margin="8,0,0,0" Padding="12,5" Click="LockButton_Click" />
                         <Button x:Name="ExitAndLockButton" Grid.Column="4" Content="退出并锁定" MinWidth="110" Margin="8,0,0,0" Padding="12,5" Click="ExitAndLockButton_Click" />
@@ -82,9 +85,9 @@
                                          MinHeight="60" Padding="8" FontFamily="Consolas" />
                                 <Button Content="复制密钥" HorizontalAlignment="Left" Margin="0,8,0,10"
                                         Padding="10,4" Click="CopyRecoveryButton_Click" />
-                                <TextBlock Text="重新输入恢复密钥以确认已保存：" />
+                                <TextBlock x:Name="RecoveryConfirmLabel" Text="重新输入恢复密钥以确认已保存：" />
                                 <TextBox x:Name="RecoveryConfirmTextBox" MinHeight="32" Padding="8,4" Margin="0,6,0,0" />
-                                <Button Content="确认恢复密钥" HorizontalAlignment="Left" Margin="0,8,0,0"
+                                <Button x:Name="ConfirmRecoveryButton" Content="确认恢复密钥" HorizontalAlignment="Left" Margin="0,8,0,0"
                                         Padding="12,5" Click="ConfirmRecoveryButton_Click" />
                             </StackPanel>
                         </Border>
@@ -158,7 +161,7 @@
             <TabItem Header="维护">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="16">
-                        <TextBlock Text="当前密码" />
+                        <TextBlock x:Name="MaintenancePasswordLabel" Text="当前密码" />
                         <PasswordBox x:Name="MaintenancePasswordBox" MinHeight="30" Padding="8,4" Margin="0,4,0,12" />
 
                         <TextBlock Text="从 Markdown/TXT 文件夹导入" FontWeight="SemiBold" />
@@ -198,6 +201,10 @@
                             <PasswordBox x:Name="RestoreRecoveryKeyBox" Grid.Column="1" MinHeight="30"
                                          Padding="8,4" VerticalContentAlignment="Center" FontFamily="Consolas"
                                          Visibility="Collapsed" ToolTip="可粘贴离线恢复密钥，空格和连字符会自动忽略。" />
+                            <TextBlock x:Name="HostRestoreCredentialHintText" Grid.Column="1"
+                                       Visibility="Collapsed" VerticalAlignment="Center"
+                                       Foreground="#667085"
+                                       Text="点击恢复后，在 Host 授权窗口中输入备份密码或恢复密钥。" />
                         </Grid>
                         <DockPanel Margin="0,0,0,8">
                             <Button Content="打开备份" MinWidth="100" DockPanel.Dock="Left" Click="OpenBackupFileButton_Click" />
@@ -221,9 +228,9 @@
                             <Button Content="修改密码" MinWidth="120" Click="ChangePasswordButton_Click" />
                             <Button Content="轮换恢复密钥" MinWidth="140" Margin="8,0,0,0" Click="RotateRecoveryButton_Click" />
                         </StackPanel>
-                        <TextBlock Text="新密码" Margin="0,12,0,0" />
+                        <TextBlock x:Name="NewPasswordLabel" Text="新密码" Margin="0,12,0,0" />
                         <PasswordBox x:Name="NewPasswordBox" MinHeight="30" Padding="8,4" Margin="0,4,0,6" />
-                        <TextBlock Text="确认新密码" />
+                        <TextBlock x:Name="ConfirmNewPasswordLabel" Text="确认新密码" />
                         <PasswordBox x:Name="ConfirmNewPasswordBox" MinHeight="30" Padding="8,4" Margin="0,4,0,12" />
                         <TextBox x:Name="MaintenanceOutput" IsReadOnly="True" AcceptsReturn="True"
                                  TextWrapping="Wrap" MinHeight="160" VerticalScrollBarVisibility="Auto"

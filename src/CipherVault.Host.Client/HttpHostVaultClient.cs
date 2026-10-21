@@ -117,7 +117,7 @@ public sealed class HttpHostVaultClient : IHostVaultClient
         var data = await SendAsync<HostSessionStatusData>(
             HttpMethod.Post,
             "/session/unlock",
-            new HostUnlockRequest(ToCredentialType(credentialType)),
+            new HostUnlockRequest("any"),
             cancellationToken).ConfigureAwait(false);
         return ToSessionStatus(data);
     }
@@ -621,13 +621,6 @@ public sealed class HttpHostVaultClient : IHostVaultClient
                 $"{Uri.EscapeDataString(item.Key)}={Uri.EscapeDataString(item.Value!)}")
             .ToList();
         return values.Count == 0 ? path : path + "?" + string.Join("&", values);
-    }
-
-    private static string ToCredentialType(VaultCredentialType credentialType)
-    {
-        return credentialType == VaultCredentialType.RecoveryKey
-            ? "recoveryKey"
-            : "password";
     }
 
     private static VaultSessionStatus ToSessionStatus(

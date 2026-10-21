@@ -93,6 +93,36 @@ public partial class MainWindow : Window
         _statusTimer.Tick += StatusTimer_Tick;
         Loaded += MainWindow_Loaded;
         Closed += MainWindow_Closed;
+        ConfigureCredentialMode();
+    }
+
+    private void ConfigureCredentialMode()
+    {
+        if (!_service.PromptsForCredentials)
+        {
+            return;
+        }
+
+        CredentialTypeComboBox.Visibility = Visibility.Collapsed;
+        PasswordBox.Visibility = Visibility.Collapsed;
+        RecoveryKeyUnlockBox.Visibility = Visibility.Collapsed;
+        HostCredentialHintText.Visibility = Visibility.Visible;
+
+        RecoveryConfirmLabel.Visibility = Visibility.Collapsed;
+        RecoveryConfirmTextBox.Visibility = Visibility.Collapsed;
+        ConfirmRecoveryButton.Content = "由 Host 确认恢复密钥";
+
+        RestoreCredentialTypeComboBox.Visibility = Visibility.Collapsed;
+        RestorePasswordBox.Visibility = Visibility.Collapsed;
+        RestoreRecoveryKeyBox.Visibility = Visibility.Collapsed;
+        HostRestoreCredentialHintText.Visibility = Visibility.Visible;
+
+        MaintenancePasswordLabel.Visibility = Visibility.Collapsed;
+        MaintenancePasswordBox.Visibility = Visibility.Collapsed;
+        NewPasswordLabel.Visibility = Visibility.Collapsed;
+        NewPasswordBox.Visibility = Visibility.Collapsed;
+        ConfirmNewPasswordLabel.Visibility = Visibility.Collapsed;
+        ConfirmNewPasswordBox.Visibility = Visibility.Collapsed;
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)

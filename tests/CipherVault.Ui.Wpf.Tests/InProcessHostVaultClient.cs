@@ -12,8 +12,14 @@ internal sealed class InProcessHostVaultClient : IHostVaultClient
 {
     private readonly VaultService _vault = new(
         new AlwaysActiveActivityProvider());
+    private readonly bool _promptsForCredentials;
 
-    public bool PromptsForCredentials => false;
+    public InProcessHostVaultClient(bool promptsForCredentials = false)
+    {
+        _promptsForCredentials = promptsForCredentials;
+    }
+
+    public bool PromptsForCredentials => _promptsForCredentials;
     public int LockCallCount { get; private set; }
     public string? LastLockReason { get; private set; }
     public int StopHostCallCount { get; private set; }

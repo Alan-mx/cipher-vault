@@ -235,6 +235,40 @@ public sealed class MainWindowTests
     }
 
     [Fact]
+    public Task HostModeHidesLocalCredentialInputs()
+    {
+        return RunOnStaAsync(async () =>
+        {
+            using var fixture = new WindowFixture();
+            var window = new MainWindow(
+                fixture.VaultPath,
+                new InProcessHostVaultClient(promptsForCredentials: true));
+            try
+            {
+                Assert.Equal(
+                    Visibility.Collapsed,
+                    Find<ComboBox>(window, "CredentialTypeComboBox").Visibility);
+                Assert.Equal(
+                    Visibility.Collapsed,
+                    Find<PasswordBox>(window, "PasswordBox").Visibility);
+                Assert.Equal(
+                    Visibility.Visible,
+                    Find<TextBlock>(window, "HostCredentialHintText").Visibility);
+                Assert.Equal(
+                    Visibility.Collapsed,
+                    Find<PasswordBox>(window, "MaintenancePasswordBox").Visibility);
+                Assert.Equal(
+                    Visibility.Visible,
+                    Find<TextBlock>(window, "HostRestoreCredentialHintText").Visibility);
+            }
+            finally
+            {
+                await fixture.DisposeWindowAsync(window);
+            }
+        });
+    }
+
+    [Fact]
     public Task ConfigVaultPathIsInjectedIntoWindow()
     {
         return RunOnStaAsync(async () =>
