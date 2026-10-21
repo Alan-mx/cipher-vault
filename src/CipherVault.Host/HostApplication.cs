@@ -261,6 +261,47 @@ public static class HostApplication
                     return Results.Empty;
                 }
             });
+        app.MapGet(
+            configuration.Endpoint.AdminPath + "/notes/{documentId:guid}",
+            async (
+                Guid documentId,
+                int? offset,
+                int? maxChars,
+                HostVaultGateway vault,
+                HttpContext context,
+                CancellationToken cancellationToken) =>
+            {
+                try
+                {
+                    var result = await vault.ExecuteAsync(
+                        (service, token) => service.ReadNoteAsync(
+                            documentId,
+                            offset ?? 0,
+                            maxChars ?? 16_000,
+                            token),
+                        cancellationToken);
+                    return Results.Json(
+                        new HostApiResponse<VaultReadResult>(true, result));
+                }
+                catch (HostException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception.Code),
+                        exception.Code,
+                        exception.Message);
+                    return Results.Empty;
+                }
+                catch (VaultException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception),
+                        HostHttpResponses.ToHostErrorCode(exception),
+                        exception.Message);
+                    return Results.Empty;
+                }
+            });
         app.MapPost(
             configuration.Endpoint.AdminPath + "/session/unlock",
             async (
