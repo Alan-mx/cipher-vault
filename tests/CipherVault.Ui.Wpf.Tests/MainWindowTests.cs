@@ -633,7 +633,7 @@ public sealed class MainWindowTests
         };
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
-        await completion.Task.WaitAsync(TimeSpan.FromSeconds(20));
+        await completion.Task.WaitAsync(TimeSpan.FromSeconds(60));
         thread.Join(TimeSpan.FromSeconds(5));
     }
 

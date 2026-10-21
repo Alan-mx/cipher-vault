@@ -28,4 +28,17 @@ jobs:
         run: dotnet build CipherVault.sln -c Release --no-restore
 
       - name: Test
-        run: dotnet test CipherVault.sln -c Release --no-build
+        run: |
+          $projects = @(
+            "tests/CipherVault.Auth.Win.Tests/CipherVault.Auth.Win.Tests.csproj",
+            "tests/CipherVault.Ui.Wpf.Tests/CipherVault.Ui.Wpf.Tests.csproj",
+            "tests/CipherVault.Mcp.Tests/CipherVault.Mcp.Tests.csproj",
+            "tests/CipherVault.Host.Tests/CipherVault.Host.Tests.csproj",
+            "tests/CipherVault.Core.Tests/CipherVault.Core.Tests.csproj"
+          )
+          foreach ($project in $projects) {
+            dotnet test $project -c Release --no-build
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
+          }
