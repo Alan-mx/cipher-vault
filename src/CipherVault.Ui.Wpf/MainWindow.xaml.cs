@@ -632,6 +632,31 @@ public partial class MainWindow : Window
         await RunBusyAsync(async () => PrintJson(await _service.GetAuditPageAsync(null, 100)));
     }
 
+    private async void StopHostButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy ||
+            MessageBox.Show(
+                this,
+                "停止 Host 会锁定资料库并关闭所有 Agent 访问，继续吗？",
+                "停止 Host",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+        await StopHostAsync();
+    }
+
+    private async Task StopHostAsync()
+    {
+        await RunBusyAsync(async () =>
+        {
+            await _service.StopHostAsync("desktop-host-stop");
+            _statusTimer.Stop();
+            Close();
+        });
+    }
+
     private async void ChangePasswordButton_Click(object sender, RoutedEventArgs e)
     {
         var current = MaintenancePasswordBox.Password;

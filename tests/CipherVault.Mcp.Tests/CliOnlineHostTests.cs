@@ -99,6 +99,16 @@ public sealed class CliOnlineHostTests
                     .GetString());
             Assert.False(string.IsNullOrWhiteSpace(
                 clientDocument.RootElement.GetProperty("token").GetString()));
+
+            var stopped = await RunCliAsync(
+                FindCliExecutable(),
+                "host-stop",
+                "--config",
+                configPath);
+            Assert.True(
+                stopped.ExitCode == 0,
+                $"stdout: {stopped.Stdout}{Environment.NewLine}stderr: {stopped.Stderr}");
+            await WaitForPortClosedAsync(port, TimeSpan.FromSeconds(10));
         }
         finally
         {
@@ -188,6 +198,25 @@ public sealed class CliOnlineHostTests
         catch (HttpRequestException)
         {
         }
+    }
+
+    private static async Task WaitForPortClosedAsync(int port, TimeSpan timeout)
+    {
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            try
+            {
+                using var client = new TcpClient();
+                await client.ConnectAsync(IPAddress.Loopback, port);
+                await Task.Delay(100);
+            }
+            catch (SocketException)
+            {
+                return;
+            }
+        }
+        throw new TimeoutException("CipherVault Host did not stop.");
     }
 
     private static int ReservePort()

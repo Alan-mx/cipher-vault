@@ -16,6 +16,7 @@ internal sealed class InProcessHostVaultClient : IHostVaultClient
     public bool PromptsForCredentials => false;
     public int LockCallCount { get; private set; }
     public string? LastLockReason { get; private set; }
+    public int StopHostCallCount { get; private set; }
 
     public Task<VaultInitializeResult> InitializeAsync(
         string vaultPath,
@@ -300,6 +301,14 @@ internal sealed class InProcessHostVaultClient : IHostVaultClient
         CancellationToken cancellationToken = default)
     {
         throw new NotSupportedException();
+    }
+
+    public Task StopHostAsync(
+        string reason = "user-requested",
+        CancellationToken cancellationToken = default)
+    {
+        StopHostCallCount++;
+        return Task.CompletedTask;
     }
 
     private sealed class AlwaysActiveActivityProvider : ISystemActivityProvider

@@ -295,6 +295,13 @@ public sealed class StandaloneHostVaultClient : IHostVaultClient
         throw HostManagementRequired();
     }
 
+    public Task StopHostAsync(
+        string reason = "user-requested",
+        CancellationToken cancellationToken = default)
+    {
+        throw HostManagementRequired();
+    }
+
     private static VaultException HostManagementRequired()
     {
         return new VaultException(

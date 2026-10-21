@@ -141,4 +141,8 @@ public interface IHostVaultClient : IAsyncDisposable
     Task DeleteAgentClientAsync(
         string clientId,
         CancellationToken cancellationToken = default);
+
+    Task StopHostAsync(
+        string reason = "user-requested",
+        CancellationToken cancellationToken = default);
 }

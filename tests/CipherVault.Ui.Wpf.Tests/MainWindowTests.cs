@@ -477,6 +477,28 @@ public sealed class MainWindowTests
         });
     }
 
+    [Fact]
+    public Task StopHostClosesDesktopAfterStoppingService()
+    {
+        return RunOnStaAsync(async () =>
+        {
+            using var fixture = new WindowFixture();
+            var client = new InProcessHostVaultClient();
+            var window = new MainWindow(fixture.VaultPath, client);
+            window.Show();
+
+            await (Task)(InvokePrivate(
+                window,
+                "StopHostAsync")
+                ?? throw new InvalidOperationException("StopHostAsync returned null."));
+            await WaitUntilAsync(
+                () => !window.IsVisible,
+                TimeSpan.FromSeconds(5));
+
+            Assert.Equal(1, client.StopHostCallCount);
+        });
+    }
+
     private static T Find<T>(FrameworkElement element, string name)
         where T : class
     {

@@ -75,6 +75,7 @@ try
         "client-delete" => await DeleteClientAsync(
             service,
             RequireOption(args, "--id")),
+        "host-stop" => await StopHostAsync(service),
         "audit" => await AuditAsync(service, Require(vaultPath), jsonOptions),
         "search" => await SearchAsync(service, Require(vaultPath), RequireOption(args, "--query"), jsonOptions),
         "import-preview" => await ImportPreviewAsync(service, Require(vaultPath), RequireOption(args, "--source"), jsonOptions),
@@ -295,6 +296,13 @@ static async Task<int> DeleteClientAsync(
 {
     await service.DeleteAgentClientAsync(clientId);
     Console.WriteLine($"client removed: {clientId}");
+    return 0;
+}
+
+static async Task<int> StopHostAsync(IHostVaultClient service)
+{
+    await service.StopHostAsync("cli-host-stop");
+    Console.WriteLine("Host stopped.");
     return 0;
 }
 
@@ -691,6 +699,7 @@ static void PrintHelp()
           client-add          --id <client-id> [--access readOnly|readWrite] [--allow-lock]
           client-rotate       --id <client-id>
           client-delete       --id <client-id>
+          host-stop
           audit               --vault <directory>
           search              --vault <directory> --query <text>
           import-preview      --vault <directory> --source <directory>

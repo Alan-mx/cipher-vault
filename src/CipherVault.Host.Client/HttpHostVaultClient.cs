@@ -441,6 +441,17 @@ public sealed class HttpHostVaultClient : IHostVaultClient
             cancellationToken);
     }
 
+    public Task StopHostAsync(
+        string reason = "user-requested",
+        CancellationToken cancellationToken = default)
+    {
+        return SendWithoutDataAsync(
+            HttpMethod.Post,
+            "/host/stop",
+            new HostStopRequest(reason),
+            cancellationToken);
+    }
+
     public ValueTask DisposeAsync()
     {
         _http.Dispose();
