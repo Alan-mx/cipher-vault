@@ -496,6 +496,39 @@ public sealed class HostSessionCoordinator
             cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task ConfirmRecoveryKeyAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await ExecuteMaintenanceAsync(
+            async (vault, token) =>
+            {
+                var prompt = await _credentialPrompt.RequestAsync(
+                    HostCredentialPreference.RecoveryKey,
+                    "输入新的恢复密钥以完成确认。",
+                    token).ConfigureAwait(false);
+                if (!prompt.Confirmed || string.IsNullOrEmpty(prompt.Credential))
+                {
+                    throw new HostException(
+                        HostErrorCode.AccessDenied,
+                        "Recovery key confirmation was cancelled.");
+                }
+                if (prompt.CredentialType != VaultCredentialType.RecoveryKey)
+                {
+                    throw new HostException(
+                        HostErrorCode.InvalidInput,
+                        "The confirmation credential must be a recovery key.");
+                }
+
+                await vault.ConfirmRecoveryKeyAsync(
+                    _configuration.VaultPath,
+                    prompt.Credential,
+                    VaultActorKind.UserUi,
+                    token).ConfigureAwait(false);
+                return true;
+            },
+            cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task<HostSessionSnapshot> FinalizeLockAsync(
         string reason,
         CancellationToken cancellationToken)
