@@ -213,7 +213,7 @@ public static class CipherVaultConfiguration
         return configFile;
     }
 
-    private static string ReadBoundedText(
+    internal static string ReadBoundedText(
         string configPath,
         CancellationToken cancellationToken)
     {
@@ -260,12 +260,13 @@ public static class CipherVaultConfiguration
             : text;
     }
 
-    private static CipherVaultConfigOverrides ReadEnvironmentOverrides(
+    internal static CipherVaultConfigOverrides ReadEnvironmentOverrides(
         Func<string, string?> readEnvironment,
-        CipherVaultConfigOverrides commandLineOverrides)
+        CipherVaultConfigOverrides commandLineOverrides,
+        bool includeAccessMode = true)
     {
         McpAccessMode? accessMode = null;
-        if (commandLineOverrides.AccessMode is null)
+        if (includeAccessMode && commandLineOverrides.AccessMode is null)
         {
             accessMode = ParseAccessMode(
                 GetNonEmpty(readEnvironment("CIPHER_VAULT_ACCESS_MODE")));
@@ -304,7 +305,7 @@ public static class CipherVaultConfiguration
         };
     }
 
-    private static string ResolveVaultPath(
+    internal static string ResolveVaultPath(
         string? commandLineVaultPath,
         string? environmentVaultPath,
         string? configVaultPath,
@@ -343,7 +344,7 @@ public static class CipherVaultConfiguration
                 : Path.Combine(directory, expanded));
     }
 
-    private static void ValidateNoSensitiveFields(JsonElement element)
+    internal static void ValidateNoSensitiveFields(JsonElement element)
     {
         if (element.ValueKind == JsonValueKind.Object)
         {
@@ -376,7 +377,7 @@ public static class CipherVaultConfiguration
                 .ToArray());
     }
 
-    private static McpAccessMode? ParseAccessMode(string? value)
+    internal static McpAccessMode? ParseAccessMode(string? value)
     {
         var normalized = GetNonEmpty(value);
         if (normalized is null)
@@ -393,7 +394,7 @@ public static class CipherVaultConfiguration
         };
     }
 
-    private static int? ParseOptionalInteger(string? value, string fieldName)
+    internal static int? ParseOptionalInteger(string? value, string fieldName)
     {
         if (value is null)
         {
@@ -424,7 +425,7 @@ public static class CipherVaultConfiguration
         };
     }
 
-    private static string? GetNonEmpty(string? value)
+    internal static string? GetNonEmpty(string? value)
     {
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
