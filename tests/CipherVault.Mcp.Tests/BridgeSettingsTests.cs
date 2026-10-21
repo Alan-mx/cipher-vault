@@ -105,6 +105,24 @@ public sealed class BridgeSettingsTests
         Assert.Equal(VaultErrorCode.InvalidInput, exception.Code);
     }
 
+    [Fact]
+    public void EmptyScopesAreRejected()
+    {
+        using var fixture = new BridgeFixture();
+        var exception = Assert.Throws<VaultException>(() =>
+            BridgeSettings.Load(
+            [
+                "--config",
+                fixture.ConfigPath,
+                "--token-env",
+                fixture.TokenEnvironmentName,
+                "--scopes",
+                ""
+            ]));
+
+        Assert.Equal(VaultErrorCode.InvalidInput, exception.Code);
+    }
+
     private sealed class BridgeFixture : IDisposable
     {
         public BridgeFixture()

@@ -192,6 +192,18 @@ public sealed class AccessGrantServiceTests
             issued.PlaintextSecret,
             generation);
         Assert.Equal(AccessGrantValidationStatus.Expired, expired.Status);
+        Assert.False(service.RecordUse(new AccessGrantContext(
+            issued.Record.GrantId,
+            "agent",
+            issued.Record.ClientInstanceId,
+            AccessGrantScope.Read,
+            generation.SessionId)));
+        Assert.Equal(
+            AccessGrantValidationStatus.Expired,
+            (await service.ValidateAsync(
+                "agent",
+                issued.PlaintextSecret,
+                generation)).Status);
     }
 
     [Fact]

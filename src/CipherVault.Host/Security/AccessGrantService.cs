@@ -12,7 +12,7 @@ public sealed class AccessGrantService
     public static readonly TimeSpan DefaultDenialCooldown = TimeSpan.FromSeconds(30);
 
     private readonly object _sync = new();
-    private const int MaxRevokedTombstones = 256;
+    private const int MaxTerminalTombstones = 256;
     private readonly TimeProvider _timeProvider;
     private readonly TimeSpan _idleLifetime;
     private readonly TimeSpan _hardLifetime;
@@ -25,9 +25,9 @@ public sealed class AccessGrantService
         new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, AccessGrantCooldown> _cooldowns =
         new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<Guid, AccessGrantRecord> _revokedGrants = [];
-    private readonly Queue<Guid> _revokedGrantOrder = new();
-    private readonly Dictionary<string, HashSet<Guid>> _clientRevokedGrants =
+    private readonly Dictionary<Guid, AccessGrantRecord> _terminalGrants = [];
+    private readonly Queue<Guid> _terminalGrantOrder = new();
+    private readonly Dictionary<string, HashSet<Guid>> _clientTerminalGrants =
         new(StringComparer.OrdinalIgnoreCase);
 
     public AccessGrantService(
@@ -251,7 +251,7 @@ public sealed class AccessGrantService
             {
                 if (!_clientGrants.TryGetValue(clientId, out var grantIds))
                 {
-                    return ValidateRevoked(clientId, presentedHash) ?? Invalid();
+                    return ValidateTerminal(clientId, presentedHash) ?? Invalid();
                 }
 
                 AccessGrantRecord? matched = null;
@@ -274,7 +274,7 @@ public sealed class AccessGrantService
 
                 if (matched is null)
                 {
-                    return ValidateRevoked(clientId, presentedHash) ?? Invalid();
+                    return ValidateTerminal(clientId, presentedHash) ?? Invalid();
                 }
 
                 var now = _timeProvider.GetUtcNow();
@@ -327,12 +327,19 @@ public sealed class AccessGrantService
             if (!_grants.TryGetValue(grant.GrantId, out var record) ||
                 record.State != AccessGrantState.Active ||
                 record.VaultSessionId != grant.VaultSessionId ||
-                record.HardExpiresAt is null)
+                record.HardExpiresAt is null ||
+                record.IdleExpiresAt is null)
             {
                 return false;
             }
 
             var now = usedAt ?? _timeProvider.GetUtcNow();
+            if (now >= record.HardExpiresAt || now >= record.IdleExpiresAt)
+            {
+                RemoveGrant(record, AccessGrantState.Expired);
+                return false;
+            }
+
             var idleExpiry = now + _idleLifetime;
             if (idleExpiry > record.HardExpiresAt)
             {
@@ -629,69 +636,73 @@ public sealed class AccessGrantService
                 _clientGrants.Remove(record.ClientId);
             }
         }
-        if (terminalState == AccessGrantState.Revoked)
+        if (terminalState is AccessGrantState.Revoked or AccessGrantState.Expired)
         {
-            AddRevokedTombstone(record with { State = AccessGrantState.Revoked });
+            AddTerminalTombstone(record with { State = terminalState });
         }
     }
 
-    private AccessGrantValidationResult? ValidateRevoked(
+    private AccessGrantValidationResult? ValidateTerminal(
         string clientId,
         byte[] presentedHash)
     {
-        if (!_clientRevokedGrants.TryGetValue(clientId, out var grantIds))
+        if (!_clientTerminalGrants.TryGetValue(clientId, out var grantIds))
         {
             return null;
         }
 
         foreach (var grantId in grantIds)
         {
-            if (_revokedGrants.TryGetValue(grantId, out var record) &&
+            if (_terminalGrants.TryGetValue(grantId, out var record) &&
                 record.SecretHash is not null &&
                 CryptographicOperations.FixedTimeEquals(
                     presentedHash,
                     record.SecretHash))
             {
                 return new AccessGrantValidationResult(
-                    AccessGrantValidationStatus.Revoked,
+                    record.State == AccessGrantState.Expired
+                        ? AccessGrantValidationStatus.Expired
+                        : AccessGrantValidationStatus.Revoked,
                     Grant: null,
-                    ReasonCode: "access_grant_revoked",
+                    ReasonCode: record.State == AccessGrantState.Expired
+                        ? "access_grant_expired"
+                        : "access_grant_revoked",
                     Record: record);
             }
         }
         return null;
     }
 
-    private void AddRevokedTombstone(AccessGrantRecord record)
+    private void AddTerminalTombstone(AccessGrantRecord record)
     {
-        if (_revokedGrants.TryAdd(record.GrantId, record))
+        if (_terminalGrants.TryAdd(record.GrantId, record))
         {
-            _revokedGrantOrder.Enqueue(record.GrantId);
-            if (!_clientRevokedGrants.TryGetValue(
+            _terminalGrantOrder.Enqueue(record.GrantId);
+            if (!_clientTerminalGrants.TryGetValue(
                     record.ClientId,
                     out var grantIds))
             {
                 grantIds = [];
-                _clientRevokedGrants[record.ClientId] = grantIds;
+                _clientTerminalGrants[record.ClientId] = grantIds;
             }
             grantIds.Add(record.GrantId);
         }
 
-        while (_revokedGrantOrder.Count > MaxRevokedTombstones)
+        while (_terminalGrantOrder.Count > MaxTerminalTombstones)
         {
-            var expiredId = _revokedGrantOrder.Dequeue();
-            if (!_revokedGrants.Remove(expiredId, out var expiredRecord))
+            var expiredId = _terminalGrantOrder.Dequeue();
+            if (!_terminalGrants.Remove(expiredId, out var expiredRecord))
             {
                 continue;
             }
-            if (_clientRevokedGrants.TryGetValue(
+            if (_clientTerminalGrants.TryGetValue(
                     expiredRecord.ClientId,
                     out var grantIds))
             {
                 grantIds.Remove(expiredId);
                 if (grantIds.Count == 0)
                 {
-                    _clientRevokedGrants.Remove(expiredRecord.ClientId);
+                    _clientTerminalGrants.Remove(expiredRecord.ClientId);
                 }
             }
         }
@@ -733,9 +744,7 @@ public sealed class AccessGrantService
                     ? null
                     : ScopeNames(record.Scopes),
                 RequestId: null,
-                result.Status == AccessGrantValidationStatus.Expired
-                    ? "denied"
-                    : "denied",
+                "denied",
                 result.ReasonCode),
             CancellationToken.None);
     }

@@ -114,7 +114,7 @@ public sealed record BridgeSettings(
                 StringComparison.OrdinalIgnoreCase));
         var scopesText = GetOption(arguments, "--scopes");
         var scopes = new HashSet<string>(StringComparer.Ordinal);
-        if (string.IsNullOrWhiteSpace(scopesText))
+        if (scopesText is null)
         {
             switch (accessMode?.ToLowerInvariant())
             {
@@ -162,6 +162,12 @@ public sealed record BridgeSettings(
             throw new VaultException(
                 VaultErrorCode.InvalidInput,
                 "--read-only conflicts with requested write or delete scopes.");
+        }
+        if (scopes.Count == 0)
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "At least one Access Grant scope is required.");
         }
         return scopes;
     }
