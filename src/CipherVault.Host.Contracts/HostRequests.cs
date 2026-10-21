@@ -59,3 +59,6 @@ public sealed record HostRestoreNewRequest(
 
 public sealed record HostExportRequest(
     string? DestinationPath);
+
+public sealed record HostImportPreviewRequest(
+    string? SourceRoot);
