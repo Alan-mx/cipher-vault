@@ -16,3 +16,8 @@ public sealed record HostCreateClientRequest(
     string? Id,
     string? AccessMode,
     bool? AllowLock);
+
+public sealed record HostUpdateClientRequest(
+    string? AccessMode,
+    bool? AllowLock,
+    bool? Enabled);

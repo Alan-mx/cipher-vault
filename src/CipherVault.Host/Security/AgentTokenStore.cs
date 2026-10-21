@@ -98,6 +98,54 @@ public sealed class AgentTokenStore
         }
     }
 
+    public async Task<HostClientData> UpdateAsync(
+        string clientId,
+        HostUpdateClientRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            List<AgentClientPolicy> next;
+            AgentClientPolicy updated;
+            lock (_sync)
+            {
+                var index = _clients.FindIndex(client => string.Equals(
+                    client.ClientId,
+                    clientId,
+                    StringComparison.OrdinalIgnoreCase));
+                if (index < 0)
+                {
+                    throw new HostException(
+                        HostErrorCode.NotFound,
+                        $"Client '{clientId}' was not found.");
+                }
+
+                var current = _clients[index];
+                updated = current with
+                {
+                    AccessMode = ParseAccessMode(request.AccessMode)
+                        ?? current.AccessMode,
+                    AllowLock = request.AllowLock ?? current.AllowLock,
+                    Enabled = request.Enabled ?? current.Enabled
+                };
+                next = [.. _clients];
+                next[index] = updated;
+            }
+
+            await PersistAsync(next, cancellationToken).ConfigureAwait(false);
+            lock (_sync)
+            {
+                _clients = next;
+            }
+            return ToData(updated);
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
+    }
+
     internal static string ToAccessMode(McpAccessMode accessMode)
     {
         return accessMode == McpAccessMode.ReadOnly

@@ -96,6 +96,34 @@ public static class HostApplication
                     return Results.Empty;
                 }
             });
+        app.MapPatch(
+            configuration.Endpoint.AdminPath + "/clients/{clientId}",
+            async (
+                string clientId,
+                HostUpdateClientRequest request,
+                AgentTokenStore clients,
+                HttpContext context,
+                CancellationToken cancellationToken) =>
+            {
+                try
+                {
+                    var updated = await clients.UpdateAsync(
+                        clientId,
+                        request,
+                        cancellationToken);
+                    return Results.Json(
+                        new HostApiResponse<HostClientData>(true, updated));
+                }
+                catch (HostException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception.Code),
+                        exception.Code,
+                        exception.Message);
+                    return Results.Empty;
+                }
+            });
         app.MapPost(
             configuration.Endpoint.AdminPath + "/session/unlock",
             async (

@@ -120,6 +120,48 @@ public sealed class ClientsEndpointTests
         Assert.False(File.Exists(fixture.ConfigPath));
     }
 
+    [Fact]
+    public async Task UpdateClientChangesPolicyAndPersists()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        using var create = CreateCreateRequest(
+            new HostCreateClientRequest("codex", "readOnly", false));
+        using var createResponse = await fixture.Client.SendAsync(create);
+        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+
+        using var update = CreateUpdateRequest(
+            "codex",
+            new HostUpdateClientRequest("readWrite", true, false));
+        using var updateResponse = await fixture.Client.SendAsync(update);
+
+        Assert.Equal(HttpStatusCode.OK, updateResponse.StatusCode);
+        var payload = await updateResponse.Content.ReadFromJsonAsync<
+            HostApiResponse<HostClientData>>(JsonOptions);
+        Assert.NotNull(payload);
+        Assert.Equal("readWrite", payload.Data.AccessMode);
+        Assert.True(payload.Data.AllowLock);
+        Assert.False(payload.Data.Enabled);
+        var configText = await File.ReadAllTextAsync(fixture.ConfigPath);
+        Assert.Contains("\"enabled\": false", configText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task UpdateMissingClientReturnsNotFound()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        using var request = CreateUpdateRequest(
+            "missing",
+            new HostUpdateClientRequest("readOnly", false, true));
+
+        using var response = await fixture.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        var payload = await response.Content.ReadFromJsonAsync<HostApiErrorResponse>(
+            JsonOptions);
+        Assert.NotNull(payload);
+        Assert.Equal("not_found", payload.Error.Code);
+    }
+
     private static HttpRequestMessage CreateRequest()
     {
         var request = new HttpRequestMessage(HttpMethod.Get, "/admin/v1/clients");
@@ -131,6 +173,23 @@ public sealed class ClientsEndpointTests
         HostCreateClientRequest body)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, "/admin/v1/clients")
+        {
+            Content = JsonContent.Create(body)
+        };
+        request.Headers.Host = "127.0.0.1:43127";
+        request.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            HostTestFixture.AdminToken);
+        return request;
+    }
+
+    private static HttpRequestMessage CreateUpdateRequest(
+        string clientId,
+        HostUpdateClientRequest body)
+    {
+        var request = new HttpRequestMessage(
+            HttpMethod.Patch,
+            $"/admin/v1/clients/{clientId}")
         {
             Content = JsonContent.Create(body)
         };
