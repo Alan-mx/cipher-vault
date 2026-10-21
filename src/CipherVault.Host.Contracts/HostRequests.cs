@@ -32,3 +32,10 @@ public sealed record HostCreateNoteRequest(
 public sealed record HostAppendNoteRequest(
     int ExpectedRevision,
     string? Content);
+
+public sealed record HostUpdateNoteRequest(
+    int ExpectedRevision,
+    string? Title,
+    string? Folder,
+    string? Content,
+    IReadOnlyList<string>? Tags);
