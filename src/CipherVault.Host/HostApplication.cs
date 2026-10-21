@@ -315,6 +315,36 @@ public static class HostApplication
                         hostInstanceId,
                         configFingerprint))));
         app.MapGet(
+            configuration.Endpoint.AdminPath + "/access-grants",
+            (AccessGrantService grants) =>
+            {
+                var items = grants.List()
+                    .Select(HostDtoMapper.ToAccessGrantData)
+                    .ToList();
+                return Results.Json(
+                    new HostApiResponse<IReadOnlyList<HostAccessGrantData>>(
+                        true,
+                        items));
+            });
+        app.MapDelete(
+            configuration.Endpoint.AdminPath + "/access-grants/{grantId:guid}",
+            async (
+                Guid grantId,
+                AccessGrantService grants,
+                HttpContext context) =>
+            {
+                if (!grants.TryRevokeById(grantId, out _))
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        StatusCodes.Status404NotFound,
+                        HostErrorCode.NotFound,
+                        "Access Grant was not found.");
+                    return Results.Empty;
+                }
+                return Results.NoContent();
+            });
+        app.MapGet(
             configuration.Endpoint.AdminPath + "/status",
             async (HostSessionCoordinator sessions, CancellationToken cancellationToken) =>
             {

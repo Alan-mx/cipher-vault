@@ -349,6 +349,15 @@ public sealed class AccessGrantService
     {
         lock (_sync)
         {
+            var pending = _pendingSlots.Values.FirstOrDefault(item =>
+                item.Record.GrantId == grantId);
+            if (pending is not null)
+            {
+                revoked = pending.Record with { State = AccessGrantState.Revoked };
+                CancelPending(pending, "revoked");
+                return true;
+            }
+
             if (!_grants.TryGetValue(grantId, out var record))
             {
                 revoked = null;
@@ -357,6 +366,17 @@ public sealed class AccessGrantService
             revoked = record with { State = AccessGrantState.Revoked };
             RemoveGrant(record);
             return true;
+        }
+    }
+
+    public IReadOnlyList<AccessGrantRecord> List()
+    {
+        lock (_sync)
+        {
+            return _grants.Values
+                .Concat(_pendingSlots.Values.Select(item => item.Record))
+                .OrderByDescending(record => record.CreatedAt)
+                .ToArray();
         }
     }
 

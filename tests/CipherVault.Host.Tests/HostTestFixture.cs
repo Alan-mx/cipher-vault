@@ -189,6 +189,11 @@ internal sealed class HostTestFixture : IAsyncDisposable
     {
         public int RequestCount { get; private set; }
         public HostAccessGrantPromptRequest? LastRequest { get; private set; }
+        public Func<
+            HostAccessGrantPromptRequest,
+            CancellationToken,
+            Task<HostAccessGrantPromptResult>>? Handler
+        { get; set; }
         public HostAccessGrantPromptResult Result { get; set; } = new(
             true,
             AccessGrantScope.None);
@@ -205,6 +210,10 @@ internal sealed class HostTestFixture : IAsyncDisposable
         {
             RequestCount++;
             LastRequest = request;
+            if (Handler is not null)
+            {
+                return Handler(request, cancellationToken);
+            }
             var result = _results.Count > 0
                 ? _results.Dequeue()
                 : Result.Approved
