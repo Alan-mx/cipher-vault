@@ -1034,6 +1034,44 @@ public static class HostApplication
                 }
             });
         app.MapPost(
+            configuration.Endpoint.AdminPath + "/import/{jobId:guid}/apply",
+            async (
+                Guid jobId,
+                HostVaultGateway vault,
+                HttpContext context,
+                CancellationToken cancellationToken) =>
+            {
+                try
+                {
+                    var result = await vault.ExecuteMaintenanceAsync(
+                        (service, token) => service.CommitImportAsync(
+                            jobId,
+                            VaultActorKind.UserUi,
+                            token),
+                        cancellationToken);
+                    return Results.Json(
+                        new HostApiResponse<VaultImportResult>(true, result));
+                }
+                catch (HostException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception.Code),
+                        exception.Code,
+                        exception.Message);
+                    return Results.Empty;
+                }
+                catch (VaultException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception),
+                        HostHttpResponses.ToHostErrorCode(exception),
+                        exception.Message);
+                    return Results.Empty;
+                }
+            });
+        app.MapPost(
             configuration.Endpoint.AdminPath + "/session/unlock",
             async (
                 HostUnlockRequest request,
