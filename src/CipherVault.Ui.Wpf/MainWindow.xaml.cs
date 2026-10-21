@@ -12,6 +12,7 @@ using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
 using CipherVault.Core.ImportExport;
 using CipherVault.Core.Session;
+using CipherVault.Host.Client;
 
 namespace CipherVault.Ui.Wpf;
 

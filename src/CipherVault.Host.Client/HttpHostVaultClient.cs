@@ -14,7 +14,7 @@ using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Security;
 
-namespace CipherVault.Ui.Wpf;
+namespace CipherVault.Host.Client;
 
 public sealed class HttpHostVaultClient : IHostVaultClient
 {
@@ -211,6 +211,35 @@ public sealed class HttpHostVaultClient : IHostVaultClient
             HttpMethod.Delete,
             $"/trash/{documentId:D}",
             body: null,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<VaultRevisionPage> ListRevisionsAsync(
+        Guid documentId,
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        return await SendAsync<VaultRevisionPage>(
+            HttpMethod.Get,
+            BuildPath(
+                $"/notes/{documentId:D}/revisions",
+                ("cursor", cursor),
+                ("limit", limit.ToString())),
+            body: null,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<VaultWriteResult> RestoreRevisionAsync(
+        Guid documentId,
+        Guid revisionId,
+        int expectedRevision,
+        CancellationToken cancellationToken = default)
+    {
+        return await SendAsync<VaultWriteResult>(
+            HttpMethod.Post,
+            $"/notes/{documentId:D}/revisions/{revisionId:D}/restore",
+            new HostRestoreRevisionRequest(expectedRevision),
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -547,8 +576,8 @@ public sealed class HttpHostVaultClient : IHostVaultClient
 
             var startInfo = new ProcessStartInfo(executable)
             {
-                UseShellExecute = false,
-                CreateNoWindow = true,
+                UseShellExecute = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
                 WorkingDirectory = Path.GetDirectoryName(configPath)
                     ?? AppContext.BaseDirectory
             };

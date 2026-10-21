@@ -76,9 +76,13 @@ public sealed class CliWorkflowTests
             RedirectStandardError = true,
             CreateNoWindow = true
         };
-        foreach (var argument in arguments)
+        for (var index = 0; index < arguments.Length; index++)
         {
-            startInfo.ArgumentList.Add(argument);
+            startInfo.ArgumentList.Add(arguments[index]);
+            if (index == 0)
+            {
+                startInfo.ArgumentList.Add("--standalone");
+            }
         }
         foreach (var variable in CipherVaultEnvironmentVariables)
         {

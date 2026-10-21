@@ -6,7 +6,9 @@ using CipherVault.Core;
 using CipherVault.Core.Configuration;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
+using CipherVault.Core.Security;
 using CipherVault.Core.Session;
+using CipherVault.Host.Client;
 
 var jsonOptions = new JsonSerializerOptions
 {
@@ -22,12 +24,11 @@ if (args.Length == 0 || args[0] is "help" or "--help" or "-h")
 }
 
 var command = args[0].ToLowerInvariant();
-ResolvedCipherVaultConfig configuration;
+var standalone = HasFlag(args, "--standalone");
+CliHostSession session;
 try
 {
-    configuration = CipherVaultConfiguration.Load(
-        CreateCommandLineOverrides(args),
-        GetOption(args, "--config"));
+    session = await CreateHostSessionAsync(args, standalone);
 }
 catch (VaultException exception)
 {
@@ -40,10 +41,9 @@ catch (ArgumentException exception)
     return 2;
 }
 
-var vaultPath = configuration.VaultPath;
-await using var service = new VaultService(
-    new CliActivityProvider(),
-    sessionOptions: configuration.SessionOptions);
+await using var hostSession = session;
+var service = hostSession.Client;
+var vaultPath = hostSession.VaultPath;
 try
 {
     return command switch
@@ -85,14 +85,20 @@ catch (Exception exception)
     return 1;
 }
 
-static async Task<int> InitializeAsync(VaultService service, string vaultPath)
+static async Task<int> InitializeAsync(
+    IHostVaultClient service,
+    string vaultPath)
 {
-    var password = ReadPassword("Vault password: ");
-    var confirmation = ReadPassword("Confirm password: ");
-    if (!string.Equals(password, confirmation, StringComparison.Ordinal))
+    string? password = null;
+    if (!service.PromptsForCredentials)
     {
-        Console.Error.WriteLine("Passwords do not match.");
-        return 1;
+        password = ReadPassword("Vault password: ");
+        var confirmation = ReadPassword("Confirm password: ");
+        if (!string.Equals(password, confirmation, StringComparison.Ordinal))
+        {
+            Console.Error.WriteLine("Passwords do not match.");
+            return 1;
+        }
     }
     var result = await service.InitializeAsync(vaultPath, password);
     Console.WriteLine($"Vault initialized: {result.VaultPath}");
@@ -104,7 +110,10 @@ static async Task<int> InitializeAsync(VaultService service, string vaultPath)
     return await ConfirmRecoveryAsync(service, vaultPath, result.RecoveryKey);
 }
 
-static async Task<int> StatusAsync(VaultService service, string vaultPath, JsonSerializerOptions options)
+static async Task<int> StatusAsync(
+    IHostVaultClient service,
+    string vaultPath,
+    JsonSerializerOptions options)
 {
     var fullPath = Path.GetFullPath(vaultPath);
     var initialized =
@@ -115,77 +124,95 @@ static async Task<int> StatusAsync(VaultService service, string vaultPath, JsonS
     return initialized ? 0 : 1;
 }
 
-static async Task<int> BackupAsync(VaultService service, string vaultPath, string destination)
+static async Task<int> BackupAsync(
+    IHostVaultClient service,
+    string vaultPath,
+    string destination)
 {
-    await UnlockAsync(service, vaultPath);
-    var result = await service.CreateBackupAsync(destination, VaultActorKind.UserCli);
+    await EnsureUnlockedAsync(service, vaultPath);
+    var result = await service.CreateBackupAsync(destination);
     Console.WriteLine(result.BackupPath);
     return 0;
 }
 
 static async Task<int> RestoreAsync(
-    VaultService service,
+    IHostVaultClient service,
     string backup,
     string target,
     string? credentialOption)
 {
     var credentialType = ParseCredentialType(credentialOption);
-    var credential = ReadCredential(credentialType);
+    var credential = service.PromptsForCredentials
+        ? string.Empty
+        : ReadCredential(credentialType);
     var result = await service.RestoreBackupAsync(
         backup,
         target,
         credential,
-        credentialType,
-        VaultActorKind.UserCli);
+        credentialType);
     Console.WriteLine(result.VaultPath);
     return 0;
 }
 
-static async Task<int> VerifyAsync(VaultService service, string vaultPath, JsonSerializerOptions options)
+static async Task<int> VerifyAsync(
+    IHostVaultClient service,
+    string vaultPath,
+    JsonSerializerOptions options)
 {
-    await UnlockAsync(service, vaultPath);
+    await EnsureUnlockedAsync(service, vaultPath);
     var report = await service.VerifyVaultAsync();
     PrintJson(report, options);
     return report.Valid ? 0 : 1;
 }
 
-static async Task<int> ChangePasswordAsync(VaultService service, string vaultPath)
+static async Task<int> ChangePasswordAsync(
+    IHostVaultClient service,
+    string vaultPath)
 {
-    var oldPassword = ReadPassword("Current password: ");
-    var newPassword = ReadPassword("New password: ");
-    var confirmation = ReadPassword("Confirm new password: ");
-    if (!string.Equals(newPassword, confirmation, StringComparison.Ordinal))
+    var oldPassword = string.Empty;
+    var newPassword = string.Empty;
+    if (!service.PromptsForCredentials)
     {
-        Console.Error.WriteLine("Passwords do not match.");
-        return 1;
+        oldPassword = ReadPassword("Current password: ");
+        newPassword = ReadPassword("New password: ");
+        var confirmation = ReadPassword("Confirm new password: ");
+        if (!string.Equals(newPassword, confirmation, StringComparison.Ordinal))
+        {
+            Console.Error.WriteLine("Passwords do not match.");
+            return 1;
+        }
     }
     await service.ChangePasswordAsync(
         vaultPath,
         oldPassword,
-        newPassword,
-        VaultActorKind.UserCli);
+        newPassword);
     Console.WriteLine("Password changed.");
     return 0;
 }
 
-static async Task<int> RotateRecoveryAsync(VaultService service, string vaultPath)
+static async Task<int> RotateRecoveryAsync(
+    IHostVaultClient service,
+    string vaultPath)
 {
-    var password = ReadPassword("Current password: ");
+    var password = service.PromptsForCredentials
+        ? string.Empty
+        : ReadPassword("Current password: ");
     var key = await service.RotateRecoveryKeyAsync(
         vaultPath,
-        password,
-        VaultActorKind.UserCli);
+        password);
     Console.WriteLine("NEW OFFLINE RECOVERY KEY - store this outside the Vault:");
     Console.WriteLine(key);
     return await ConfirmRecoveryAsync(service, vaultPath, key);
 }
 
 static async Task<int> ConfirmRecoveryAsync(
-    VaultService service,
+    IHostVaultClient service,
     string vaultPath,
     string? expectedKey = null)
 {
-    var confirmation = ReadText("Re-enter the recovery key to confirm it was saved: ");
+    var confirmation = service.PromptsForCredentials
+        ? string.Empty
+        : ReadText("Re-enter the recovery key to confirm it was saved: ");
     if (expectedKey is not null &&
         !string.Equals(
             NormalizeRecoveryKey(confirmation),
@@ -198,161 +225,173 @@ static async Task<int> ConfirmRecoveryAsync(
 
     await service.ConfirmRecoveryKeyAsync(
         vaultPath,
-        confirmation,
-        VaultActorKind.UserCli);
+        confirmation);
     Console.WriteLine("Recovery key confirmed.");
     return 0;
 }
 
-static async Task<int> AuditAsync(VaultService service, string vaultPath, JsonSerializerOptions options)
+static async Task<int> AuditAsync(
+    IHostVaultClient service,
+    string vaultPath,
+    JsonSerializerOptions options)
 {
-    await UnlockAsync(service, vaultPath);
+    await EnsureUnlockedAsync(service, vaultPath);
     var page = await service.GetAuditPageAsync(null, 100);
     PrintJson(page, options);
     return 0;
 }
 
 static async Task<int> SearchAsync(
-    VaultService service,
+    IHostVaultClient service,
     string vaultPath,
     string query,
     JsonSerializerOptions options)
 {
-    await UnlockAsync(service, vaultPath);
+    await EnsureUnlockedAsync(service, vaultPath);
     var page = await service.SearchNotesAsync(query, null, null, 20);
     PrintJson(page, options);
     return 0;
 }
 
 static async Task<int> ImportPreviewAsync(
-    VaultService service,
+    IHostVaultClient service,
     string vaultPath,
     string source,
     JsonSerializerOptions options)
 {
-    await UnlockAsync(service, vaultPath);
+    await EnsureUnlockedAsync(service, vaultPath);
     var preview = await service.PreviewImportAsync(
-        source,
-        VaultActorKind.UserCli);
+        source);
     PrintJson(preview, options);
     return 0;
 }
 
 static async Task<int> ImportApplyAsync(
-    VaultService service,
+    IHostVaultClient service,
     string vaultPath,
     string job,
     JsonSerializerOptions options)
 {
-    await UnlockAsync(service, vaultPath);
-    var result = await service.CommitImportAsync(
-        Guid.Parse(job),
-        VaultActorKind.UserCli);
+    await EnsureUnlockedAsync(service, vaultPath);
+    var result = await service.CommitImportAsync(Guid.Parse(job));
     PrintJson(result, options);
     return result.Failed == 0 ? 0 : 1;
 }
 
 static async Task<int> ExportAsync(
-    VaultService service,
+    IHostVaultClient service,
     string vaultPath,
     string destination,
     JsonSerializerOptions options)
 {
-    await UnlockAsync(service, vaultPath);
+    await EnsureUnlockedAsync(service, vaultPath);
     var result = await service.ExportSnapshotAsync(
-        destination,
-        VaultActorKind.UserCli);
+        destination);
     PrintJson(result, options);
     return 0;
 }
 
 static async Task<int> TrashAsync(
-    VaultService service,
+    IHostVaultClient service,
     string vaultPath,
     JsonSerializerOptions options)
 {
-    await UnlockAsync(service, vaultPath);
+    await EnsureUnlockedAsync(service, vaultPath);
     var page = await service.ListTrashAsync(null, 100);
     PrintJson(page, options);
     return 0;
 }
 
 static async Task<int> RestoreTrashAsync(
-    VaultService service,
+    IHostVaultClient service,
     string vaultPath,
     string id,
     string? path)
 {
-    await UnlockAsync(service, vaultPath);
+    await EnsureUnlockedAsync(service, vaultPath);
     var revisions = await service.ListTrashAsync(null, 100);
     var item = revisions.Items.SingleOrDefault(value => value.DocumentId == Guid.Parse(id))
         ?? throw new VaultException(VaultErrorCode.NotFound, "Trashed document was not found.");
     var result = await service.RestoreTrashAsync(
         item.DocumentId,
         item.Revision,
-        path,
-        VaultActorKind.UserCli);
+        path);
     Console.WriteLine(result.VirtualPath);
     return 0;
 }
 
-static async Task<int> PurgeAsync(VaultService service, string vaultPath, string id)
+static async Task<int> PurgeAsync(
+    IHostVaultClient service,
+    string vaultPath,
+    string id)
 {
-    await UnlockAsync(service, vaultPath);
+    await EnsureUnlockedAsync(service, vaultPath);
     var confirmation = ReadText("Type PURGE to confirm permanent deletion: ");
     if (!string.Equals(confirmation, "PURGE", StringComparison.Ordinal))
     {
         Console.Error.WriteLine("Permanent deletion cancelled.");
         return 1;
     }
-    var result = await service.PurgeNoteAsync(
-        Guid.Parse(id),
-        VaultActorKind.UserCli);
+    var result = await service.PurgeNoteAsync(Guid.Parse(id));
     Console.WriteLine(result.Purged ? "purged" : "not purged");
     return result.Purged ? 0 : 1;
 }
 
 static async Task<int> RevisionsAsync(
-    VaultService service,
+    IHostVaultClient service,
     string vaultPath,
     string id,
     JsonSerializerOptions options)
 {
-    await UnlockAsync(service, vaultPath);
+    await EnsureUnlockedAsync(service, vaultPath);
     var page = await service.ListRevisionsAsync(Guid.Parse(id), null, 100);
     PrintJson(page, options);
     return 0;
 }
 
 static async Task<int> RestoreRevisionAsync(
-    VaultService service,
+    IHostVaultClient service,
     string vaultPath,
     string id,
     string revisionId,
     string expected)
 {
-    await UnlockAsync(service, vaultPath);
+    await EnsureUnlockedAsync(service, vaultPath);
     var result = await service.RestoreRevisionAsync(
         Guid.Parse(id),
         Guid.Parse(revisionId),
-        int.Parse(expected, System.Globalization.CultureInfo.InvariantCulture),
-        VaultActorKind.UserCli);
+        int.Parse(expected, System.Globalization.CultureInfo.InvariantCulture));
     Console.WriteLine($"revision={result.Revision}");
     return 0;
 }
 
-static async Task<int> RebuildIndexAsync(VaultService service, string vaultPath)
+static async Task<int> RebuildIndexAsync(
+    IHostVaultClient service,
+    string vaultPath)
 {
-    await UnlockAsync(service, vaultPath);
-    var count = await service.RebuildSearchIndexAsync(VaultActorKind.UserCli);
+    await EnsureUnlockedAsync(service, vaultPath);
+    var count = await service.RebuildSearchIndexAsync();
     Console.WriteLine($"fts_rows={count}");
     return 0;
 }
 
-static async Task UnlockAsync(VaultService service, string vaultPath)
+static async Task EnsureUnlockedAsync(
+    IHostVaultClient service,
+    string vaultPath)
 {
-    var password = ReadPassword("Vault password: ");
-    await service.UnlockAsync(vaultPath, password, VaultCredentialType.Password);
+    var status = await service.GetStatusAsync();
+    if (status.State is VaultSessionState.Unlocked or VaultSessionState.Expiring)
+    {
+        return;
+    }
+
+    var password = service.PromptsForCredentials
+        ? string.Empty
+        : ReadPassword("Vault password: ");
+    await service.UnlockAsync(
+        vaultPath,
+        password,
+        VaultCredentialType.Password);
 }
 
 static int UnknownCommand(string command)
@@ -360,6 +399,48 @@ static int UnknownCommand(string command)
     Console.Error.WriteLine($"Unknown command: {command}");
     PrintHelp();
     return 2;
+}
+
+static async Task<CliHostSession> CreateHostSessionAsync(
+    string[] arguments,
+    bool standalone)
+{
+    if (standalone)
+    {
+        var configuration = CipherVaultConfiguration.Load(
+            CreateStandaloneOverrides(arguments),
+            GetOption(arguments, "--config"));
+        var standaloneVaultPath = Require(configuration.VaultPath);
+        var ownership = await VaultOwnershipLock.AcquireAsync(
+            standaloneVaultPath);
+        try
+        {
+            var vault = new VaultService(
+                new CliActivityProvider(),
+                sessionOptions: configuration.SessionOptions);
+            return new CliHostSession(
+                standaloneVaultPath,
+                new StandaloneHostVaultClient(vault, VaultActorKind.UserCli),
+                ownership);
+        }
+        catch
+        {
+            await ownership.DisposeAsync();
+            throw;
+        }
+    }
+
+    var hostConfiguration = CipherVaultHostConfiguration.Load(
+        CreateHostOverrides(arguments),
+        GetOption(arguments, "--config"));
+    var client = await HttpHostVaultClient.CreateAsync(hostConfiguration);
+    return new CliHostSession(hostConfiguration.VaultPath, client, ownership: null);
+}
+
+static bool HasFlag(string[] arguments, string flag)
+{
+    return arguments.Any(argument =>
+        string.Equals(argument, flag, StringComparison.OrdinalIgnoreCase));
 }
 
 static string? GetOption(string[] arguments, string option)
@@ -471,7 +552,21 @@ static string ReadCredential(VaultCredentialType credentialType)
     };
 }
 
-static CipherVaultConfigOverrides CreateCommandLineOverrides(string[] arguments)
+static CipherVaultHostConfigOverrides CreateHostOverrides(string[] arguments)
+{
+    return new CipherVaultHostConfigOverrides
+    {
+        VaultPath = GetOption(arguments, "--vault"),
+        IdleMinutes = ParseOptionalInteger(
+            GetOption(arguments, "--idle-minutes"),
+            "--idle-minutes"),
+        HardHours = ParseOptionalInteger(
+            GetOption(arguments, "--hard-hours"),
+            "--hard-hours")
+    };
+}
+
+static CipherVaultConfigOverrides CreateStandaloneOverrides(string[] arguments)
 {
     return new CipherVaultConfigOverrides
     {
@@ -536,6 +631,7 @@ static void PrintHelp()
 
         Session options:
           --config <file>          Defaults to %LOCALAPPDATA%\CipherVault\config.json
+          --standalone             Explicit direct mode; requires Host to be stopped
           --idle-minutes <1-1440>  Defaults to 15
           --hard-hours <1-168>     Defaults to 4 and must cover the idle timeout
         """);
@@ -546,5 +642,33 @@ file sealed class CliActivityProvider : ISystemActivityProvider
     public SystemActivitySnapshot GetSnapshot()
     {
         return new SystemActivitySnapshot(TimeSpan.Zero, false);
+    }
+}
+
+file sealed class CliHostSession : IAsyncDisposable
+{
+    private VaultOwnershipLock? _ownership;
+
+    public CliHostSession(
+        string vaultPath,
+        IHostVaultClient client,
+        VaultOwnershipLock? ownership)
+    {
+        VaultPath = vaultPath;
+        Client = client;
+        _ownership = ownership;
+    }
+
+    public string VaultPath { get; }
+    public IHostVaultClient Client { get; }
+
+    public async ValueTask DisposeAsync()
+    {
+        await Client.DisposeAsync();
+        var ownership = Interlocked.Exchange(ref _ownership, null);
+        if (ownership is not null)
+        {
+            await ownership.DisposeAsync();
+        }
     }
 }

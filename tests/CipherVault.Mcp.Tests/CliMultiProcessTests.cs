@@ -3,6 +3,7 @@ using System.Text.Json;
 using CipherVault.Auth.Win;
 using CipherVault.Core;
 using CipherVault.Core.Documents;
+using CipherVault.Core.Security;
 using CipherVault.Core.Session;
 
 namespace CipherVault.Mcp.Tests;
@@ -12,37 +13,20 @@ public sealed class CliMultiProcessTests
     private const string Password = "multi-process-password";
 
     [Fact]
-    public async Task TwoCliProcessesCanApplyImportsToSameVault()
+    public async Task StandaloneCliRejectsVaultAlreadyOwnedByAnotherProcess()
     {
         await using var fixture = await CliProcessFixture.CreateAsync();
         var cliPath = FindCliExecutable();
-        var firstTask = RunCliAsync(
+        await using var ownership = await VaultOwnershipLock.AcquireAsync(
+            fixture.VaultPath);
+
+        var result = await RunCliAsync(
             cliPath,
             fixture.ConfigPath,
             fixture.FirstJobId);
-        var secondTask = RunCliAsync(
-            cliPath,
-            fixture.ConfigPath,
-            fixture.SecondJobId);
 
-        var results = await Task.WhenAll(firstTask, secondTask);
-        Assert.All(results, result =>
-        {
-            Assert.True(
-                result.ExitCode == 0,
-                $"stdout: {result.Stdout}{Environment.NewLine}stderr: {result.Stderr}");
-        });
-
-        await using var verificationService = new VaultService(
-            new AlwaysActiveActivityProvider());
-        await verificationService.UnlockAsync(
-            fixture.VaultPath,
-            Password,
-            VaultCredentialType.Password);
-        var catalog = await verificationService.ListCatalogAsync(null, null, 20);
-        Assert.Contains(catalog.Items, item => item.Title == "process one");
-        Assert.Contains(catalog.Items, item => item.Title == "process two");
-        Assert.True((await verificationService.VerifyVaultAsync()).Valid);
+        Assert.Equal(2, result.ExitCode);
+        Assert.Contains("already in use", result.Stderr, StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task<ProcessResult> RunCliAsync(
@@ -59,6 +43,7 @@ public sealed class CliMultiProcessTests
             CreateNoWindow = true
         };
         startInfo.ArgumentList.Add("import-apply");
+        startInfo.ArgumentList.Add("--standalone");
         startInfo.ArgumentList.Add("--config");
         startInfo.ArgumentList.Add(configPath);
         startInfo.ArgumentList.Add("--job");

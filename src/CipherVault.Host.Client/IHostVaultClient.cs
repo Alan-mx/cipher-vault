@@ -4,7 +4,7 @@ using CipherVault.Core.Documents;
 using CipherVault.Core.ImportExport;
 using CipherVault.Core.Session;
 
-namespace CipherVault.Ui.Wpf;
+namespace CipherVault.Host.Client;
 
 public interface IHostVaultClient : IAsyncDisposable
 {
@@ -60,6 +60,18 @@ public interface IHostVaultClient : IAsyncDisposable
 
     Task<VaultPurgeResult> PurgeNoteAsync(
         Guid documentId,
+        CancellationToken cancellationToken = default);
+
+    Task<VaultRevisionPage> ListRevisionsAsync(
+        Guid documentId,
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken = default);
+
+    Task<VaultWriteResult> RestoreRevisionAsync(
+        Guid documentId,
+        Guid revisionId,
+        int expectedRevision,
         CancellationToken cancellationToken = default);
 
     Task<VaultImportPreview> PreviewImportAsync(

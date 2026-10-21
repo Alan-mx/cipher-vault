@@ -146,6 +146,7 @@ public sealed class CliCrashRecoveryTests
             CreateNoWindow = true
         };
         startInfo.ArgumentList.Add("import-apply");
+        startInfo.ArgumentList.Add("--standalone");
         startInfo.ArgumentList.Add("--config");
         startInfo.ArgumentList.Add(configPath);
         startInfo.ArgumentList.Add("--job");

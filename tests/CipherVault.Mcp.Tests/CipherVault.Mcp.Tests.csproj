@@ -21,6 +21,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\CipherVault.Cli\CipherVault.Cli.csproj"
                       ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\src\CipherVault.Host.Contracts\CipherVault.Host.Contracts.csproj" />
     <ProjectReference Include="..\..\src\CipherVault.Mcp\CipherVault.Mcp.csproj" />
   </ItemGroup>
 

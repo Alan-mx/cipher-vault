@@ -3,7 +3,7 @@ using CipherVault.Core.Backup;
 using CipherVault.Core.Documents;
 using CipherVault.Core.ImportExport;
 using CipherVault.Core.Session;
-using CipherVault.Ui.Wpf;
+using CipherVault.Host.Client;
 
 namespace CipherVault.Ui.Wpf.Tests;
 
@@ -120,6 +120,33 @@ internal sealed class InProcessHostVaultClient : IHostVaultClient
     {
         return _vault.PurgeNoteAsync(
             documentId,
+            VaultActorKind.UserUi,
+            cancellationToken);
+    }
+
+    public Task<VaultRevisionPage> ListRevisionsAsync(
+        Guid documentId,
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        return _vault.ListRevisionsAsync(
+            documentId,
+            cursor,
+            limit,
+            cancellationToken);
+    }
+
+    public Task<VaultWriteResult> RestoreRevisionAsync(
+        Guid documentId,
+        Guid revisionId,
+        int expectedRevision,
+        CancellationToken cancellationToken = default)
+    {
+        return _vault.RestoreRevisionAsync(
+            documentId,
+            revisionId,
+            expectedRevision,
             VaultActorKind.UserUi,
             cancellationToken);
     }
