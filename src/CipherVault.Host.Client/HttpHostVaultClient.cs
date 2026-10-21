@@ -411,13 +411,12 @@ public sealed class HttpHostVaultClient : IHostVaultClient
     public async Task<HostCreateClientData> CreateAgentClientAsync(
         string clientId,
         string accessMode,
-        bool allowLock,
         CancellationToken cancellationToken = default)
     {
         return await SendAsync<HostCreateClientData>(
             HttpMethod.Post,
             "/clients",
-            new HostCreateClientRequest(clientId, accessMode, allowLock),
+            new HostCreateClientRequest(clientId, accessMode),
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -512,7 +511,8 @@ public sealed class HttpHostVaultClient : IHostVaultClient
         }
         throw new VaultException(
             VaultErrorCode.StorageError,
-            "CipherVault Host did not become ready.");
+            "CipherVault Host did not become ready. Start CipherVault.Host.exe " +
+            "or open the desktop app, then retry.");
     }
 
     private void ValidateFingerprint(HostHealthData health)

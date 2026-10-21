@@ -14,6 +14,7 @@ public sealed record VaultAuditItem(
     Guid EventId,
     DateTimeOffset OccurredAt,
     string ActorKind,
+    string? ClientName,
     string Action,
     Guid? DocumentId,
     string Result,

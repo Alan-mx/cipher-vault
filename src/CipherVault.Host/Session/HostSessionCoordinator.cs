@@ -49,6 +49,10 @@ public sealed class HostSessionCoordinator
             {
                 _state = status.State;
                 _lockReason = status.LockReason ?? _lockReason;
+                if (status.State == VaultSessionState.Locked)
+                {
+                    _leaseCancellation?.Cancel();
+                }
             }
             return CreateSnapshot(status);
         }
@@ -77,6 +81,14 @@ public sealed class HostSessionCoordinator
                 EnsureLeaseCancellation();
                 return MapAndSetState(current);
             }
+            if (current.State == VaultSessionState.Locking)
+            {
+                throw new HostException(
+                    HostErrorCode.LockInProgress,
+                    "Vault lock is still in progress.");
+            }
+
+            await DrainLeasesForUnlockAsync(cancellationToken).ConfigureAwait(false);
 
             var prompt = await _credentialPrompt.RequestAsync(
                 preference,
@@ -182,7 +194,10 @@ public sealed class HostSessionCoordinator
                     HostErrorCode.MaintenanceInProgress,
                     "Vault maintenance is in progress.");
             }
-            if (_state == VaultSessionState.Locking ||
+            if (_state is not (
+                    VaultSessionState.Unlocked or
+                    VaultSessionState.Expiring) ||
+                status.SessionId is null ||
                 status.State is not (VaultSessionState.Unlocked or VaultSessionState.Expiring))
             {
                 throw new HostException(
@@ -589,10 +604,60 @@ public sealed class HostSessionCoordinator
         {
             _state = VaultSessionState.Locked;
             _lockReason = reason;
-            _leaseCancellation?.Dispose();
-            _leaseCancellation = null;
-            _leasesDrained = null;
+            ClearLeaseCancellation();
             return CreateSnapshot(status);
+        }
+    }
+
+    private async Task DrainLeasesForUnlockAsync(
+        CancellationToken cancellationToken)
+    {
+        Task drainedTask;
+        lock (_stateSync)
+        {
+            if (_activeLeases == 0)
+            {
+                _state = VaultSessionState.Locked;
+                ClearLeaseCancellation();
+                return;
+            }
+
+            _state = VaultSessionState.Locking;
+            _leaseCancellation?.Cancel();
+            _leasesDrained ??= new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            drainedTask = _leasesDrained.Task;
+        }
+
+        try
+        {
+            await drainedTask.WaitAsync(
+                _lockDrainTimeout,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            lock (_stateSync)
+            {
+                _state = VaultSessionState.Locked;
+            }
+            throw new HostException(
+                HostErrorCode.LockInProgress,
+                "Vault operations did not drain before unlock.");
+        }
+        catch
+        {
+            lock (_stateSync)
+            {
+                _state = VaultSessionState.Locked;
+            }
+            throw;
+        }
+
+        lock (_stateSync)
+        {
+            _state = VaultSessionState.Locked;
+            ClearLeaseCancellation();
         }
     }
 
@@ -656,6 +721,13 @@ public sealed class HostSessionCoordinator
         {
             _leaseCancellation ??= new CancellationTokenSource();
         }
+    }
+
+    private void ClearLeaseCancellation()
+    {
+        _leaseCancellation?.Dispose();
+        _leaseCancellation = null;
+        _leasesDrained = null;
     }
 
     private HostSessionSnapshot MapAndSetState(VaultSessionStatus status)

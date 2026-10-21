@@ -53,7 +53,6 @@ public sealed record HostInitializeData(
 public sealed record HostClientData(
     string Id,
     string AccessMode,
-    bool AllowLock,
     bool Enabled);
 
 public sealed record HostCreateClientData(

@@ -11,7 +11,6 @@ internal sealed class AgentTokenAuthenticationMiddleware
 {
     public const string ClientIdClaim = "cipher_vault.client_id";
     public const string AccessModeClaim = "cipher_vault.access_mode";
-    public const string AllowLockClaim = "cipher_vault.allow_lock";
     private readonly RequestDelegate _next;
     private readonly AgentTokenStore _tokenStore;
     private readonly HostAuthenticationRateLimiter _rateLimiter;
@@ -94,8 +93,7 @@ internal sealed class AgentTokenAuthenticationMiddleware
                 new Claim(ClientIdClaim, client.ClientId),
                 new Claim(
                     AccessModeClaim,
-                    AgentTokenStore.ToAccessMode(client.AccessMode)),
-                new Claim(AllowLockClaim, client.AllowLock ? "true" : "false")
+                    AgentTokenStore.ToAccessMode(client.AccessMode))
             ],
             authenticationType: "CipherVaultAgentToken");
         context.User = new ClaimsPrincipal(identity);

@@ -63,11 +63,27 @@ public interface IVaultService : IAsyncDisposable
         VaultActorKind actor = VaultActorKind.Mcp,
         CancellationToken cancellationToken = default);
 
+    Task<VaultWriteResult> CreateNoteAsync(
+        string title,
+        string? folder,
+        string format,
+        string content,
+        IReadOnlyList<string>? tags,
+        VaultAuditContext auditContext,
+        CancellationToken cancellationToken = default);
+
     Task<VaultWriteResult> AppendNoteAsync(
         Guid documentId,
         int expectedRevision,
         string content,
         VaultActorKind actor = VaultActorKind.Mcp,
+        CancellationToken cancellationToken = default);
+
+    Task<VaultWriteResult> AppendNoteAsync(
+        Guid documentId,
+        int expectedRevision,
+        string content,
+        VaultAuditContext auditContext,
         CancellationToken cancellationToken = default);
 
     Task<VaultWriteResult> UpdateNoteAsync(
@@ -77,10 +93,23 @@ public interface IVaultService : IAsyncDisposable
         VaultActorKind actor = VaultActorKind.Mcp,
         CancellationToken cancellationToken = default);
 
+    Task<VaultWriteResult> UpdateNoteAsync(
+        Guid documentId,
+        int expectedRevision,
+        VaultNotePatch patch,
+        VaultAuditContext auditContext,
+        CancellationToken cancellationToken = default);
+
     Task<VaultDeleteResult> DeleteNoteAsync(
         Guid documentId,
         int expectedRevision,
         VaultActorKind actor = VaultActorKind.Mcp,
+        CancellationToken cancellationToken = default);
+
+    Task<VaultDeleteResult> DeleteNoteAsync(
+        Guid documentId,
+        int expectedRevision,
+        VaultAuditContext auditContext,
         CancellationToken cancellationToken = default);
 
     Task<VaultTrashPage> ListTrashAsync(
@@ -570,6 +599,25 @@ public sealed class VaultService : IVaultService
         VaultActorKind actor = VaultActorKind.Mcp,
         CancellationToken cancellationToken = default)
     {
+        return await CreateNoteAsync(
+            title,
+            folder,
+            format,
+            content,
+            tags,
+            new VaultAuditContext(actor),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<VaultWriteResult> CreateNoteAsync(
+        string title,
+        string? folder,
+        string format,
+        string content,
+        IReadOnlyList<string>? tags,
+        VaultAuditContext auditContext,
+        CancellationToken cancellationToken = default)
+    {
         ThrowIfDisposed();
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -586,7 +634,7 @@ public sealed class VaultService : IVaultService
                 format,
                 content,
                 tags,
-                actor,
+                auditContext,
                 cancellationToken).ConfigureAwait(false);
             await EnsureSessionStillValidAsync(session, cancellationToken).ConfigureAwait(false);
             return result;
@@ -604,6 +652,21 @@ public sealed class VaultService : IVaultService
         VaultActorKind actor = VaultActorKind.Mcp,
         CancellationToken cancellationToken = default)
     {
+        return await AppendNoteAsync(
+            documentId,
+            expectedRevision,
+            content,
+            new VaultAuditContext(actor),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<VaultWriteResult> AppendNoteAsync(
+        Guid documentId,
+        int expectedRevision,
+        string content,
+        VaultAuditContext auditContext,
+        CancellationToken cancellationToken = default)
+    {
         ThrowIfDisposed();
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -616,7 +679,7 @@ public sealed class VaultService : IVaultService
                 documentId,
                 expectedRevision,
                 content,
-                actor,
+                auditContext,
                 cancellationToken).ConfigureAwait(false);
             await EnsureSessionStillValidAsync(session, cancellationToken).ConfigureAwait(false);
             return result;
@@ -634,6 +697,21 @@ public sealed class VaultService : IVaultService
         VaultActorKind actor = VaultActorKind.Mcp,
         CancellationToken cancellationToken = default)
     {
+        return await UpdateNoteAsync(
+            documentId,
+            expectedRevision,
+            patch,
+            new VaultAuditContext(actor),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<VaultWriteResult> UpdateNoteAsync(
+        Guid documentId,
+        int expectedRevision,
+        VaultNotePatch patch,
+        VaultAuditContext auditContext,
+        CancellationToken cancellationToken = default)
+    {
         ThrowIfDisposed();
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -646,7 +724,7 @@ public sealed class VaultService : IVaultService
                 documentId,
                 expectedRevision,
                 patch,
-                actor,
+                auditContext,
                 cancellationToken).ConfigureAwait(false);
             await EnsureSessionStillValidAsync(session, cancellationToken).ConfigureAwait(false);
             return result;
@@ -663,6 +741,19 @@ public sealed class VaultService : IVaultService
         VaultActorKind actor = VaultActorKind.Mcp,
         CancellationToken cancellationToken = default)
     {
+        return await DeleteNoteAsync(
+            documentId,
+            expectedRevision,
+            new VaultAuditContext(actor),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<VaultDeleteResult> DeleteNoteAsync(
+        Guid documentId,
+        int expectedRevision,
+        VaultAuditContext auditContext,
+        CancellationToken cancellationToken = default)
+    {
         ThrowIfDisposed();
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -674,7 +765,7 @@ public sealed class VaultService : IVaultService
                 session.IntegrityKey,
                 documentId,
                 expectedRevision,
-                actor,
+                auditContext,
                 cancellationToken).ConfigureAwait(false);
             await EnsureSessionStillValidAsync(session, cancellationToken).ConfigureAwait(false);
             return result;

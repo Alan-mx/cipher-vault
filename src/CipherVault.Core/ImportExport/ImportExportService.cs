@@ -258,7 +258,7 @@ internal static class ImportExportService
                     format,
                     source.Content,
                     tags,
-                    actor,
+                    new VaultAuditContext(actor),
                     cancellationToken).ConfigureAwait(false);
                 await UpdateImportItemAsync(
                     connection,

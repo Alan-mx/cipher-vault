@@ -74,8 +74,7 @@ public sealed class AgentTokenStore
                     return Task.FromResult<AuthenticatedHostClient?>(
                         new AuthenticatedHostClient(
                             client.ClientId,
-                            client.AccessMode,
-                            client.AllowLock));
+                            client.AccessMode));
                 }
             }
             return Task.FromResult<AuthenticatedHostClient?>(null);
@@ -119,6 +118,13 @@ public sealed class AgentTokenStore
                         HostErrorCode.AlreadyExists,
                         $"Client '{clientId}' already exists.");
                 }
+                if (_clients.Count >=
+                    CipherVaultHostConfiguration.MaximumClients)
+                {
+                    throw new HostException(
+                        HostErrorCode.InvalidInput,
+                        $"No more than {CipherVaultHostConfiguration.MaximumClients} clients are allowed.");
+                }
                 next = [.. _clients];
             }
 
@@ -126,7 +132,6 @@ public sealed class AgentTokenStore
                 clientId,
                 tokenHash,
                 accessMode,
-                request.AllowLock ?? false,
                 Enabled: true);
             next.Add(policy);
             await PersistAsync(next, cancellationToken).ConfigureAwait(false);
@@ -170,7 +175,6 @@ public sealed class AgentTokenStore
                 {
                     AccessMode = ParseAccessMode(request.AccessMode)
                         ?? current.AccessMode,
-                    AllowLock = request.AllowLock ?? current.AllowLock,
                     Enabled = request.Enabled ?? current.Enabled
                 };
                 next = [.. _clients];
@@ -316,7 +320,6 @@ public sealed class AgentTokenStore
                     ["id"] = client.ClientId,
                     ["tokenHash"] = "sha256:" + Convert.ToHexString(client.TokenHash),
                     ["accessMode"] = ToAccessMode(client.AccessMode),
-                    ["allowLock"] = client.AllowLock,
                     ["enabled"] = client.Enabled
                 });
             }
@@ -327,7 +330,18 @@ public sealed class AgentTokenStore
                     HostErrorCode.InvalidInput,
                     "Config path has no parent directory.");
             Directory.CreateDirectory(directory);
-            VaultFileSecurity.ProtectDirectory(directory);
+            var defaultConfigDirectory = Path.GetFullPath(
+                Path.GetDirectoryName(CipherVaultConfiguration.DefaultConfigPath)
+                    ?? throw new HostException(
+                        HostErrorCode.InvalidInput,
+                        "Default config path has no parent directory."));
+            if (string.Equals(
+                    Path.GetFullPath(directory),
+                    defaultConfigDirectory,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                VaultFileSecurity.ProtectDirectory(directory);
+            }
             var temporaryPath = configPath + $".tmp-{Guid.NewGuid():N}";
             try
             {
@@ -397,7 +411,6 @@ public sealed class AgentTokenStore
         return new HostClientData(
             client.ClientId,
             ToAccessMode(client.AccessMode),
-            client.AllowLock,
             client.Enabled);
     }
 
@@ -407,7 +420,6 @@ public sealed class AgentTokenStore
             client.ClientId,
             [.. client.TokenHash],
             client.AccessMode,
-            client.AllowLock,
             client.Enabled);
     }
 

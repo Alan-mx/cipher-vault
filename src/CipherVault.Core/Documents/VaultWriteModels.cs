@@ -8,6 +8,11 @@ public enum VaultActorKind
     System
 }
 
+public sealed record VaultAuditContext(
+    VaultActorKind Actor,
+    string? ClientName = null,
+    string? RequestId = null);
+
 public sealed record VaultWriteResult(
     Guid DocumentId,
     int Revision,

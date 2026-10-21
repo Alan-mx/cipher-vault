@@ -263,8 +263,8 @@ internal static partial class DocumentStore
         using var command = connection.CreateCommand();
         command.CommandText =
             """
-            SELECT event_id, occurred_at_ms, actor_kind, action, document_id,
-                   result, bytes_returned, details_json
+            SELECT event_id, occurred_at_ms, actor_kind, client_name, action,
+                   document_id, result, bytes_returned, details_json
             FROM audit_events
             ORDER BY occurred_at_ms DESC, event_id
             LIMIT $limit OFFSET $offset;
@@ -280,11 +280,12 @@ internal static partial class DocumentStore
                 Guid.Parse(reader.GetString(0)),
                 DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(1)),
                 reader.GetString(2),
-                reader.GetString(3),
-                reader.IsDBNull(4) ? null : Guid.Parse(reader.GetString(4)),
-                reader.GetString(5),
-                reader.IsDBNull(6) ? null : reader.GetInt32(6),
-                reader.GetString(7)));
+                reader.IsDBNull(3) ? null : reader.GetString(3),
+                reader.GetString(4),
+                reader.IsDBNull(5) ? null : Guid.Parse(reader.GetString(5)),
+                reader.GetString(6),
+                reader.IsDBNull(7) ? null : reader.GetInt32(7),
+                reader.GetString(8)));
         }
         var hasMore = items.Count > effectiveLimit;
         if (hasMore)

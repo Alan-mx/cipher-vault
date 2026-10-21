@@ -177,8 +177,7 @@ public sealed class HostSecurityHardeningTests
             Content = JsonContent.Create(
                 new HostCreateClientRequest(
                     "security-agent",
-                    "readOnly",
-                    false))
+                    "readOnly"))
         };
         request.Headers.Host = "127.0.0.1:43127";
         request.Headers.Authorization = new AuthenticationHeaderValue(

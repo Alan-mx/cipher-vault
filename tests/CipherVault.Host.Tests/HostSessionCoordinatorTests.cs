@@ -1,3 +1,4 @@
+using CipherVault.Core;
 using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Security;
@@ -91,6 +92,28 @@ public sealed class HostSessionCoordinatorTests
         }
 
         Assert.Equal(0, (await coordinator.GetSnapshotAsync()).ConnectedClients);
+    }
+
+    [Fact]
+    public async Task UnlockWaitsForLeasesLeftByCoreAutoLock()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var coordinator = fixture.App.Services.GetRequiredService<HostSessionCoordinator>();
+        var vault = fixture.App.Services.GetRequiredService<IVaultService>();
+
+        var first = await coordinator.UnlockAsync(HostCredentialPreference.Password);
+        var oldLease = await coordinator.AcquireLeaseAsync();
+        await vault.LockAsync("simulated-core-auto-lock");
+
+        var unlockTask = coordinator.UnlockAsync(HostCredentialPreference.Password);
+        await Task.Delay(100);
+        Assert.False(unlockTask.IsCompleted);
+
+        await oldLease.DisposeAsync();
+        var second = await unlockTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.NotEqual(first.SessionId, second.SessionId);
+        Assert.Equal(VaultSessionState.Unlocked, second.State);
     }
 
     private static async Task WaitUntilAsync(

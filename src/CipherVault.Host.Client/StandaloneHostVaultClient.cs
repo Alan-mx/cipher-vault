@@ -275,7 +275,6 @@ public sealed class StandaloneHostVaultClient : IHostVaultClient
     public Task<HostCreateClientData> CreateAgentClientAsync(
         string clientId,
         string accessMode,
-        bool allowLock,
         CancellationToken cancellationToken = default)
     {
         throw HostManagementRequired();

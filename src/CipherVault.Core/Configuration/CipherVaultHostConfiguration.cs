@@ -38,7 +38,6 @@ public sealed record CipherVaultClientConfigFile
     public string? Id { get; init; }
     public string? TokenHash { get; init; }
     public string? AccessMode { get; init; }
-    public bool? AllowLock { get; init; }
     public bool? Enabled { get; init; }
 }
 
@@ -61,7 +60,6 @@ public sealed record AgentClientPolicy(
     string ClientId,
     byte[] TokenHash,
     McpAccessMode AccessMode,
-    bool AllowLock,
     bool Enabled);
 
 public static class CipherVaultHostConfiguration
@@ -74,7 +72,7 @@ public static class CipherVaultHostConfiguration
     private const long MinimumRequestBodyBytes = 1024;
     private const long MaximumRequestBodyBytes = 16 * 1024 * 1024;
     private const int MaximumOrigins = 16;
-    private const int MaximumClients = 64;
+    public const int MaximumClients = 64;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
@@ -212,6 +210,7 @@ public static class CipherVaultHostConfiguration
         using (var document = JsonDocument.Parse(json))
         {
             CipherVaultConfiguration.ValidateNoSensitiveFields(document.RootElement);
+            RejectRemovedClientFields(document.RootElement);
         }
 
         var configFile = JsonSerializer.Deserialize<CipherVaultHostConfigFile>(
@@ -331,7 +330,6 @@ public static class CipherVaultHostConfiguration
                 clientId,
                 tokenHash,
                 accessMode,
-                client.AllowLock ?? false,
                 client.Enabled ?? true));
         }
 
@@ -359,6 +357,28 @@ public static class CipherVaultHostConfiguration
         }
 
         return Convert.FromHexString(hashText);
+    }
+
+    private static void RejectRemovedClientFields(JsonElement root)
+    {
+        if (!root.TryGetProperty("clients", out var clients) ||
+            clients.ValueKind != JsonValueKind.Array)
+        {
+            return;
+        }
+
+        var index = 0;
+        foreach (var client in clients.EnumerateArray())
+        {
+            if (client.ValueKind == JsonValueKind.Object &&
+                client.TryGetProperty("allowLock", out _))
+            {
+                throw new VaultException(
+                    VaultErrorCode.InvalidInput,
+                    $"clients[{index}].allowLock is no longer supported.");
+            }
+            index++;
+        }
     }
 
     private static IReadOnlySet<string> NormalizeOrigins(

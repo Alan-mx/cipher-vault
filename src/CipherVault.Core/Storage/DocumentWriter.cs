@@ -23,7 +23,7 @@ internal static class DocumentWriter
         string format,
         string content,
         IReadOnlyList<string>? tags,
-        VaultActorKind actor,
+        VaultAuditContext auditContext,
         CancellationToken cancellationToken)
     {
         Validate(title, format, content, tags);
@@ -121,7 +121,7 @@ internal static class DocumentWriter
             await AuditWriter.AppendAsync(
                 connection,
                 (SqliteTransaction)transaction,
-                actor,
+                auditContext,
                 sessionId,
                 "create",
                 documentId,
@@ -154,7 +154,7 @@ internal static class DocumentWriter
         Guid documentId,
         int expectedRevision,
         string appendedContent,
-        VaultActorKind actor,
+        VaultAuditContext auditContext,
         CancellationToken cancellationToken)
     {
         if (Encoding.UTF8.GetByteCount(appendedContent) > MaxContentBytes)
@@ -239,7 +239,7 @@ internal static class DocumentWriter
             await AuditWriter.AppendAsync(
                 connection,
                 sqliteTransaction,
-                actor,
+                auditContext,
                 sessionId,
                 "append",
                 documentId,
@@ -264,7 +264,7 @@ internal static class DocumentWriter
         Guid documentId,
         int expectedRevision,
         VaultNotePatch patch,
-        VaultActorKind actor,
+        VaultAuditContext auditContext,
         CancellationToken cancellationToken)
     {
         if (patch.Title is null &&
@@ -384,7 +384,7 @@ internal static class DocumentWriter
             await AuditWriter.AppendAsync(
                 connection,
                 sqliteTransaction,
-                actor,
+                auditContext,
                 sessionId,
                 "update",
                 documentId,
@@ -416,7 +416,7 @@ internal static class DocumentWriter
         byte[] integrityKey,
         Guid documentId,
         int expectedRevision,
-        VaultActorKind actor,
+        VaultAuditContext auditContext,
         CancellationToken cancellationToken)
     {
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken)
@@ -462,7 +462,7 @@ internal static class DocumentWriter
             await AuditWriter.AppendAsync(
                 connection,
                 sqliteTransaction,
-                actor,
+                auditContext,
                 sessionId,
                 "delete",
                 documentId,

@@ -289,7 +289,6 @@ internal sealed class InProcessHostVaultClient : IHostVaultClient
     public Task<HostCreateClientData> CreateAgentClientAsync(
         string clientId,
         string accessMode,
-        bool allowLock,
         CancellationToken cancellationToken = default)
     {
         throw new NotSupportedException();

@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Security.AccessControl;
 using System.Text.Json;
 using CipherVault.Core.Configuration;
 using CipherVault.Host.Contracts;
@@ -21,7 +22,6 @@ public sealed class ClientsEndpointTests
             "codex-readonly",
             new byte[32],
             McpAccessMode.ReadOnly,
-            AllowLock: false,
             Enabled: true);
         await using var fixture = await HostTestFixture.CreateAsync(
             clients: [policy]);
@@ -39,7 +39,6 @@ public sealed class ClientsEndpointTests
         var client = Assert.Single(payload.Data);
         Assert.Equal("codex-readonly", client.Id);
         Assert.Equal("readOnly", client.AccessMode);
-        Assert.False(client.AllowLock);
         Assert.True(client.Enabled);
         Assert.DoesNotContain(
             "token",
@@ -63,7 +62,7 @@ public sealed class ClientsEndpointTests
     {
         await using var fixture = await HostTestFixture.CreateAsync();
         using var request = CreateCreateRequest(
-            new HostCreateClientRequest("codex-write", "readWrite", true));
+            new HostCreateClientRequest("codex-write", "readWrite"));
 
         using var response = await fixture.Client.SendAsync(request);
 
@@ -73,7 +72,6 @@ public sealed class ClientsEndpointTests
         Assert.NotNull(payload);
         Assert.Equal("codex-write", payload.Data.Client.Id);
         Assert.Equal("readWrite", payload.Data.Client.AccessMode);
-        Assert.True(payload.Data.Client.AllowLock);
         Assert.False(string.IsNullOrWhiteSpace(payload.Data.Token));
 
         var configText = await File.ReadAllTextAsync(fixture.ConfigPath);
@@ -88,12 +86,12 @@ public sealed class ClientsEndpointTests
     {
         await using var fixture = await HostTestFixture.CreateAsync();
         using var first = CreateCreateRequest(
-            new HostCreateClientRequest("codex", "readOnly", false));
+            new HostCreateClientRequest("codex", "readOnly"));
         using var firstResponse = await fixture.Client.SendAsync(first);
         Assert.Equal(HttpStatusCode.Created, firstResponse.StatusCode);
 
         using var second = CreateCreateRequest(
-            new HostCreateClientRequest("CODEX", "readWrite", true));
+            new HostCreateClientRequest("CODEX", "readWrite"));
         using var secondResponse = await fixture.Client.SendAsync(second);
 
         Assert.Equal(HttpStatusCode.Conflict, secondResponse.StatusCode);
@@ -108,7 +106,7 @@ public sealed class ClientsEndpointTests
     {
         await using var fixture = await HostTestFixture.CreateAsync();
         using var request = CreateCreateRequest(
-            new HostCreateClientRequest("codex", "admin", false));
+            new HostCreateClientRequest("codex", "admin"));
 
         using var response = await fixture.Client.SendAsync(request);
 
@@ -125,13 +123,13 @@ public sealed class ClientsEndpointTests
     {
         await using var fixture = await HostTestFixture.CreateAsync();
         using var create = CreateCreateRequest(
-            new HostCreateClientRequest("codex", "readOnly", false));
+            new HostCreateClientRequest("codex", "readOnly"));
         using var createResponse = await fixture.Client.SendAsync(create);
         Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
 
         using var update = CreateUpdateRequest(
             "codex",
-            new HostUpdateClientRequest("readWrite", true, false));
+            new HostUpdateClientRequest("readWrite", false));
         using var updateResponse = await fixture.Client.SendAsync(update);
 
         Assert.Equal(HttpStatusCode.OK, updateResponse.StatusCode);
@@ -139,7 +137,6 @@ public sealed class ClientsEndpointTests
             HostApiResponse<HostClientData>>(JsonOptions);
         Assert.NotNull(payload);
         Assert.Equal("readWrite", payload.Data.AccessMode);
-        Assert.True(payload.Data.AllowLock);
         Assert.False(payload.Data.Enabled);
         var configText = await File.ReadAllTextAsync(fixture.ConfigPath);
         Assert.Contains("\"enabled\": false", configText, StringComparison.Ordinal);
@@ -151,7 +148,7 @@ public sealed class ClientsEndpointTests
         await using var fixture = await HostTestFixture.CreateAsync();
         using var request = CreateUpdateRequest(
             "missing",
-            new HostUpdateClientRequest("readOnly", false, true));
+            new HostUpdateClientRequest("readOnly", true));
 
         using var response = await fixture.Client.SendAsync(request);
 
@@ -167,7 +164,7 @@ public sealed class ClientsEndpointTests
     {
         await using var fixture = await HostTestFixture.CreateAsync();
         using var create = CreateCreateRequest(
-            new HostCreateClientRequest("codex", "readOnly", false));
+            new HostCreateClientRequest("codex", "readOnly"));
         using var createResponse = await fixture.Client.SendAsync(create);
         var created = await createResponse.Content.ReadFromJsonAsync<
             HostApiResponse<HostCreateClientData>>(JsonOptions);
@@ -216,7 +213,7 @@ public sealed class ClientsEndpointTests
     {
         await using var fixture = await HostTestFixture.CreateAsync();
         using var create = CreateCreateRequest(
-            new HostCreateClientRequest("codex", "readOnly", false));
+            new HostCreateClientRequest("codex", "readOnly"));
         using var createResponse = await fixture.Client.SendAsync(create);
         Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
 
@@ -247,6 +244,49 @@ public sealed class ClientsEndpointTests
         using var response = await fixture.Client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreatingClientBeyondLimitIsRejectedWithoutWritingConfig()
+    {
+        var policies = Enumerable.Range(
+                0,
+                CipherVaultHostConfiguration.MaximumClients)
+            .Select(index => new AgentClientPolicy(
+                $"client-{index}",
+                new byte[32],
+                McpAccessMode.ReadOnly,
+                Enabled: true))
+            .ToList();
+        await using var fixture = await HostTestFixture.CreateAsync(
+            clients: policies);
+        using var request = CreateCreateRequest(
+            new HostCreateClientRequest("overflow", "readOnly"));
+
+        using var response = await fixture.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.False(File.Exists(fixture.ConfigPath));
+    }
+
+    [Fact]
+    public async Task PersistingClientDoesNotProtectCustomParentDirectory()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var protectedBefore = IsDirectoryAclProtected(fixture.Root);
+        using var request = CreateCreateRequest(
+            new HostCreateClientRequest("codex", "readOnly"));
+
+        using var response = await fixture.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Equal(
+            protectedBefore,
+            IsDirectoryAclProtected(fixture.Root));
+        Assert.True(
+            new FileInfo(fixture.ConfigPath)
+                .GetAccessControl()
+                .AreAccessRulesProtected);
     }
 
     private static HttpRequestMessage CreateRequest()
@@ -297,5 +337,12 @@ public sealed class ClientsEndpointTests
             "Bearer",
             HostTestFixture.AdminToken);
         return request;
+    }
+
+    private static bool IsDirectoryAclProtected(string path)
+    {
+        return new DirectoryInfo(path)
+            .GetAccessControl()
+            .AreAccessRulesProtected;
     }
 }

@@ -161,6 +161,7 @@ public sealed class HostVaultTools
         {
             return accessError;
         }
+        var auditContext = CurrentAuditContext();
         return await ExecuteWriteAsync(
             (service, token) => service.CreateNoteAsync(
                 title,
@@ -168,7 +169,7 @@ public sealed class HostVaultTools
                 format,
                 content,
                 tags,
-                VaultActorKind.Mcp,
+                auditContext,
                 token),
             document => new { ok = true, document },
             cancellationToken);
@@ -191,12 +192,13 @@ public sealed class HostVaultTools
         {
             return Serialize(Error("invalid_input", "documentId must be a UUID."));
         }
+        var auditContext = CurrentAuditContext();
         return await ExecuteWriteAsync(
             (service, token) => service.AppendNoteAsync(
                 parsedDocumentId,
                 expectedRevision,
                 content,
-                VaultActorKind.Mcp,
+                auditContext,
                 token),
             document => new { ok = true, document },
             cancellationToken);
@@ -222,12 +224,13 @@ public sealed class HostVaultTools
         {
             return Serialize(Error("invalid_input", "documentId must be a UUID."));
         }
+        var auditContext = CurrentAuditContext();
         return await ExecuteWriteAsync(
             (service, token) => service.UpdateNoteAsync(
                 parsedDocumentId,
                 expectedRevision,
                 new VaultNotePatch(title, folder, content, tags),
-                VaultActorKind.Mcp,
+                auditContext,
                 token),
             document => new { ok = true, document },
             cancellationToken);
@@ -249,11 +252,12 @@ public sealed class HostVaultTools
         {
             return Serialize(Error("invalid_input", "documentId must be a UUID."));
         }
+        var auditContext = CurrentAuditContext();
         return await ExecuteWriteAsync(
             (service, token) => service.DeleteNoteAsync(
                 parsedDocumentId,
                 expectedRevision,
-                VaultActorKind.Mcp,
+                auditContext,
                 token),
             document => new { ok = true, document },
             cancellationToken);
@@ -331,6 +335,20 @@ public sealed class HostVaultTools
                 "read_only",
                 "This CipherVault MCP client is configured for read-only access."))
             : null;
+    }
+
+    private VaultAuditContext CurrentAuditContext()
+    {
+        var client = RequireClient();
+        var requestId = _httpContextAccessor.HttpContext?.Items.TryGetValue(
+                HostHttpContextKeys.RequestId,
+                out var value) == true
+            ? value as string
+            : null;
+        return new VaultAuditContext(
+            VaultActorKind.Mcp,
+            client.ClientId,
+            requestId);
     }
 
     private static object Error(string code, string message)

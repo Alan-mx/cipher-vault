@@ -4,6 +4,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using CipherVault.Core.Backup;
 using CipherVault.Host.Contracts;
 
 namespace CipherVault.Host.Tests;
@@ -133,6 +134,57 @@ public sealed class McpHttpEndpointTests
     }
 
     [Fact]
+    public async Task WriteAuditRecordsAuthenticatedClientAndRequestId()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        await UnlockHostAsync(fixture.Client);
+        var token = await CreateClientAsync(
+            fixture.Client,
+            "audited-agent",
+            "readWrite");
+        var session = new McpTestSession(fixture.Client, token);
+        await session.InitializeAsync();
+
+        using var create = await session.CallToolAsync(
+            6,
+            "create_note",
+            new
+            {
+                title = "Audited agent note",
+                content = "audited content"
+            },
+            requestId: "mcp-audit-request");
+        var created = GetToolPayload(create);
+        var documentId = created.RootElement
+            .GetProperty("document")
+            .GetProperty("documentId")
+            .GetGuid();
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            "/admin/v1/audit?limit=50");
+        request.Headers.Host = "127.0.0.1:43127";
+        request.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            HostTestFixture.AdminToken);
+        using var response = await fixture.Client.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        var payload = await response.Content.ReadFromJsonAsync<
+            HostApiResponse<VaultAuditPage>>(JsonOptions);
+        Assert.NotNull(payload);
+
+        var audit = Assert.Single(
+            payload.Data.Items,
+            item => item.Action == "create" &&
+                item.DocumentId == documentId);
+        Assert.Equal("audited-agent", audit.ClientName);
+        using var details = JsonDocument.Parse(audit.DetailsJson);
+        Assert.Equal(
+            "mcp-audit-request",
+            details.RootElement.GetProperty("requestId").GetString());
+    }
+
+    [Fact]
     public async Task LockedVaultReturnsAuthRequiredThroughMcp()
     {
         await using var fixture = await HostTestFixture.CreateAsync();
@@ -182,7 +234,7 @@ public sealed class McpHttpEndpointTests
             "/admin/v1/clients")
         {
             Content = JsonContent.Create(
-                new HostCreateClientRequest(clientId, accessMode, false))
+                new HostCreateClientRequest(clientId, accessMode))
         };
         request.Headers.Host = "127.0.0.1:43127";
         request.Headers.Authorization = new AuthenticationHeaderValue(
@@ -334,7 +386,8 @@ public sealed class McpHttpEndpointTests
         public async Task<JsonDocument> CallToolAsync(
             int id,
             string name,
-            object arguments)
+            object arguments,
+            string? requestId = null)
         {
             using var request = CreateMcpRequest(
                 new
@@ -352,6 +405,12 @@ public sealed class McpHttpEndpointTests
                 _token,
                 method: "tools/call");
             request.Headers.TryAddWithoutValidation("Mcp-Name", name);
+            if (requestId is not null)
+            {
+                request.Headers.TryAddWithoutValidation(
+                    "X-Request-Id",
+                    requestId);
+            }
             using var response = await _client.SendAsync(request);
             if (!response.IsSuccessStatusCode)
             {

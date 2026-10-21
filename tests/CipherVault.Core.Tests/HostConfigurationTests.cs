@@ -33,7 +33,6 @@ public sealed class HostConfigurationTests
                   "id": "codex-readonly",
                   "tokenHash": "{{TokenHash}}",
                   "accessMode": "readOnly",
-                  "allowLock": false,
                   "enabled": true
                 }
               ]
@@ -129,6 +128,7 @@ public sealed class HostConfigurationTests
     [InlineData("{ \"configVersion\": 2, \"host\": { \"mcpPath\": \"/admin/v1/mcp\" } }")]
     [InlineData("{ \"configVersion\": 2, \"host\": { \"allowedOrigins\": [\"*\"] } }")]
     [InlineData("{ \"configVersion\": 2, \"host\": { \"allowedOrigins\": [\"http://localhost:3000/path\"] } }")]
+    [InlineData("{ \"configVersion\": 2, \"clients\": [{ \"id\": \"codex\", \"tokenHash\": \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"accessMode\": \"readOnly\", \"allowLock\": false }] }")]
     public void InvalidHostConfigIsRejected(string json)
     {
         using var fixture = new ConfigFixture();

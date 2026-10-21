@@ -66,7 +66,6 @@ try
             service,
             RequireOption(args, "--id"),
             GetOption(args, "--access") ?? "readOnly",
-            HasFlag(args, "--allow-lock"),
             jsonOptions),
         "client-rotate" => await RotateClientAsync(
             service,
@@ -259,7 +258,6 @@ static async Task<int> CreateClientAsync(
     IHostVaultClient service,
     string clientId,
     string accessMode,
-    bool allowLock,
     JsonSerializerOptions options)
 {
     if (accessMode is not ("readOnly" or "readWrite"))
@@ -270,8 +268,7 @@ static async Task<int> CreateClientAsync(
     }
     var created = await service.CreateAgentClientAsync(
         clientId,
-        accessMode,
-        allowLock);
+        accessMode);
     PrintJson(created, options);
     Console.Error.WriteLine(
         "Store the token now. It cannot be displayed again.");
@@ -681,7 +678,7 @@ static void PrintHelp()
           rotate-recovery     --vault <directory>
           confirm-recovery    --vault <directory>
           client-list
-          client-add          --id <client-id> [--access readOnly|readWrite] [--allow-lock]
+          client-add          --id <client-id> [--access readOnly|readWrite]
           client-rotate       --id <client-id>
           client-delete       --id <client-id>
           host-stop

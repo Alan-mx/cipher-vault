@@ -131,7 +131,6 @@ public interface IHostVaultClient : IAsyncDisposable
     Task<HostCreateClientData> CreateAgentClientAsync(
         string clientId,
         string accessMode,
-        bool allowLock,
         CancellationToken cancellationToken = default);
 
     Task<HostCreateClientData> RotateAgentClientAsync(

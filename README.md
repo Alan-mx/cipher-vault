@@ -182,6 +182,10 @@ Set `CIPHER_VAULT_MCP_TOKEN` for the bridge process. A different variable can be
 selected with `--token-env`. `--read-only` is only a local upper bound; Host Token
 permissions remain authoritative.
 
+The bridge always derives its HTTP endpoint from the validated CipherVault
+configuration. It does not support an external URL override, so the Agent Token
+cannot be redirected away from the configured loopback Host.
+
 ## CLI modes
 
 CLI commands use Host by default:

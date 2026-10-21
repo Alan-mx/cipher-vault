@@ -69,12 +69,20 @@ public sealed record BridgeSettings(
                 $"Set {tokenEnvironmentName} to the Agent Bearer Token.");
         }
 
-        var mcpUrl = GetOption(arguments, "--mcp-url");
-        var endpoint = mcpUrl is null
-            ? new Uri(
-                $"http://{configuration.Endpoint.BindAddress}:" +
-                $"{configuration.Endpoint.Port}{configuration.Endpoint.McpPath}")
-            : new Uri(mcpUrl, UriKind.Absolute);
+        if (arguments.Any(argument =>
+                string.Equals(
+                    argument,
+                    "--mcp-url",
+                    StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "--mcp-url is not supported. The bridge only connects to the configured local Host.");
+        }
+
+        var endpoint = new Uri(
+            $"http://{configuration.Endpoint.BindAddress}:" +
+            $"{configuration.Endpoint.Port}{configuration.Endpoint.McpPath}");
         return new BridgeSettings(
             endpoint,
             token.Trim(),
@@ -173,6 +181,7 @@ public sealed class HostMcpBridgeClient
         IReadOnlyDictionary<string, object?> arguments,
         CancellationToken cancellationToken)
     {
+        var requestId = Guid.NewGuid().ToString("N");
         using var request = new HttpRequestMessage(HttpMethod.Post, _settings.McpEndpoint)
         {
             Content = new StringContent(
@@ -180,7 +189,7 @@ public sealed class HostMcpBridgeClient
                     new
                     {
                         jsonrpc = "2.0",
-                        id = Guid.NewGuid().ToString("N"),
+                        id = requestId,
                         method = "tools/call",
                         @params = new Dictionary<string, object?>
                         {
@@ -211,6 +220,7 @@ public sealed class HostMcpBridgeClient
             ProtocolVersion);
         request.Headers.TryAddWithoutValidation("Mcp-Method", "tools/call");
         request.Headers.TryAddWithoutValidation("Mcp-Name", name);
+        request.Headers.TryAddWithoutValidation("X-Request-Id", requestId);
 
         try
         {
@@ -277,7 +287,8 @@ public sealed class HostMcpBridgeClient
         {
             return Error(
                 "host_unavailable",
-                "CipherVault Host is unavailable. Start the Host and try again.");
+                "CipherVault Host is unavailable. Start CipherVault.Host.exe " +
+                "or open the desktop app, then try again.");
         }
     }
 
