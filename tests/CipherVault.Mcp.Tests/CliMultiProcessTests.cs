@@ -56,8 +56,20 @@ public sealed class CliMultiProcessTests
             ?? throw new InvalidOperationException("Unable to start CipherVault.Cli.exe.");
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
-        await process.StandardInput.WriteLineAsync(Password);
-        process.StandardInput.Close();
+        try
+        {
+            await process.StandardInput.WriteLineAsync(Password);
+        }
+        catch (IOException)
+        {
+        }
+        try
+        {
+            process.StandardInput.Close();
+        }
+        catch (IOException)
+        {
+        }
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         try

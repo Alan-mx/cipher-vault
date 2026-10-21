@@ -512,9 +512,14 @@ public sealed class MainWindowTests
     }
 
     [Fact]
-    public Task StopHostClosesDesktopAfterStoppingService()
+    public async Task StopHostClosesDesktopAfterStoppingService()
     {
-        return RunOnStaAsync(async () =>
+        if (!ShouldRunInteractiveUiTests())
+        {
+            return;
+        }
+        using var uiLock = UiAutomationLock.Acquire();
+        await RunOnStaAsync(async () =>
         {
             using var fixture = new WindowFixture();
             var client = new InProcessHostVaultClient();
