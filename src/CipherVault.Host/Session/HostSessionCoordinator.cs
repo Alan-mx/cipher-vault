@@ -18,6 +18,7 @@ public sealed class HostSessionCoordinator
     private readonly IVaultService _vault;
     private readonly ResolvedCipherVaultHostConfig _configuration;
     private readonly IHostCredentialPrompt _credentialPrompt;
+    private readonly AccessGrantService _accessGrants;
     private readonly TimeSpan _lockDrainTimeout;
     private VaultSessionState _state = VaultSessionState.Locked;
     private string? _lockReason;
@@ -31,11 +32,13 @@ public sealed class HostSessionCoordinator
         IVaultService vault,
         ResolvedCipherVaultHostConfig configuration,
         IHostCredentialPrompt credentialPrompt,
+        AccessGrantService accessGrants,
         TimeSpan? lockDrainTimeout = null)
     {
         _vault = vault;
         _configuration = configuration;
         _credentialPrompt = credentialPrompt;
+        _accessGrants = accessGrants;
         _lockDrainTimeout = lockDrainTimeout ?? DefaultLockDrainTimeout;
     }
 
@@ -43,17 +46,31 @@ public sealed class HostSessionCoordinator
         CancellationToken cancellationToken = default)
     {
         var status = await _vault.GetStatusAsync(cancellationToken).ConfigureAwait(false);
+        bool revokeGrants;
         lock (_stateSync)
         {
             if (_state != VaultSessionState.Locking)
             {
                 _state = status.State;
                 _lockReason = status.LockReason ?? _lockReason;
-                if (status.State == VaultSessionState.Locked)
+                revokeGrants = status.State == VaultSessionState.Locked;
+                if (revokeGrants)
                 {
                     _leaseCancellation?.Cancel();
                 }
             }
+            else
+            {
+                revokeGrants = false;
+            }
+        }
+        if (revokeGrants)
+        {
+            await _accessGrants.RevokeAllAsync("vault-locked")
+                .ConfigureAwait(false);
+        }
+        lock (_stateSync)
+        {
             return CreateSnapshot(status);
         }
     }
@@ -76,6 +93,11 @@ public sealed class HostSessionCoordinator
             }
 
             var current = await _vault.GetStatusAsync(cancellationToken).ConfigureAwait(false);
+            if (current.State == VaultSessionState.Locked)
+            {
+                await _accessGrants.RevokeAllAsync("vault-relocked")
+                    .ConfigureAwait(false);
+            }
             if (current.State is VaultSessionState.Unlocked or VaultSessionState.Expiring)
             {
                 EnsureLeaseCancellation();
@@ -133,6 +155,8 @@ public sealed class HostSessionCoordinator
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            await _accessGrants.RevokeAllAsync(reason).ConfigureAwait(false);
+
             Task drainedTask;
             lock (_stateSync)
             {

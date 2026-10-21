@@ -218,7 +218,7 @@ public sealed class AccessGrantServiceTests
 
         Assert.Equal(1, await service.RevokeClientAsync("agent-a", "token-revoked"));
         Assert.Equal(
-            AccessGrantValidationStatus.Invalid,
+            AccessGrantValidationStatus.Revoked,
             (await service.ValidateAsync(
                 "agent-a",
                 revoked.PlaintextSecret,

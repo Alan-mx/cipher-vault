@@ -20,14 +20,17 @@ public sealed class AgentTokenStore
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly ResolvedCipherVaultHostConfig _configuration;
     private readonly ISecurityEventLog _securityLog;
+    private readonly AccessGrantService _accessGrants;
     private List<AgentClientPolicy> _clients;
 
     public AgentTokenStore(
         ResolvedCipherVaultHostConfig configuration,
-        ISecurityEventLog securityLog)
+        ISecurityEventLog securityLog,
+        AccessGrantService accessGrants)
     {
         _configuration = configuration;
         _securityLog = securityLog;
+        _accessGrants = accessGrants;
         _clients = configuration.Clients
             .Select(Clone)
             .ToList();
@@ -162,6 +165,7 @@ public sealed class AgentTokenStore
         {
             List<AgentClientPolicy> next;
             AgentClientPolicy updated;
+            var revokeGrants = false;
             lock (_sync)
             {
                 var index = _clients.FindIndex(client => string.Equals(
@@ -189,12 +193,21 @@ public sealed class AgentTokenStore
                 };
                 next = [.. _clients];
                 next[index] = updated;
+                revokeGrants = current.AuthorizationMode != updated.AuthorizationMode ||
+                    current.AccessMode != updated.AccessMode ||
+                    !updated.Enabled;
             }
 
             await PersistAsync(next, cancellationToken).ConfigureAwait(false);
             lock (_sync)
             {
                 _clients = next;
+            }
+            if (revokeGrants)
+            {
+                await _accessGrants.RevokeClientAsync(
+                    clientId,
+                    "client-policy-changed").ConfigureAwait(false);
             }
             return ToData(updated);
         }
@@ -239,6 +252,9 @@ public sealed class AgentTokenStore
             {
                 _clients = next;
             }
+            await _accessGrants.RevokeClientAsync(
+                clientId,
+                "token-rotated").ConfigureAwait(false);
             return new HostCreateClientData(ToData(rotated), rawToken);
         }
         finally
@@ -291,6 +307,9 @@ public sealed class AgentTokenStore
                     "success",
                     ReasonCode: null),
                 cancellationToken).ConfigureAwait(false);
+            await _accessGrants.RevokeClientAsync(
+                clientId,
+                "token-revoked").ConfigureAwait(false);
         }
         finally
         {

@@ -266,6 +266,73 @@ public sealed class AccessGrantEndpointTests
         Assert.DoesNotContain(issued.Secret, log, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task LockingVaultRevokesActiveGrant()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        await UnlockHostAsync(fixture.Client);
+        var token = await CreateAgentAsync(
+            fixture.Client,
+            "lock-revoke-agent",
+            "readOnly",
+            "accessGrant");
+        await CreateGrantAsync(fixture.Client, token, Guid.NewGuid());
+
+        await LockHostAsync(fixture.Client);
+
+        var grants = await ReadAccessGrantsAsync(fixture.Client);
+        Assert.Empty(grants);
+    }
+
+    [Fact]
+    public async Task DisablingOrRotatingClientRevokesGrant()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        await UnlockHostAsync(fixture.Client);
+        var token = await CreateAgentAsync(
+            fixture.Client,
+            "policy-revoke-agent",
+            "readOnly",
+            "accessGrant");
+        await CreateGrantAsync(fixture.Client, token, Guid.NewGuid());
+
+        using (var disable = await SendAdminAsync(
+                   fixture.Client,
+                   HttpMethod.Patch,
+                   "/admin/v1/clients/policy-revoke-agent",
+                   new HostUpdateClientRequest(
+                       "readOnly",
+                       "accessGrant",
+                       false)))
+        {
+            disable.EnsureSuccessStatusCode();
+        }
+        Assert.Empty(await ReadAccessGrantsAsync(fixture.Client));
+
+        using (var enable = await SendAdminAsync(
+                   fixture.Client,
+                   HttpMethod.Patch,
+                   "/admin/v1/clients/policy-revoke-agent",
+                   new HostUpdateClientRequest(
+                       "readOnly",
+                       "accessGrant",
+                       true)))
+        {
+            enable.EnsureSuccessStatusCode();
+        }
+        await CreateGrantAsync(fixture.Client, token, Guid.NewGuid());
+
+        using (var rotate = await SendAdminAsync(
+                   fixture.Client,
+                   HttpMethod.Post,
+                   "/admin/v1/clients/policy-revoke-agent/rotate",
+                   body: null))
+        {
+            rotate.EnsureSuccessStatusCode();
+        }
+        Assert.Empty(await ReadAccessGrantsAsync(fixture.Client));
+    }
+
     private static async Task UnlockHostAsync(HttpClient client)
     {
         using var request = new HttpRequestMessage(
@@ -280,6 +347,31 @@ public sealed class AccessGrantEndpointTests
             HostTestFixture.AdminToken);
         using var response = await client.SendAsync(request);
         response.EnsureSuccessStatusCode();
+    }
+
+    private static async Task LockHostAsync(HttpClient client)
+    {
+        using var response = await SendAdminAsync(
+            client,
+            HttpMethod.Post,
+            "/admin/v1/session/lock",
+            new HostLockRequest("grant-test-lock"));
+        response.EnsureSuccessStatusCode();
+    }
+
+    private static async Task<IReadOnlyList<HostAccessGrantData>> ReadAccessGrantsAsync(
+        HttpClient client)
+    {
+        using var response = await SendAdminAsync(
+            client,
+            HttpMethod.Get,
+            "/admin/v1/access-grants",
+            body: null);
+        response.EnsureSuccessStatusCode();
+        var payload = await response.Content.ReadFromJsonAsync<
+            HostApiResponse<IReadOnlyList<HostAccessGrantData>>>(JsonOptions);
+        Assert.NotNull(payload);
+        return payload.Data;
     }
 
     private static async Task<string> CreateAgentAsync(
@@ -365,6 +457,24 @@ public sealed class AccessGrantEndpointTests
         request.Headers.TryAddWithoutValidation(
             AccessGrantHeaders.Grant,
             grantSecret);
+        return await client.SendAsync(request);
+    }
+
+    private static async Task<HttpResponseMessage> SendAdminAsync(
+        HttpClient client,
+        HttpMethod method,
+        string path,
+        object? body)
+    {
+        var request = new HttpRequestMessage(method, path);
+        if (body is not null)
+        {
+            request.Content = JsonContent.Create(body);
+        }
+        request.Headers.Host = "127.0.0.1:43127";
+        request.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            HostTestFixture.AdminToken);
         return await client.SendAsync(request);
     }
 
