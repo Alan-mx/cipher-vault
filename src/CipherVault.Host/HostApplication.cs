@@ -341,7 +341,7 @@ public static class HostApplication
                             request.Format ?? "md",
                             request.Content ?? string.Empty,
                             request.Tags,
-                            VaultActorKind.UserUi,
+                            HostAdminContext.GetActor(context),
                             token),
                         cancellationToken);
                     return Results.Json(
@@ -383,7 +383,7 @@ public static class HostApplication
                             documentId,
                             request.ExpectedRevision,
                             request.Content ?? string.Empty,
-                            VaultActorKind.UserUi,
+                            HostAdminContext.GetActor(context),
                             token),
                         cancellationToken);
                     return Results.Json(
@@ -428,7 +428,7 @@ public static class HostApplication
                                 request.Folder,
                                 request.Content,
                                 request.Tags),
-                            VaultActorKind.UserUi,
+                            HostAdminContext.GetActor(context),
                             token),
                         cancellationToken);
                     return Results.Json(
@@ -468,7 +468,7 @@ public static class HostApplication
                         (service, token) => service.DeleteNoteAsync(
                             documentId,
                             request.ExpectedRevision,
-                            VaultActorKind.UserUi,
+                            HostAdminContext.GetActor(context),
                             token),
                         cancellationToken);
                     return Results.Json(
@@ -548,7 +548,7 @@ public static class HostApplication
                             documentId,
                             request.ExpectedRevision,
                             request.RenamePath,
-                            VaultActorKind.UserUi,
+                            HostAdminContext.GetActor(context),
                             token),
                         cancellationToken);
                     return Results.Json(
@@ -586,7 +586,7 @@ public static class HostApplication
                     var result = await vault.ExecuteAsync(
                         (service, token) => service.PurgeNoteAsync(
                             documentId,
-                            VaultActorKind.UserUi,
+                            HostAdminContext.GetActor(context),
                             token),
                         cancellationToken);
                     return Results.Json(
@@ -670,7 +670,7 @@ public static class HostApplication
                             documentId,
                             revisionId,
                             request.ExpectedRevision,
-                            VaultActorKind.UserUi,
+                            HostAdminContext.GetActor(context),
                             token),
                         cancellationToken);
                     return Results.Json(
@@ -708,7 +708,7 @@ public static class HostApplication
                     var result = await vault.ExecuteMaintenanceAsync(
                         (service, token) => service.CreateBackupAsync(
                             request.DestinationPath ?? string.Empty,
-                            VaultActorKind.UserUi,
+                            HostAdminContext.GetActor(context),
                             token),
                         cancellationToken);
                     return Results.Json(
@@ -746,6 +746,7 @@ public static class HostApplication
                     var result = await sessions.RestoreBackupToNewAsync(
                         request.BackupPath ?? string.Empty,
                         request.TargetPath ?? string.Empty,
+                        HostAdminContext.GetActor(context),
                         cancellationToken);
                     return Results.Json(
                         new HostApiResponse<VaultRestoreBackupResult>(
@@ -814,7 +815,9 @@ public static class HostApplication
             {
                 try
                 {
-                    await sessions.ChangePasswordAsync(cancellationToken);
+                    await sessions.ChangePasswordAsync(
+                        HostAdminContext.GetActor(context),
+                        cancellationToken);
                     return Results.NoContent();
                 }
                 catch (HostException exception)
@@ -846,6 +849,7 @@ public static class HostApplication
                 try
                 {
                     var recoveryKey = await sessions.RotateRecoveryKeyAsync(
+                        HostAdminContext.GetActor(context),
                         cancellationToken);
                     return Results.Json(
                         new HostApiResponse<HostRecoveryRotationData>(
@@ -880,7 +884,9 @@ public static class HostApplication
             {
                 try
                 {
-                    await sessions.ConfirmRecoveryKeyAsync(cancellationToken);
+                    await sessions.ConfirmRecoveryKeyAsync(
+                        HostAdminContext.GetActor(context),
+                        cancellationToken);
                     return Results.NoContent();
                 }
                 catch (HostException exception)
@@ -952,7 +958,7 @@ public static class HostApplication
                 {
                     var rebuilt = await vault.ExecuteMaintenanceAsync(
                         (service, token) => service.RebuildSearchIndexAsync(
-                            VaultActorKind.UserUi,
+                            HostAdminContext.GetActor(context),
                             token),
                         cancellationToken);
                     return Results.Json(
@@ -990,7 +996,7 @@ public static class HostApplication
                     var result = await vault.ExecuteMaintenanceAsync(
                         (service, token) => service.ExportSnapshotAsync(
                             request.DestinationPath ?? string.Empty,
-                            VaultActorKind.UserUi,
+                            HostAdminContext.GetActor(context),
                             token),
                         cancellationToken);
                     return Results.Json(
@@ -1028,7 +1034,7 @@ public static class HostApplication
                     var preview = await vault.ExecuteMaintenanceAsync(
                         (service, token) => service.PreviewImportAsync(
                             request.SourceRoot ?? string.Empty,
-                            VaultActorKind.UserUi,
+                            HostAdminContext.GetActor(context),
                             token),
                         cancellationToken);
                     return Results.Json(
@@ -1066,7 +1072,7 @@ public static class HostApplication
                     var result = await vault.ExecuteMaintenanceAsync(
                         (service, token) => service.CommitImportAsync(
                             jobId,
-                            VaultActorKind.UserUi,
+                            HostAdminContext.GetActor(context),
                             token),
                         cancellationToken);
                     return Results.Json(

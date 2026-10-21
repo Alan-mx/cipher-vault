@@ -9,6 +9,7 @@ using CipherVault.Core.Errors;
 using CipherVault.Core.Security;
 using CipherVault.Core.Session;
 using CipherVault.Host.Client;
+using CipherVault.Host.Contracts;
 
 var jsonOptions = new JsonSerializerOptions
 {
@@ -500,7 +501,9 @@ static async Task<CliHostSession> CreateHostSessionAsync(
     var hostConfiguration = CipherVaultHostConfiguration.Load(
         CreateHostOverrides(arguments),
         GetOption(arguments, "--config"));
-    var client = await HttpHostVaultClient.CreateAsync(hostConfiguration);
+    var client = await HttpHostVaultClient.CreateAsync(
+        hostConfiguration,
+        HostAdminClientKind.Cli);
     return new CliHostSession(hostConfiguration.VaultPath, client, ownership: null);
 }
 

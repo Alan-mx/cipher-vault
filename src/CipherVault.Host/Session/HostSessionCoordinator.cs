@@ -358,6 +358,19 @@ public sealed class HostSessionCoordinator
         string targetPath,
         CancellationToken cancellationToken = default)
     {
+        return await RestoreBackupToNewAsync(
+            backupPath,
+            targetPath,
+            VaultActorKind.UserUi,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<VaultRestoreBackupResult> RestoreBackupToNewAsync(
+        string backupPath,
+        string targetPath,
+        VaultActorKind actor,
+        CancellationToken cancellationToken = default)
+    {
         if (string.IsNullOrWhiteSpace(backupPath) ||
             string.IsNullOrWhiteSpace(targetPath))
         {
@@ -404,7 +417,7 @@ public sealed class HostSessionCoordinator
                     fullTargetPath,
                     prompt.Credential,
                     prompt.CredentialType,
-                    VaultActorKind.UserUi,
+                    actor,
                     cancellationToken).ConfigureAwait(false);
             }
             catch (VaultException exception) when (
@@ -431,6 +444,15 @@ public sealed class HostSessionCoordinator
     }
 
     public async Task ChangePasswordAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await ChangePasswordAsync(
+            VaultActorKind.UserUi,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task ChangePasswordAsync(
+        VaultActorKind actor,
         CancellationToken cancellationToken = default)
     {
         await ExecuteMaintenanceAsync(
@@ -473,7 +495,7 @@ public sealed class HostSessionCoordinator
                     _configuration.VaultPath,
                     current.Credential,
                     next.Credential,
-                    VaultActorKind.UserUi,
+                    actor,
                     token).ConfigureAwait(false);
                 return true;
             },
@@ -481,6 +503,15 @@ public sealed class HostSessionCoordinator
     }
 
     public async Task<string> RotateRecoveryKeyAsync(
+        CancellationToken cancellationToken = default)
+    {
+        return await RotateRecoveryKeyAsync(
+            VaultActorKind.UserUi,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<string> RotateRecoveryKeyAsync(
+        VaultActorKind actor,
         CancellationToken cancellationToken = default)
     {
         return await ExecuteMaintenanceAsync(
@@ -500,13 +531,22 @@ public sealed class HostSessionCoordinator
                 return await vault.RotateRecoveryKeyAsync(
                     _configuration.VaultPath,
                     prompt.Credential,
-                    VaultActorKind.UserUi,
+                    actor,
                     token).ConfigureAwait(false);
             },
             cancellationToken).ConfigureAwait(false);
     }
 
     public async Task ConfirmRecoveryKeyAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await ConfirmRecoveryKeyAsync(
+            VaultActorKind.UserUi,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task ConfirmRecoveryKeyAsync(
+        VaultActorKind actor,
         CancellationToken cancellationToken = default)
     {
         await ExecuteMaintenanceAsync(
@@ -532,7 +572,7 @@ public sealed class HostSessionCoordinator
                 await vault.ConfirmRecoveryKeyAsync(
                     _configuration.VaultPath,
                     prompt.Credential,
-                    VaultActorKind.UserUi,
+                    actor,
                     token).ConfigureAwait(false);
                 return true;
             },

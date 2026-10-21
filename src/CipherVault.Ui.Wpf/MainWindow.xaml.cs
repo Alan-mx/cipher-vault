@@ -13,6 +13,7 @@ using CipherVault.Core.Errors;
 using CipherVault.Core.ImportExport;
 using CipherVault.Core.Session;
 using CipherVault.Host.Client;
+using CipherVault.Host.Contracts;
 
 namespace CipherVault.Ui.Wpf;
 
@@ -47,7 +48,9 @@ public partial class MainWindow : Window
             configuration = CipherVaultHostConfiguration.Load(
                 CreateCommandLineOverrides(arguments),
                 GetOption(arguments, "--config"));
-            _service = HttpHostVaultClient.CreateAsync(configuration)
+            _service = HttpHostVaultClient.CreateAsync(
+                    configuration,
+                    HostAdminClientKind.Ui)
                 .GetAwaiter()
                 .GetResult();
         }

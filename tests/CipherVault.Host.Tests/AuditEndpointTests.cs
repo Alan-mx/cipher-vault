@@ -55,6 +55,46 @@ public sealed class AuditEndpointTests
         Assert.Equal("session_locked", payload.Error.Code);
     }
 
+    [Fact]
+    public async Task AdminClientKindIsPreservedInAudit()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        await UnlockHostAsync(fixture.Client);
+        using var createRequest = new HttpRequestMessage(
+            HttpMethod.Post,
+            "/admin/v1/notes")
+        {
+            Content = JsonContent.Create(new HostCreateNoteRequest(
+                "CLI audit note",
+                "audit",
+                "md",
+                "created through CLI kind",
+                null))
+        };
+        createRequest.Headers.Host = "127.0.0.1:43127";
+        createRequest.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            HostTestFixture.AdminToken);
+        createRequest.Headers.TryAddWithoutValidation(
+            "X-CipherVault-Client-Kind",
+            "cli");
+        using var createResponse = await fixture.Client.SendAsync(createRequest);
+        createResponse.EnsureSuccessStatusCode();
+
+        using var auditRequest = CreateRequest();
+        auditRequest.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            HostTestFixture.AdminToken);
+        using var auditResponse = await fixture.Client.SendAsync(auditRequest);
+        auditResponse.EnsureSuccessStatusCode();
+        var payload = await auditResponse.Content.ReadFromJsonAsync<
+            HostApiResponse<VaultAuditPage>>(JsonOptions);
+        Assert.NotNull(payload);
+        Assert.Contains(
+            payload.Data.Items,
+            item => item.Action == "create" && item.ActorKind == "user_cli");
+    }
+
     private static async Task UnlockHostAsync(HttpClient client)
     {
         using var request = new HttpRequestMessage(

@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using CipherVault.Core.Configuration;
+using CipherVault.Core.Documents;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Security;
 
@@ -81,6 +82,17 @@ internal sealed class AdminTokenAuthenticationMiddleware
         }
 
         _rateLimiter.RecordSuccess();
+        if (!TryResolveActor(context.Request, out var actor))
+        {
+            await HostHttpResponses.WriteErrorAsync(
+                context,
+                StatusCodes.Status400BadRequest,
+                HostErrorCode.InvalidInput,
+                $"{HostAdminContext.ClientKindHeader} must be ui or cli.");
+            return;
+        }
+
+        context.Items[HostAdminContext.ActorItem] = actor;
         context.Items[HostHttpContextKeys.AdminAuthenticated] = true;
         context.Response.Headers.CacheControl = "no-store";
         context.Response.Headers.Pragma = "no-cache";
@@ -121,6 +133,26 @@ internal sealed class AdminTokenAuthenticationMiddleware
         {
             CryptographicOperations.ZeroMemory(presentedBytes);
             CryptographicOperations.ZeroMemory(expectedBytes);
+        }
+    }
+
+    private static bool TryResolveActor(
+        HttpRequest request,
+        out VaultActorKind actor)
+    {
+        var value = request.Headers[HostAdminContext.ClientKindHeader].ToString();
+        switch (value.Trim().ToLowerInvariant())
+        {
+            case "":
+            case "ui":
+                actor = VaultActorKind.UserUi;
+                return true;
+            case "cli":
+                actor = VaultActorKind.UserCli;
+                return true;
+            default:
+                actor = VaultActorKind.UserUi;
+                return false;
         }
     }
 

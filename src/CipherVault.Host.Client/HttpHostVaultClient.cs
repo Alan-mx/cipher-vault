@@ -23,21 +23,25 @@ public sealed class HttpHostVaultClient : IHostVaultClient
     private readonly HttpClient _http;
     private readonly string _adminPath;
     private readonly string _adminToken;
+    private readonly HostAdminClientKind _clientKind;
 
     private HttpHostVaultClient(
         HttpClient http,
         string adminPath,
-        string adminToken)
+        string adminToken,
+        HostAdminClientKind clientKind)
     {
         _http = http;
         _adminPath = adminPath;
         _adminToken = adminToken;
+        _clientKind = clientKind;
     }
 
     public bool PromptsForCredentials => true;
 
     public static async Task<HttpHostVaultClient> CreateAsync(
         ResolvedCipherVaultHostConfig configuration,
+        HostAdminClientKind clientKind,
         CancellationToken cancellationToken = default)
     {
         var token = await new DpapiAdminTokenStore().GetTokenAsync(cancellationToken)
@@ -52,7 +56,8 @@ public sealed class HttpHostVaultClient : IHostVaultClient
         var client = new HttpHostVaultClient(
             http,
             configuration.Endpoint.AdminPath,
-            token);
+            token,
+            clientKind);
         try
         {
             if (!await client.IsHealthyAsync(cancellationToken).ConfigureAwait(false))
@@ -539,6 +544,9 @@ public sealed class HttpHostVaultClient : IHostVaultClient
         request.Headers.Authorization = new AuthenticationHeaderValue(
             "Bearer",
             _adminToken);
+        request.Headers.TryAddWithoutValidation(
+            "X-CipherVault-Client-Kind",
+            _clientKind == HostAdminClientKind.Cli ? "cli" : "ui");
         if (body is not null)
         {
             request.Content = JsonContent.Create(body, options: JsonOptions);
