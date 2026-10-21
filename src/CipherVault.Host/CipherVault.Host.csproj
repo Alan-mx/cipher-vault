@@ -9,6 +9,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\CipherVault.Auth.Win\CipherVault.Auth.Win.csproj" />
     <ProjectReference Include="..\CipherVault.Core\CipherVault.Core.csproj" />
     <ProjectReference Include="..\CipherVault.Host.Contracts\CipherVault.Host.Contracts.csproj" />

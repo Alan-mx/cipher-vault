@@ -42,6 +42,46 @@ public sealed class AgentTokenStore
         }
     }
 
+    public Task<AuthenticatedHostClient?> AuthenticateAsync(
+        string rawToken,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrEmpty(rawToken))
+        {
+            return Task.FromResult<AuthenticatedHostClient?>(null);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var presentedHash = SHA256.HashData(Encoding.UTF8.GetBytes(rawToken));
+        try
+        {
+            lock (_sync)
+            {
+                foreach (var client in _clients)
+                {
+                    if (!client.Enabled ||
+                        !CryptographicOperations.FixedTimeEquals(
+                            presentedHash,
+                            client.TokenHash))
+                    {
+                        continue;
+                    }
+
+                    return Task.FromResult<AuthenticatedHostClient?>(
+                        new AuthenticatedHostClient(
+                            client.ClientId,
+                            client.AccessMode,
+                            client.AllowLock));
+                }
+            }
+            return Task.FromResult<AuthenticatedHostClient?>(null);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(presentedHash);
+        }
+    }
+
     public async Task<HostCreateClientData> CreateAsync(
         HostCreateClientRequest request,
         CancellationToken cancellationToken = default)

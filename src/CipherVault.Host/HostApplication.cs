@@ -8,8 +8,11 @@ using CipherVault.Core.ImportExport;
 using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Http;
+using CipherVault.Host.Mcp;
 using CipherVault.Host.Security;
 using CipherVault.Host.Session;
+using ModelContextProtocol.AspNetCore;
+using ModelContextProtocol.Server;
 
 namespace CipherVault.Host;
 
@@ -33,10 +36,21 @@ public static class HostApplication
             sessionOptions: configuration.SessionOptions));
         builder.Services.AddSingleton<HostSessionCoordinator>();
         builder.Services.AddSingleton<HostVaultGateway>();
+        builder.Services.AddHttpContextAccessor();
+        builder.Services.AddSingleton<HostVaultTools>();
+        builder.Services
+            .AddMcpServer()
+            .WithHttpTransport(options =>
+            {
+                options.SessionMode = HttpServerSessionMode.Stateless;
+            })
+            .WithTools<HostVaultTools>();
 
         var app = builder.Build();
         app.UseMiddleware<HostRequestValidationMiddleware>();
+        app.UseMiddleware<AgentTokenAuthenticationMiddleware>();
         app.UseMiddleware<AdminTokenAuthenticationMiddleware>();
+        app.MapMcp(configuration.Endpoint.McpPath);
         app.MapGet(
             configuration.Endpoint.AdminPath + "/health",
             () => Results.Json(
