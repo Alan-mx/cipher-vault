@@ -43,6 +43,9 @@ public sealed class AccessGrantService
         }
     }
 
+    public TimeSpan IdleLifetime => _idleLifetime;
+    public TimeSpan HardLifetime => _hardLifetime;
+
     public async Task<AccessGrantRequestOutcome> RequestAsync(
         string clientId,
         Guid clientInstanceId,
@@ -140,9 +143,13 @@ public sealed class AccessGrantService
                 cancellationToken).ConfigureAwait(false);
             if (!approval.Approved)
             {
-                outcome = DenyPending(
-                    pending,
-                    approval.DenialReason ?? "user-denied");
+                var reason = approval.DenialReason ?? "user-denied";
+                outcome = string.Equals(
+                        reason,
+                        "user-denied",
+                        StringComparison.Ordinal)
+                    ? DenyPending(pending, reason)
+                    : DeniedWithoutCooldown(reason);
             }
             else
             {

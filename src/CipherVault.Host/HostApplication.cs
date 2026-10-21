@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using CipherVault.Auth.Win;
 using CipherVault.Core;
 using CipherVault.Core.Backup;
@@ -70,6 +71,182 @@ public static class HostApplication
         app.UseMiddleware<AgentTokenAuthenticationMiddleware>();
         app.UseMiddleware<AdminTokenAuthenticationMiddleware>();
         app.MapMcp(configuration.Endpoint.McpPath);
+        app.MapPost(
+            configuration.Endpoint.McpPath + "/access-grants",
+            async (
+                HostRequestAccessGrantRequest request,
+                AccessGrantService grants,
+                IHostAccessGrantPrompt accessGrantPrompt,
+                HostSessionCoordinator sessions,
+                HttpContext context,
+                CancellationToken cancellationToken) =>
+            {
+                try
+                {
+                    var clientId = context.User.FindFirstValue(
+                        AgentTokenAuthenticationMiddleware.ClientIdClaim);
+                    var accessModeClaim = context.User.FindFirstValue(
+                        AgentTokenAuthenticationMiddleware.AccessModeClaim);
+                    var authorizationMode = context.User.FindFirstValue(
+                        AgentTokenAuthenticationMiddleware.AuthorizationModeClaim);
+                    if (string.IsNullOrWhiteSpace(clientId) ||
+                        string.IsNullOrWhiteSpace(accessModeClaim) ||
+                        !string.Equals(
+                            authorizationMode,
+                            "accessGrant",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        await HostHttpResponses.WriteErrorAsync(
+                            context,
+                            StatusCodes.Status403Forbidden,
+                            HostErrorCode.AccessDenied,
+                            "This client does not use accessGrant authorization.");
+                        return Results.Empty;
+                    }
+                    if (request.ClientInstanceId == Guid.Empty)
+                    {
+                        await HostHttpResponses.WriteErrorAsync(
+                            context,
+                            StatusCodes.Status400BadRequest,
+                            HostErrorCode.InvalidInput,
+                            "clientInstanceId is required.");
+                        return Results.Empty;
+                    }
+
+                    var requestedScopes = ParseAccessGrantScopes(request.Scopes);
+                    var snapshot = await sessions.GetSnapshotAsync(cancellationToken)
+                        .ConfigureAwait(false);
+                    if (snapshot.State is not (
+                            VaultSessionState.Unlocked or
+                            VaultSessionState.Expiring) ||
+                        snapshot.SessionId is null ||
+                        snapshot.HardExpiresAt is null)
+                    {
+                        await HostHttpResponses.WriteErrorAsync(
+                            context,
+                            StatusCodes.Status423Locked,
+                            HostErrorCode.SessionLocked,
+                            "Vault must be unlocked before requesting an Access Grant.");
+                        return Results.Empty;
+                    }
+
+                    var accessMode = string.Equals(
+                            accessModeClaim,
+                            "readWrite",
+                            StringComparison.OrdinalIgnoreCase)
+                        ? McpAccessMode.ReadWrite
+                        : McpAccessMode.ReadOnly;
+                    var generation = new AccessGrantVaultGeneration(
+                        snapshot.SessionId.Value,
+                        snapshot.HardExpiresAt.Value);
+                    var outcome = await grants.RequestAsync(
+                        clientId,
+                        request.ClientInstanceId,
+                        accessMode,
+                        requestedScopes,
+                        generation,
+                        async (approval, token) =>
+                        {
+                            var prompt = await accessGrantPrompt.RequestAsync(
+                                new HostAccessGrantPromptRequest(
+                                    approval.ClientId,
+                                    approval.ClientInstanceId,
+                                    approval.TokenAccessMode,
+                                    approval.RequestedScopes,
+                                    approval.AllowedScopes,
+                                    grants.IdleLifetime,
+                                    grants.HardLifetime),
+                                token).ConfigureAwait(false);
+                            if (!prompt.Approved)
+                            {
+                                return new AccessGrantApprovalResult(
+                                    false,
+                                    AccessGrantScope.None,
+                                    "user-denied");
+                            }
+
+                            var current = await sessions.GetSnapshotAsync(token)
+                                .ConfigureAwait(false);
+                            if (current.SessionId != generation.SessionId ||
+                                current.State is not (
+                                    VaultSessionState.Unlocked or
+                                    VaultSessionState.Expiring))
+                            {
+                                return new AccessGrantApprovalResult(
+                                    false,
+                                    AccessGrantScope.None,
+                                    "vault-session-expired");
+                            }
+                            return new AccessGrantApprovalResult(
+                                true,
+                                prompt.ApprovedScopes);
+                        },
+                        cancellationToken).ConfigureAwait(false);
+
+                    switch (outcome.Status)
+                    {
+                        case AccessGrantRequestStatus.Approved:
+                            return Results.Json(
+                                new HostApiResponse<HostIssuedAccessGrantData>(
+                                    true,
+                                    new HostIssuedAccessGrantData(
+                                        HostDtoMapper.ToAccessGrantData(
+                                            outcome.IssuedGrant!.Record),
+                                        outcome.IssuedGrant.PlaintextSecret)),
+                                statusCode: StatusCodes.Status201Created);
+                        case AccessGrantRequestStatus.Cooldown:
+                            if (outcome.RetryAfter is not null)
+                            {
+                                context.Response.Headers.RetryAfter = Math.Max(
+                                    1,
+                                    (int)Math.Ceiling(
+                                        (outcome.RetryAfter.Value -
+                                         DateTimeOffset.UtcNow).TotalSeconds))
+                                    .ToString(
+                                        System.Globalization.CultureInfo.InvariantCulture);
+                            }
+                            await HostHttpResponses.WriteErrorAsync(
+                                context,
+                                StatusCodes.Status429TooManyRequests,
+                                HostErrorCode.AccessGrantCooldown,
+                                "Access Grant requests are temporarily blocked.");
+                            return Results.Empty;
+                        case AccessGrantRequestStatus.Conflict:
+                            await HostHttpResponses.WriteErrorAsync(
+                                context,
+                                StatusCodes.Status409Conflict,
+                                HostErrorCode.Conflict,
+                                "An Access Grant is already active for this Bridge instance.");
+                            return Results.Empty;
+                        default:
+                            var sessionExpired = string.Equals(
+                                outcome.ReasonCode,
+                                "vault-session-expired",
+                                StringComparison.Ordinal);
+                            await HostHttpResponses.WriteErrorAsync(
+                                context,
+                                sessionExpired
+                                    ? StatusCodes.Status423Locked
+                                    : StatusCodes.Status403Forbidden,
+                                sessionExpired
+                                    ? HostErrorCode.SessionLocked
+                                    : HostErrorCode.AccessDenied,
+                                sessionExpired
+                                    ? "Vault session changed before the Access Grant was approved."
+                                    : "Access Grant request was denied.");
+                            return Results.Empty;
+                    }
+                }
+                catch (HostException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception.Code),
+                        exception.Code,
+                        exception.Message);
+                    return Results.Empty;
+                }
+            });
         app.MapGet(
             configuration.Endpoint.AdminPath + "/health",
             () => Results.Json(
@@ -1292,6 +1469,31 @@ public static class HostApplication
                 return Results.NoContent();
             });
         return app;
+    }
+
+    private static AccessGrantScope ParseAccessGrantScopes(
+        IReadOnlyList<string>? scopes)
+    {
+        if (scopes is null || scopes.Count == 0)
+        {
+            return AccessGrantScope.Read;
+        }
+
+        var result = AccessGrantScope.None;
+        foreach (var rawScope in scopes)
+        {
+            var scope = rawScope?.Trim().ToLowerInvariant();
+            result |= scope switch
+            {
+                "read" => AccessGrantScope.Read,
+                "write" => AccessGrantScope.Write,
+                "delete" => AccessGrantScope.Delete,
+                _ => throw new HostException(
+                    HostErrorCode.InvalidInput,
+                    "Access Grant scopes must be read, write or delete.")
+            };
+        }
+        return AccessGrantScopes.Normalize(result);
     }
 
     private static bool TryParseCredentialPreference(
