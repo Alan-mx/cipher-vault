@@ -4,6 +4,8 @@ using CipherVault.Host.Security;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace CipherVault.Host.Tests;
 
@@ -20,6 +22,8 @@ internal sealed class HostTestFixture : IAsyncDisposable
 
     public WebApplication App { get; }
     public HttpClient Client { get; }
+    public IHostApplicationLifetime Lifetime =>
+        App.Services.GetRequiredService<IHostApplicationLifetime>();
 
     public static async Task<HostTestFixture> CreateAsync(
         string[]? allowedOrigins = null)

@@ -1,4 +1,5 @@
 using CipherVault.Core.Configuration;
+using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Http;
 using CipherVault.Host.Security;
@@ -59,6 +60,46 @@ public static class HostApplication
                                 snapshot.LockReason,
                                 snapshot.ActiveLeases,
                                 snapshot.ConnectedClients))));
+            });
+        app.MapPost(
+            configuration.Endpoint.AdminPath + "/host/stop",
+            async (
+                HostStopRequest request,
+                HostSessionCoordinator sessions,
+                IHostApplicationLifetime lifetime,
+                HttpContext context,
+                CancellationToken cancellationToken) =>
+            {
+                var reason = string.IsNullOrWhiteSpace(request.Reason)
+                    ? "user-requested"
+                    : request.Reason.Trim();
+                if (reason.Length > 200)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        StatusCodes.Status400BadRequest,
+                        HostErrorCode.InvalidInput,
+                        "Stop reason is too long.");
+                    return Results.Empty;
+                }
+
+                var snapshot = await sessions.LockAsync(reason, cancellationToken);
+                if (snapshot.State != VaultSessionState.Locked)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        StatusCodes.Status409Conflict,
+                        HostErrorCode.LockInProgress,
+                        "Vault lock is still in progress.");
+                    return Results.Empty;
+                }
+
+                context.Response.OnCompleted(() =>
+                {
+                    lifetime.StopApplication();
+                    return Task.CompletedTask;
+                });
+                return Results.NoContent();
             });
         return app;
     }

@@ -31,6 +31,7 @@ internal static class HostHttpResponses
         {
             HostErrorCode.HostUnavailable => "host_unavailable",
             HostErrorCode.VaultInUse => "vault_in_use",
+            HostErrorCode.InvalidInput => "invalid_input",
             HostErrorCode.InvalidToken => "invalid_token",
             HostErrorCode.InvalidOrigin => "invalid_origin",
             HostErrorCode.InvalidHost => "invalid_host",
