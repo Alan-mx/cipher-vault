@@ -91,6 +91,9 @@ public sealed class HostSecurityHardeningTests
             HostTestFixture.AdminToken);
         using var deleted = await fixture.Client.SendAsync(deleteRequest);
         deleted.EnsureSuccessStatusCode();
+        var log = await ReadSecurityLogAsync(fixture.SecurityLogDirectory);
+        Assert.Contains("\"token_revoked\"", log, StringComparison.Ordinal);
+        Assert.Contains("\"security-agent\"", log, StringComparison.Ordinal);
 
         using var revokedRequest = CreateMcpRequest(token);
         using var revoked = await fixture.Client.SendAsync(revokedRequest);

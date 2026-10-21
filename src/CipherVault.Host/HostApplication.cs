@@ -196,7 +196,15 @@ public static class HostApplication
             {
                 try
                 {
-                    await clients.DeleteAsync(clientId, cancellationToken);
+                    var requestId = context.Items.TryGetValue(
+                            HostHttpContextKeys.RequestId,
+                            out var value)
+                        ? value as string
+                        : null;
+                    await clients.DeleteAsync(
+                        clientId,
+                        requestId,
+                        cancellationToken);
                     return Results.NoContent();
                 }
                 catch (HostException exception)

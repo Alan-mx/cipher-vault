@@ -19,11 +19,15 @@ public sealed class AgentTokenStore
     private readonly object _sync = new();
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly ResolvedCipherVaultHostConfig _configuration;
+    private readonly ISecurityEventLog _securityLog;
     private List<AgentClientPolicy> _clients;
 
-    public AgentTokenStore(ResolvedCipherVaultHostConfig configuration)
+    public AgentTokenStore(
+        ResolvedCipherVaultHostConfig configuration,
+        ISecurityEventLog securityLog)
     {
         _configuration = configuration;
+        _securityLog = securityLog;
         _clients = configuration.Clients
             .Select(Clone)
             .ToList();
@@ -231,6 +235,7 @@ public sealed class AgentTokenStore
 
     public async Task DeleteAsync(
         string clientId,
+        string? requestId = null,
         CancellationToken cancellationToken = default)
     {
         await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -257,6 +262,25 @@ public sealed class AgentTokenStore
             lock (_sync)
             {
                 _clients = next;
+            }
+            try
+            {
+                await _securityLog.WriteAsync(
+                    new HostSecurityLogEvent(
+                        DateTimeOffset.UtcNow,
+                        "token_revoked",
+                        clientId,
+                        ConnectionId: null,
+                        requestId,
+                        "success",
+                        ReasonCode: null),
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (
+                exception is IOException or
+                    UnauthorizedAccessException)
+            {
+                Console.Error.WriteLine("security_event_log_failed");
             }
         }
         finally
