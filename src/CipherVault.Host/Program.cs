@@ -11,6 +11,7 @@ try
     var configuration = CipherVaultHostConfiguration.Load(
         CipherVaultHostConfigOverrides.Empty,
         configPath);
+    using var userInstance = HostUserInstanceLock.Acquire();
     await using var ownership = await VaultOwnershipLock.AcquireAsync(
         configuration.VaultPath);
     var builder = WebApplication.CreateBuilder(args);
