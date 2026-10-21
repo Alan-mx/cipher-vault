@@ -22,6 +22,7 @@ public sealed class ClientsEndpointTests
             "codex-readonly",
             new byte[32],
             McpAccessMode.ReadOnly,
+            AgentAuthorizationMode.AccessGrant,
             Enabled: true);
         await using var fixture = await HostTestFixture.CreateAsync(
             clients: [policy]);
@@ -39,6 +40,7 @@ public sealed class ClientsEndpointTests
         var client = Assert.Single(payload.Data);
         Assert.Equal("codex-readonly", client.Id);
         Assert.Equal("readOnly", client.AccessMode);
+        Assert.Equal("accessGrant", client.AuthorizationMode);
         Assert.True(client.Enabled);
         Assert.DoesNotContain(
             "token",
@@ -62,7 +64,7 @@ public sealed class ClientsEndpointTests
     {
         await using var fixture = await HostTestFixture.CreateAsync();
         using var request = CreateCreateRequest(
-            new HostCreateClientRequest("codex-write", "readWrite"));
+            new HostCreateClientRequest("codex-write", "readWrite", "accessGrant"));
 
         using var response = await fixture.Client.SendAsync(request);
 
@@ -72,6 +74,7 @@ public sealed class ClientsEndpointTests
         Assert.NotNull(payload);
         Assert.Equal("codex-write", payload.Data.Client.Id);
         Assert.Equal("readWrite", payload.Data.Client.AccessMode);
+        Assert.Equal("accessGrant", payload.Data.Client.AuthorizationMode);
         Assert.False(string.IsNullOrWhiteSpace(payload.Data.Token));
 
         var configText = await File.ReadAllTextAsync(fixture.ConfigPath);
@@ -86,12 +89,12 @@ public sealed class ClientsEndpointTests
     {
         await using var fixture = await HostTestFixture.CreateAsync();
         using var first = CreateCreateRequest(
-            new HostCreateClientRequest("codex", "readOnly"));
+            new HostCreateClientRequest("codex", "readOnly", "accessGrant"));
         using var firstResponse = await fixture.Client.SendAsync(first);
         Assert.Equal(HttpStatusCode.Created, firstResponse.StatusCode);
 
         using var second = CreateCreateRequest(
-            new HostCreateClientRequest("CODEX", "readWrite"));
+            new HostCreateClientRequest("CODEX", "readWrite", "accessGrant"));
         using var secondResponse = await fixture.Client.SendAsync(second);
 
         Assert.Equal(HttpStatusCode.Conflict, secondResponse.StatusCode);
@@ -106,7 +109,7 @@ public sealed class ClientsEndpointTests
     {
         await using var fixture = await HostTestFixture.CreateAsync();
         using var request = CreateCreateRequest(
-            new HostCreateClientRequest("codex", "admin"));
+            new HostCreateClientRequest("codex", "admin", "accessGrant"));
 
         using var response = await fixture.Client.SendAsync(request);
 
@@ -119,17 +122,53 @@ public sealed class ClientsEndpointTests
     }
 
     [Fact]
+    public async Task StaticTokenWithWriteAccessIsRejected()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        using var request = CreateCreateRequest(
+            new HostCreateClientRequest(
+                "codex",
+                "readWrite",
+                "staticToken"));
+
+        using var response = await fixture.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var payload = await response.Content.ReadFromJsonAsync<HostApiErrorResponse>(
+            JsonOptions);
+        Assert.NotNull(payload);
+        Assert.Equal("invalid_input", payload.Error.Code);
+        Assert.False(File.Exists(fixture.ConfigPath));
+    }
+
+    [Fact]
+    public async Task CreateClientDefaultsToAccessGrant()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        using var request = CreateCreateRequest(
+            new HostCreateClientRequest("codex", "readWrite", null));
+
+        using var response = await fixture.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var payload = await response.Content.ReadFromJsonAsync<
+            HostApiResponse<HostCreateClientData>>(JsonOptions);
+        Assert.NotNull(payload);
+        Assert.Equal("accessGrant", payload.Data.Client.AuthorizationMode);
+    }
+
+    [Fact]
     public async Task UpdateClientChangesPolicyAndPersists()
     {
         await using var fixture = await HostTestFixture.CreateAsync();
         using var create = CreateCreateRequest(
-            new HostCreateClientRequest("codex", "readOnly"));
+            new HostCreateClientRequest("codex", "readOnly", "accessGrant"));
         using var createResponse = await fixture.Client.SendAsync(create);
         Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
 
         using var update = CreateUpdateRequest(
             "codex",
-            new HostUpdateClientRequest("readWrite", false));
+            new HostUpdateClientRequest("readWrite", "accessGrant", false));
         using var updateResponse = await fixture.Client.SendAsync(update);
 
         Assert.Equal(HttpStatusCode.OK, updateResponse.StatusCode);
@@ -137,6 +176,7 @@ public sealed class ClientsEndpointTests
             HostApiResponse<HostClientData>>(JsonOptions);
         Assert.NotNull(payload);
         Assert.Equal("readWrite", payload.Data.AccessMode);
+        Assert.Equal("accessGrant", payload.Data.AuthorizationMode);
         Assert.False(payload.Data.Enabled);
         var configText = await File.ReadAllTextAsync(fixture.ConfigPath);
         Assert.Contains("\"enabled\": false", configText, StringComparison.Ordinal);
@@ -148,7 +188,7 @@ public sealed class ClientsEndpointTests
         await using var fixture = await HostTestFixture.CreateAsync();
         using var request = CreateUpdateRequest(
             "missing",
-            new HostUpdateClientRequest("readOnly", true));
+            new HostUpdateClientRequest("readOnly", "accessGrant", true));
 
         using var response = await fixture.Client.SendAsync(request);
 
@@ -164,7 +204,7 @@ public sealed class ClientsEndpointTests
     {
         await using var fixture = await HostTestFixture.CreateAsync();
         using var create = CreateCreateRequest(
-            new HostCreateClientRequest("codex", "readOnly"));
+            new HostCreateClientRequest("codex", "readOnly", "accessGrant"));
         using var createResponse = await fixture.Client.SendAsync(create);
         var created = await createResponse.Content.ReadFromJsonAsync<
             HostApiResponse<HostCreateClientData>>(JsonOptions);
@@ -213,7 +253,7 @@ public sealed class ClientsEndpointTests
     {
         await using var fixture = await HostTestFixture.CreateAsync();
         using var create = CreateCreateRequest(
-            new HostCreateClientRequest("codex", "readOnly"));
+            new HostCreateClientRequest("codex", "readOnly", "accessGrant"));
         using var createResponse = await fixture.Client.SendAsync(create);
         Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
 
@@ -256,12 +296,13 @@ public sealed class ClientsEndpointTests
                 $"client-{index}",
                 new byte[32],
                 McpAccessMode.ReadOnly,
+                AgentAuthorizationMode.AccessGrant,
                 Enabled: true))
             .ToList();
         await using var fixture = await HostTestFixture.CreateAsync(
             clients: policies);
         using var request = CreateCreateRequest(
-            new HostCreateClientRequest("overflow", "readOnly"));
+            new HostCreateClientRequest("overflow", "readOnly", "accessGrant"));
 
         using var response = await fixture.Client.SendAsync(request);
 
@@ -275,7 +316,7 @@ public sealed class ClientsEndpointTests
         await using var fixture = await HostTestFixture.CreateAsync();
         var protectedBefore = IsDirectoryAclProtected(fixture.Root);
         using var request = CreateCreateRequest(
-            new HostCreateClientRequest("codex", "readOnly"));
+            new HostCreateClientRequest("codex", "readOnly", "accessGrant"));
 
         using var response = await fixture.Client.SendAsync(request);
 

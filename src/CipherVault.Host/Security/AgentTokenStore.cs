@@ -74,7 +74,8 @@ public sealed class AgentTokenStore
                     return Task.FromResult<AuthenticatedHostClient?>(
                         new AuthenticatedHostClient(
                             client.ClientId,
-                            client.AccessMode));
+                            client.AccessMode,
+                            client.AuthorizationMode));
                 }
             }
             return Task.FromResult<AuthenticatedHostClient?>(null);
@@ -101,6 +102,9 @@ public sealed class AgentTokenStore
         }
         var accessMode = ParseAccessMode(request.AccessMode)
             ?? McpAccessMode.ReadOnly;
+        var authorizationMode = ParseAuthorizationMode(request.AuthorizationMode)
+            ?? AgentAuthorizationMode.AccessGrant;
+        ValidateAuthorizationMode(accessMode, authorizationMode);
         var (rawToken, tokenHash) = GenerateToken();
 
         await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -132,6 +136,7 @@ public sealed class AgentTokenStore
                 clientId,
                 tokenHash,
                 accessMode,
+                authorizationMode,
                 Enabled: true);
             next.Add(policy);
             await PersistAsync(next, cancellationToken).ConfigureAwait(false);
@@ -171,10 +176,15 @@ public sealed class AgentTokenStore
                 }
 
                 var current = _clients[index];
+                var accessMode = ParseAccessMode(request.AccessMode)
+                    ?? current.AccessMode;
+                var authorizationMode = ParseAuthorizationMode(request.AuthorizationMode)
+                    ?? current.AuthorizationMode;
+                ValidateAuthorizationMode(accessMode, authorizationMode);
                 updated = current with
                 {
-                    AccessMode = ParseAccessMode(request.AccessMode)
-                        ?? current.AccessMode,
+                    AccessMode = accessMode,
+                    AuthorizationMode = authorizationMode,
                     Enabled = request.Enabled ?? current.Enabled
                 };
                 next = [.. _clients];
@@ -320,6 +330,7 @@ public sealed class AgentTokenStore
                     ["id"] = client.ClientId,
                     ["tokenHash"] = "sha256:" + Convert.ToHexString(client.TokenHash),
                     ["accessMode"] = ToAccessMode(client.AccessMode),
+                    ["authorizationMode"] = ToAuthorizationMode(client.AuthorizationMode),
                     ["enabled"] = client.Enabled
                 });
             }
@@ -411,6 +422,7 @@ public sealed class AgentTokenStore
         return new HostClientData(
             client.ClientId,
             ToAccessMode(client.AccessMode),
+            ToAuthorizationMode(client.AuthorizationMode),
             client.Enabled);
     }
 
@@ -420,6 +432,7 @@ public sealed class AgentTokenStore
             client.ClientId,
             [.. client.TokenHash],
             client.AccessMode,
+            client.AuthorizationMode,
             client.Enabled);
     }
 
@@ -438,6 +451,44 @@ public sealed class AgentTokenStore
                 HostErrorCode.InvalidInput,
                 "accessMode must be readOnly or readWrite.")
         };
+    }
+
+    private static AgentAuthorizationMode? ParseAuthorizationMode(string? value)
+    {
+        var normalized = GetNonEmpty(value);
+        if (normalized is null)
+        {
+            return null;
+        }
+        return normalized.ToLowerInvariant() switch
+        {
+            "accessgrant" => AgentAuthorizationMode.AccessGrant,
+            "statictoken" => AgentAuthorizationMode.StaticToken,
+            _ => throw new HostException(
+                HostErrorCode.InvalidInput,
+                "authorizationMode must be accessGrant or staticToken.")
+        };
+    }
+
+    private static void ValidateAuthorizationMode(
+        McpAccessMode accessMode,
+        AgentAuthorizationMode authorizationMode)
+    {
+        if (authorizationMode == AgentAuthorizationMode.StaticToken &&
+            accessMode != McpAccessMode.ReadOnly)
+        {
+            throw new HostException(
+                HostErrorCode.InvalidInput,
+                "staticToken authorizationMode only supports readOnly accessMode.");
+        }
+    }
+
+    internal static string ToAuthorizationMode(
+        AgentAuthorizationMode authorizationMode)
+    {
+        return authorizationMode == AgentAuthorizationMode.AccessGrant
+            ? "accessGrant"
+            : "staticToken";
     }
 
     private static bool IsValidClientId(string clientId)

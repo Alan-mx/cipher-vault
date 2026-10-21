@@ -14,10 +14,12 @@ public sealed record HostInitializeRequest(
 
 public sealed record HostCreateClientRequest(
     string? Id,
-    string? AccessMode);
+    string? AccessMode,
+    string? AuthorizationMode);
 
 public sealed record HostUpdateClientRequest(
     string? AccessMode,
+    string? AuthorizationMode,
     bool? Enabled);
 
 public sealed record HostCreateNoteRequest(

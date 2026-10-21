@@ -38,6 +38,7 @@ public sealed record CipherVaultClientConfigFile
     public string? Id { get; init; }
     public string? TokenHash { get; init; }
     public string? AccessMode { get; init; }
+    public string? AuthorizationMode { get; init; }
     public bool? Enabled { get; init; }
 }
 
@@ -60,6 +61,7 @@ public sealed record AgentClientPolicy(
     string ClientId,
     byte[] TokenHash,
     McpAccessMode AccessMode,
+    AgentAuthorizationMode AuthorizationMode,
     bool Enabled);
 
 public static class CipherVaultHostConfiguration
@@ -326,10 +328,21 @@ public static class CipherVaultHostConfiguration
             var tokenHash = ParseTokenHash(client.TokenHash, index);
             var accessMode = CipherVaultConfiguration.ParseAccessMode(client.AccessMode)
                 ?? McpAccessMode.ReadOnly;
+            var authorizationMode =
+                CipherVaultConfiguration.ParseAuthorizationMode(client.AuthorizationMode)
+                ?? AgentAuthorizationMode.AccessGrant;
+            if (authorizationMode == AgentAuthorizationMode.StaticToken &&
+                accessMode != McpAccessMode.ReadOnly)
+            {
+                throw new VaultException(
+                    VaultErrorCode.InvalidInput,
+                    $"clients[{index}] staticToken only supports readOnly accessMode.");
+            }
             result.Add(new AgentClientPolicy(
                 clientId,
                 tokenHash,
                 accessMode,
+                authorizationMode,
                 client.Enabled ?? true));
         }
 

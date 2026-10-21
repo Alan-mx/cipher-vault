@@ -72,6 +72,7 @@ public sealed class McpBridgeHostTests
                             id = "bridge-agent",
                             tokenHash = "sha256:" + tokenHash,
                             accessMode = "readOnly",
+                            authorizationMode = "accessGrant",
                             enabled = true
                         }
                     }

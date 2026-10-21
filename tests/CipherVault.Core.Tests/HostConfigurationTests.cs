@@ -33,6 +33,7 @@ public sealed class HostConfigurationTests
                   "id": "codex-readonly",
                   "tokenHash": "{{TokenHash}}",
                   "accessMode": "readOnly",
+                  "authorizationMode": "accessGrant",
                   "enabled": true
                 }
               ]
@@ -59,6 +60,7 @@ public sealed class HostConfigurationTests
         var client = Assert.Single(result.Clients);
         Assert.Equal("codex-readonly", client.ClientId);
         Assert.Equal(McpAccessMode.ReadOnly, client.AccessMode);
+        Assert.Equal(AgentAuthorizationMode.AccessGrant, client.AuthorizationMode);
         Assert.Equal(32, client.TokenHash.Length);
     }
 
@@ -129,6 +131,7 @@ public sealed class HostConfigurationTests
     [InlineData("{ \"configVersion\": 2, \"host\": { \"allowedOrigins\": [\"*\"] } }")]
     [InlineData("{ \"configVersion\": 2, \"host\": { \"allowedOrigins\": [\"http://localhost:3000/path\"] } }")]
     [InlineData("{ \"configVersion\": 2, \"clients\": [{ \"id\": \"codex\", \"tokenHash\": \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"accessMode\": \"readOnly\", \"allowLock\": false }] }")]
+    [InlineData("{ \"configVersion\": 2, \"clients\": [{ \"id\": \"codex\", \"tokenHash\": \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"accessMode\": \"readWrite\", \"authorizationMode\": \"staticToken\" }] }")]
     public void InvalidHostConfigIsRejected(string json)
     {
         using var fixture = new ConfigFixture();
@@ -212,6 +215,36 @@ public sealed class HostConfigurationTests
                 CancellationToken.None));
 
         Assert.Equal(VaultErrorCode.InvalidInput, exception.Code);
+    }
+
+    [Fact]
+    public void MissingClientAuthorizationModeDefaultsToAccessGrant()
+    {
+        using var fixture = new ConfigFixture();
+        var configPath = fixture.WriteConfig(
+            $$"""
+            {
+              "configVersion": 2,
+              "clients": [
+                {
+                  "id": "codex",
+                  "tokenHash": "{{TokenHash}}",
+                  "accessMode": "readWrite"
+                }
+              ]
+            }
+            """);
+
+        var result = CipherVaultHostConfiguration.LoadCore(
+            CipherVaultHostConfigOverrides.Empty,
+            configPath,
+            _ => null,
+            Path.Combine(fixture.Root, "default.json"),
+            Path.Combine(fixture.Root, "default-vault"),
+            CancellationToken.None);
+
+        var client = Assert.Single(result.Clients);
+        Assert.Equal(AgentAuthorizationMode.AccessGrant, client.AuthorizationMode);
     }
 
     [Fact]

@@ -10,6 +10,12 @@ public enum McpAccessMode
     ReadWrite
 }
 
+public enum AgentAuthorizationMode
+{
+    AccessGrant,
+    StaticToken
+}
+
 public sealed record CipherVaultSessionConfigFile
 {
     public int? IdleMinutes { get; init; }
@@ -149,6 +155,23 @@ public static class CipherVaultConfiguration
             _ => throw new VaultException(
                 VaultErrorCode.InvalidInput,
                 "MCP accessMode must be readOnly or readWrite.")
+        };
+    }
+
+    public static AgentAuthorizationMode? ParseAuthorizationMode(string? value)
+    {
+        var normalized = GetNonEmpty(value);
+        if (normalized is null)
+        {
+            return null;
+        }
+        return normalized.ToLowerInvariant() switch
+        {
+            "accessgrant" => AgentAuthorizationMode.AccessGrant,
+            "statictoken" => AgentAuthorizationMode.StaticToken,
+            _ => throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "Agent authorizationMode must be accessGrant or staticToken.")
         };
     }
 

@@ -411,12 +411,13 @@ public sealed class HttpHostVaultClient : IHostVaultClient
     public async Task<HostCreateClientData> CreateAgentClientAsync(
         string clientId,
         string accessMode,
+        string authorizationMode,
         CancellationToken cancellationToken = default)
     {
         return await SendAsync<HostCreateClientData>(
             HttpMethod.Post,
             "/clients",
-            new HostCreateClientRequest(clientId, accessMode),
+            new HostCreateClientRequest(clientId, accessMode, authorizationMode),
             cancellationToken).ConfigureAwait(false);
     }
 

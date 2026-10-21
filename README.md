@@ -96,6 +96,19 @@ The Host, WPF, CLI and STDIO bridge use `configVersion: 2`:
 }
 ```
 
+Client entries may use either `accessGrant` or the explicit read-only
+`staticToken` compatibility mode:
+
+```json
+{
+  "id": "codex-bridge",
+  "tokenHash": "sha256:...",
+  "accessMode": "readWrite",
+  "authorizationMode": "accessGrant",
+  "enabled": true
+}
+```
+
 Do not put passwords, recovery keys, Agent Tokens or Admin Tokens in this file.
 WPF and CLI use separate DPAPI-protected Admin Tokens:
 
@@ -132,14 +145,14 @@ Create a read-only client:
 
 ```powershell
 .\CipherVault.Cli.exe client-add --config .\config.json `
-  --id codex --access readOnly
+  --id codex --access readOnly --authorization-mode staticToken
 ```
 
 Create a write-enabled client:
 
 ```powershell
 .\CipherVault.Cli.exe client-add --config .\config.json `
-  --id codex-writer --access readWrite
+  --id codex-writer --access readWrite --authorization-mode accessGrant
 ```
 
 The command prints the plaintext token once. Store it in the agent's environment,

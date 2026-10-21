@@ -234,7 +234,10 @@ public sealed class McpHttpEndpointTests
             "/admin/v1/clients")
         {
             Content = JsonContent.Create(
-                new HostCreateClientRequest(clientId, accessMode))
+                new HostCreateClientRequest(
+                    clientId,
+                    accessMode,
+                    "accessGrant"))
         };
         request.Headers.Host = "127.0.0.1:43127";
         request.Headers.Authorization = new AuthenticationHeaderValue(
