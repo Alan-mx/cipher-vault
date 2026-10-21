@@ -470,6 +470,32 @@ public sealed class HostSessionCoordinator
             cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<string> RotateRecoveryKeyAsync(
+        CancellationToken cancellationToken = default)
+    {
+        return await ExecuteMaintenanceAsync(
+            async (vault, token) =>
+            {
+                var prompt = await _credentialPrompt.RequestAsync(
+                    HostCredentialPreference.Password,
+                    "输入当前资料库密码以轮换恢复密钥。",
+                    token).ConfigureAwait(false);
+                if (!prompt.Confirmed || string.IsNullOrEmpty(prompt.Credential))
+                {
+                    throw new HostException(
+                        HostErrorCode.AccessDenied,
+                        "Recovery key rotation authorization was cancelled.");
+                }
+
+                return await vault.RotateRecoveryKeyAsync(
+                    _configuration.VaultPath,
+                    prompt.Credential,
+                    VaultActorKind.UserUi,
+                    token).ConfigureAwait(false);
+            },
+            cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task<HostSessionSnapshot> FinalizeLockAsync(
         string reason,
         CancellationToken cancellationToken)

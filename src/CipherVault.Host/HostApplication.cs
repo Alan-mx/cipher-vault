@@ -816,6 +816,41 @@ public static class HostApplication
                 }
             });
         app.MapPost(
+            configuration.Endpoint.AdminPath + "/maintenance/recovery/rotate",
+            async (
+                HostSessionCoordinator sessions,
+                HttpContext context,
+                CancellationToken cancellationToken) =>
+            {
+                try
+                {
+                    var recoveryKey = await sessions.RotateRecoveryKeyAsync(
+                        cancellationToken);
+                    return Results.Json(
+                        new HostApiResponse<HostRecoveryRotationData>(
+                            true,
+                            new HostRecoveryRotationData(recoveryKey)));
+                }
+                catch (HostException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception.Code),
+                        exception.Code,
+                        exception.Message);
+                    return Results.Empty;
+                }
+                catch (VaultException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception),
+                        HostHttpResponses.ToHostErrorCode(exception),
+                        exception.Message);
+                    return Results.Empty;
+                }
+            });
+        app.MapPost(
             configuration.Endpoint.AdminPath + "/session/unlock",
             async (
                 HostUnlockRequest request,

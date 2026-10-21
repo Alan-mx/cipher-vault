@@ -56,3 +56,6 @@ public sealed record HostClientData(
 public sealed record HostCreateClientData(
     HostClientData Client,
     string Token);
+
+public sealed record HostRecoveryRotationData(
+    string RecoveryKey);
