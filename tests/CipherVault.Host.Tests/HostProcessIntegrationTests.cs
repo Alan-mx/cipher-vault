@@ -25,6 +25,7 @@ public sealed class HostProcessIntegrationTests
     [Fact]
     public async Task RealHostEnforcesSingleInstanceAndRestartsLocked()
     {
+        using var hostLock = HostIntegrationTestLock.Acquire();
         var root = Path.Combine(
             Path.GetTempPath(),
             $"cipher-vault-host-process-{Guid.NewGuid():N}");

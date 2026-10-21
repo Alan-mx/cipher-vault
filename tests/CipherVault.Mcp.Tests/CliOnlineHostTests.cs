@@ -21,6 +21,7 @@ public sealed class CliOnlineHostTests
     [Fact]
     public async Task CliStatusStartsHostAndUsesAdminApi()
     {
+        using var hostLock = HostIntegrationTestLock.Acquire();
         var root = Path.Combine(
             Path.GetTempPath(),
             $"cipher-vault-cli-online-{Guid.NewGuid():N}");

@@ -17,6 +17,7 @@ public sealed class McpBridgeHostTests
     [Fact]
     public async Task BridgeForwardsToolsToRunningHost()
     {
+        using var hostLock = HostIntegrationTestLock.Acquire();
         var root = Path.Combine(
             Path.GetTempPath(),
             $"cipher-vault-mcp-bridge-{Guid.NewGuid():N}");
