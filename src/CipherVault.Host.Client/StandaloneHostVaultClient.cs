@@ -1,8 +1,10 @@
 using CipherVault.Core;
 using CipherVault.Core.Backup;
 using CipherVault.Core.Documents;
+using CipherVault.Core.Errors;
 using CipherVault.Core.ImportExport;
 using CipherVault.Core.Session;
+using CipherVault.Host.Contracts;
 
 namespace CipherVault.Host.Client;
 
@@ -262,5 +264,41 @@ public sealed class StandaloneHostVaultClient : IHostVaultClient
     public ValueTask DisposeAsync()
     {
         return _vault.DisposeAsync();
+    }
+
+    public Task<IReadOnlyList<HostClientData>> ListAgentClientsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        throw HostManagementRequired();
+    }
+
+    public Task<HostCreateClientData> CreateAgentClientAsync(
+        string clientId,
+        string accessMode,
+        bool allowLock,
+        CancellationToken cancellationToken = default)
+    {
+        throw HostManagementRequired();
+    }
+
+    public Task<HostCreateClientData> RotateAgentClientAsync(
+        string clientId,
+        CancellationToken cancellationToken = default)
+    {
+        throw HostManagementRequired();
+    }
+
+    public Task DeleteAgentClientAsync(
+        string clientId,
+        CancellationToken cancellationToken = default)
+    {
+        throw HostManagementRequired();
+    }
+
+    private static VaultException HostManagementRequired()
+    {
+        return new VaultException(
+            VaultErrorCode.InvalidInput,
+            "Agent client management requires an online Host.");
     }
 }

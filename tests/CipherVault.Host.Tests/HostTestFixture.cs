@@ -23,6 +23,7 @@ internal sealed class HostTestFixture : IAsyncDisposable
         string root,
         string vaultPath,
         string configPath,
+        string securityLogDirectory,
         string? recoveryKey,
         WebApplication app,
         HttpClient client,
@@ -31,6 +32,7 @@ internal sealed class HostTestFixture : IAsyncDisposable
         Root = root;
         VaultPath = vaultPath;
         ConfigPath = configPath;
+        SecurityLogDirectory = securityLogDirectory;
         RecoveryKey = recoveryKey;
         App = app;
         Client = client;
@@ -40,6 +42,7 @@ internal sealed class HostTestFixture : IAsyncDisposable
     public string Root { get; }
     public string VaultPath { get; }
     public string ConfigPath { get; }
+    public string SecurityLogDirectory { get; }
     public string? RecoveryKey { get; }
     public WebApplication App { get; }
     public HttpClient Client { get; }
@@ -92,6 +95,7 @@ internal sealed class HostTestFixture : IAsyncDisposable
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
         var configPath = Path.Combine(root, "config.json");
+        var securityLogDirectory = Path.Combine(root, "logs");
         var configuration = new ResolvedCipherVaultHostConfig(
             vaultPath,
             VaultSessionOptions.Default,
@@ -112,12 +116,14 @@ internal sealed class HostTestFixture : IAsyncDisposable
             configuration,
             new TestAdminTokenStore(AdminToken),
             credentialPrompt,
-            new AlwaysActiveActivityProvider());
+            new AlwaysActiveActivityProvider(),
+            new JsonlSecurityEventLog(securityLogDirectory));
         await app.StartAsync();
         return new HostTestFixture(
             root,
             vaultPath,
             configPath,
+            securityLogDirectory,
             recoveryKey,
             app,
             app.GetTestClient(),

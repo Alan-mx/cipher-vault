@@ -374,6 +374,51 @@ public sealed class HttpHostVaultClient : IHostVaultClient
             cancellationToken);
     }
 
+    public async Task<IReadOnlyList<HostClientData>> ListAgentClientsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        return await SendAsync<IReadOnlyList<HostClientData>>(
+            HttpMethod.Get,
+            "/clients",
+            body: null,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<HostCreateClientData> CreateAgentClientAsync(
+        string clientId,
+        string accessMode,
+        bool allowLock,
+        CancellationToken cancellationToken = default)
+    {
+        return await SendAsync<HostCreateClientData>(
+            HttpMethod.Post,
+            "/clients",
+            new HostCreateClientRequest(clientId, accessMode, allowLock),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<HostCreateClientData> RotateAgentClientAsync(
+        string clientId,
+        CancellationToken cancellationToken = default)
+    {
+        return await SendAsync<HostCreateClientData>(
+            HttpMethod.Post,
+            $"/clients/{Uri.EscapeDataString(clientId)}/rotate",
+            body: null,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task DeleteAgentClientAsync(
+        string clientId,
+        CancellationToken cancellationToken = default)
+    {
+        return SendWithoutDataAsync(
+            HttpMethod.Delete,
+            $"/clients/{Uri.EscapeDataString(clientId)}",
+            body: null,
+            cancellationToken);
+    }
+
     public ValueTask DisposeAsync()
     {
         _http.Dispose();

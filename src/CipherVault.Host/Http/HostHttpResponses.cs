@@ -37,6 +37,8 @@ internal static class HostHttpResponses
             HostErrorCode.InvalidHost => StatusCodes.Status403Forbidden,
             HostErrorCode.AccessDenied => StatusCodes.Status403Forbidden,
             HostErrorCode.RateLimited => StatusCodes.Status429TooManyRequests,
+            HostErrorCode.RequestTooLarge =>
+                StatusCodes.Status413PayloadTooLarge,
             HostErrorCode.LockInProgress => StatusCodes.Status409Conflict,
             HostErrorCode.SessionLocked => StatusCodes.Status423Locked,
             HostErrorCode.Conflict => StatusCodes.Status409Conflict,
@@ -95,6 +97,7 @@ internal static class HostHttpResponses
             HostErrorCode.InvalidHost => "invalid_host",
             HostErrorCode.AccessDenied => "access_denied",
             HostErrorCode.RateLimited => "rate_limited",
+            HostErrorCode.RequestTooLarge => "request_too_large",
             HostErrorCode.LockInProgress => "lock_in_progress",
             HostErrorCode.SessionLocked => "session_locked",
             HostErrorCode.Conflict => "conflict",

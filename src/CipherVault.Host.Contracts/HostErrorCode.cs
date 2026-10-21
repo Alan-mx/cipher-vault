@@ -13,6 +13,7 @@ public enum HostErrorCode
     InvalidHost,
     AccessDenied,
     RateLimited,
+    RequestTooLarge,
     LockInProgress,
     SessionLocked,
     Conflict,

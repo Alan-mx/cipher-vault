@@ -77,6 +77,28 @@ public sealed class CliOnlineHostTests
             Assert.Equal(
                 vaultPath,
                 document.RootElement.GetProperty("vaultPath").GetString());
+
+            var created = await RunCliAsync(
+                FindCliExecutable(),
+                "client-add",
+                "--config",
+                configPath,
+                "--id",
+                "online-agent",
+                "--access",
+                "readOnly");
+            Assert.True(
+                created.ExitCode == 0,
+                $"stdout: {created.Stdout}{Environment.NewLine}stderr: {created.Stderr}");
+            using var clientDocument = JsonDocument.Parse(created.Stdout);
+            Assert.Equal(
+                "online-agent",
+                clientDocument.RootElement
+                    .GetProperty("client")
+                    .GetProperty("id")
+                    .GetString());
+            Assert.False(string.IsNullOrWhiteSpace(
+                clientDocument.RootElement.GetProperty("token").GetString()));
         }
         finally
         {

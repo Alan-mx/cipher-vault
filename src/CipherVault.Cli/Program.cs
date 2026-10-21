@@ -60,6 +60,20 @@ try
         "change-password" => await ChangePasswordAsync(service, Require(vaultPath)),
         "rotate-recovery" => await RotateRecoveryAsync(service, Require(vaultPath)),
         "confirm-recovery" => await ConfirmRecoveryAsync(service, Require(vaultPath)),
+        "client-list" => await ListClientsAsync(service, jsonOptions),
+        "client-add" => await CreateClientAsync(
+            service,
+            RequireOption(args, "--id"),
+            GetOption(args, "--access") ?? "readOnly",
+            HasFlag(args, "--allow-lock"),
+            jsonOptions),
+        "client-rotate" => await RotateClientAsync(
+            service,
+            RequireOption(args, "--id"),
+            jsonOptions),
+        "client-delete" => await DeleteClientAsync(
+            service,
+            RequireOption(args, "--id")),
         "audit" => await AuditAsync(service, Require(vaultPath), jsonOptions),
         "search" => await SearchAsync(service, Require(vaultPath), RequireOption(args, "--query"), jsonOptions),
         "import-preview" => await ImportPreviewAsync(service, Require(vaultPath), RequireOption(args, "--source"), jsonOptions),
@@ -227,6 +241,59 @@ static async Task<int> ConfirmRecoveryAsync(
         vaultPath,
         confirmation);
     Console.WriteLine("Recovery key confirmed.");
+    return 0;
+}
+
+static async Task<int> ListClientsAsync(
+    IHostVaultClient service,
+    JsonSerializerOptions options)
+{
+    var clients = await service.ListAgentClientsAsync();
+    PrintJson(clients, options);
+    return 0;
+}
+
+static async Task<int> CreateClientAsync(
+    IHostVaultClient service,
+    string clientId,
+    string accessMode,
+    bool allowLock,
+    JsonSerializerOptions options)
+{
+    if (accessMode is not ("readOnly" or "readWrite"))
+    {
+        throw new VaultException(
+            VaultErrorCode.InvalidInput,
+            "--access must be readOnly or readWrite.");
+    }
+    var created = await service.CreateAgentClientAsync(
+        clientId,
+        accessMode,
+        allowLock);
+    PrintJson(created, options);
+    Console.Error.WriteLine(
+        "Store the token now. It cannot be displayed again.");
+    return 0;
+}
+
+static async Task<int> RotateClientAsync(
+    IHostVaultClient service,
+    string clientId,
+    JsonSerializerOptions options)
+{
+    var rotated = await service.RotateAgentClientAsync(clientId);
+    PrintJson(rotated, options);
+    Console.Error.WriteLine(
+        "Store the new token now. It cannot be displayed again.");
+    return 0;
+}
+
+static async Task<int> DeleteClientAsync(
+    IHostVaultClient service,
+    string clientId)
+{
+    await service.DeleteAgentClientAsync(clientId);
+    Console.WriteLine($"client removed: {clientId}");
     return 0;
 }
 
@@ -617,6 +684,10 @@ static void PrintHelp()
           change-password     --vault <directory>
           rotate-recovery     --vault <directory>
           confirm-recovery    --vault <directory>
+          client-list
+          client-add          --id <client-id> [--access readOnly|readWrite] [--allow-lock]
+          client-rotate       --id <client-id>
+          client-delete       --id <client-id>
           audit               --vault <directory>
           search              --vault <directory> --query <text>
           import-preview      --vault <directory> --source <directory>

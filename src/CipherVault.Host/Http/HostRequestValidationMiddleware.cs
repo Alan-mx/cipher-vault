@@ -1,5 +1,7 @@
 using CipherVault.Core.Configuration;
 using CipherVault.Host.Contracts;
+using CipherVault.Host.Security;
+using Microsoft.AspNetCore.Http.Features;
 
 namespace CipherVault.Host.Http;
 
@@ -7,13 +9,16 @@ internal sealed class HostRequestValidationMiddleware
 {
     private readonly RequestDelegate _next;
     private readonly HostEndpointOptions _endpoint;
+    private readonly ISecurityEventLog _securityLog;
 
     public HostRequestValidationMiddleware(
         RequestDelegate next,
-        ResolvedCipherVaultHostConfig configuration)
+        ResolvedCipherVaultHostConfig configuration,
+        ISecurityEventLog securityLog)
     {
         _next = next;
         _endpoint = configuration.Endpoint;
+        _securityLog = securityLog;
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -32,6 +37,10 @@ internal sealed class HostRequestValidationMiddleware
                 expectedHost,
                 StringComparison.OrdinalIgnoreCase))
         {
+            await LogAsync(
+                context,
+                "invalid_host",
+                "invalid_host").ConfigureAwait(false);
             await HostHttpResponses.WriteErrorAsync(
                 context,
                 StatusCodes.Status403Forbidden,
@@ -44,6 +53,10 @@ internal sealed class HostRequestValidationMiddleware
         if (!string.IsNullOrEmpty(origin) &&
             !_endpoint.AllowedOrigins.Contains(origin))
         {
+            await LogAsync(
+                context,
+                "invalid_origin",
+                "invalid_origin").ConfigureAwait(false);
             await HostHttpResponses.WriteErrorAsync(
                 context,
                 StatusCodes.Status403Forbidden,
@@ -52,6 +65,49 @@ internal sealed class HostRequestValidationMiddleware
             return;
         }
 
+        if (context.Request.ContentLength is > 0 &&
+            context.Request.ContentLength > _endpoint.MaxRequestBodyBytes)
+        {
+            await LogAsync(
+                context,
+                "request_too_large",
+                "content_length").ConfigureAwait(false);
+            await HostHttpResponses.WriteErrorAsync(
+                context,
+                StatusCodes.Status413PayloadTooLarge,
+                HostErrorCode.RequestTooLarge,
+                "Request body exceeds the configured limit.");
+            return;
+        }
+
+        if (context.Features.Get<IHttpMaxRequestBodySizeFeature>() is
+            { IsReadOnly: false } bodySizeFeature)
+        {
+            bodySizeFeature.MaxRequestBodySize = _endpoint.MaxRequestBodyBytes;
+        }
+
         await _next(context);
+    }
+
+    private Task LogAsync(
+        HttpContext context,
+        string eventType,
+        string reasonCode)
+    {
+        var requestId = context.Items.TryGetValue(
+                HostHttpContextKeys.RequestId,
+                out var value)
+            ? value as string
+            : null;
+        return _securityLog.WriteAsync(
+            new HostSecurityLogEvent(
+                DateTimeOffset.UtcNow,
+                eventType,
+                ClientId: null,
+                ConnectionId: null,
+                requestId,
+                "denied",
+                reasonCode),
+            context.RequestAborted);
     }
 }

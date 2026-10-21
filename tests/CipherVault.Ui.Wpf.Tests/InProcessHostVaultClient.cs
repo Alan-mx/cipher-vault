@@ -4,6 +4,7 @@ using CipherVault.Core.Documents;
 using CipherVault.Core.ImportExport;
 using CipherVault.Core.Session;
 using CipherVault.Host.Client;
+using CipherVault.Host.Contracts;
 
 namespace CipherVault.Ui.Wpf.Tests;
 
@@ -270,6 +271,35 @@ internal sealed class InProcessHostVaultClient : IHostVaultClient
     public ValueTask DisposeAsync()
     {
         return _vault.DisposeAsync();
+    }
+
+    public Task<IReadOnlyList<HostClientData>> ListAgentClientsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult<IReadOnlyList<HostClientData>>([]);
+    }
+
+    public Task<HostCreateClientData> CreateAgentClientAsync(
+        string clientId,
+        string accessMode,
+        bool allowLock,
+        CancellationToken cancellationToken = default)
+    {
+        throw new NotSupportedException();
+    }
+
+    public Task<HostCreateClientData> RotateAgentClientAsync(
+        string clientId,
+        CancellationToken cancellationToken = default)
+    {
+        throw new NotSupportedException();
+    }
+
+    public Task DeleteAgentClientAsync(
+        string clientId,
+        CancellationToken cancellationToken = default)
+    {
+        throw new NotSupportedException();
     }
 
     private sealed class AlwaysActiveActivityProvider : ISystemActivityProvider

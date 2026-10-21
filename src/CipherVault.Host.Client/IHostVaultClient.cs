@@ -3,6 +3,7 @@ using CipherVault.Core.Backup;
 using CipherVault.Core.Documents;
 using CipherVault.Core.ImportExport;
 using CipherVault.Core.Session;
+using CipherVault.Host.Contracts;
 
 namespace CipherVault.Host.Client;
 
@@ -122,5 +123,22 @@ public interface IHostVaultClient : IAsyncDisposable
     Task ConfirmRecoveryKeyAsync(
         string vaultPath,
         string recoveryKey,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<HostClientData>> ListAgentClientsAsync(
+        CancellationToken cancellationToken = default);
+
+    Task<HostCreateClientData> CreateAgentClientAsync(
+        string clientId,
+        string accessMode,
+        bool allowLock,
+        CancellationToken cancellationToken = default);
+
+    Task<HostCreateClientData> RotateAgentClientAsync(
+        string clientId,
+        CancellationToken cancellationToken = default);
+
+    Task DeleteAgentClientAsync(
+        string clientId,
         CancellationToken cancellationToken = default);
 }

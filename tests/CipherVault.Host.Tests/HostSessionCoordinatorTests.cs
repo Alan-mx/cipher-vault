@@ -79,6 +79,20 @@ public sealed class HostSessionCoordinatorTests
         await using var after = await coordinator.AcquireLeaseAsync();
     }
 
+    [Fact]
+    public async Task ConnectedClientCountTracksActiveMcpRequests()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var coordinator = fixture.App.Services.GetRequiredService<HostSessionCoordinator>();
+
+        using (coordinator.EnterClient())
+        {
+            Assert.Equal(1, (await coordinator.GetSnapshotAsync()).ConnectedClients);
+        }
+
+        Assert.Equal(0, (await coordinator.GetSnapshotAsync()).ConnectedClients);
+    }
+
     private static async Task WaitUntilAsync(
         Func<Task<bool>> condition,
         TimeSpan timeout)

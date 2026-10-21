@@ -3,6 +3,7 @@ using System.Security.Claims;
 using CipherVault.Core.Configuration;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Security;
+using CipherVault.Host.Session;
 
 namespace CipherVault.Host.Http;
 
@@ -13,15 +14,24 @@ internal sealed class AgentTokenAuthenticationMiddleware
     public const string AllowLockClaim = "cipher_vault.allow_lock";
     private readonly RequestDelegate _next;
     private readonly AgentTokenStore _tokenStore;
+    private readonly HostAuthenticationRateLimiter _rateLimiter;
+    private readonly ISecurityEventLog _securityLog;
+    private readonly HostSessionCoordinator _sessions;
     private readonly string _mcpPath;
 
     public AgentTokenAuthenticationMiddleware(
         RequestDelegate next,
         AgentTokenStore tokenStore,
+        HostAuthenticationRateLimiter rateLimiter,
+        ISecurityEventLog securityLog,
+        HostSessionCoordinator sessions,
         ResolvedCipherVaultHostConfig configuration)
     {
         _next = next;
         _tokenStore = tokenStore;
+        _rateLimiter = rateLimiter;
+        _securityLog = securityLog;
+        _sessions = sessions;
         _mcpPath = configuration.Endpoint.McpPath;
     }
 
@@ -35,8 +45,31 @@ internal sealed class AgentTokenAuthenticationMiddleware
             return;
         }
 
+        if (_rateLimiter.TryGetBlockedUntil(out var blockedUntil))
+        {
+            await LogAsync(
+                context,
+                "rate_limited",
+                "rate_limited").ConfigureAwait(false);
+            context.Response.Headers.RetryAfter = Math.Max(
+                1,
+                (int)Math.Ceiling((blockedUntil - DateTimeOffset.UtcNow).TotalSeconds))
+                .ToString(System.Globalization.CultureInfo.InvariantCulture);
+            await HostHttpResponses.WriteErrorAsync(
+                context,
+                StatusCodes.Status429TooManyRequests,
+                HostErrorCode.RateLimited,
+                "Too many authentication failures. Try again later.");
+            return;
+        }
+
         if (!TryReadBearerToken(context.Request, out var presentedToken))
         {
+            _rateLimiter.RecordFailure();
+            await LogAsync(
+                context,
+                "invalid_token",
+                "missing_token").ConfigureAwait(false);
             await RejectAsync(context);
             return;
         }
@@ -46,10 +79,16 @@ internal sealed class AgentTokenAuthenticationMiddleware
             context.RequestAborted);
         if (client is null)
         {
+            _rateLimiter.RecordFailure();
+            await LogAsync(
+                context,
+                "invalid_token",
+                "invalid_token").ConfigureAwait(false);
             await RejectAsync(context);
             return;
         }
 
+        _rateLimiter.RecordSuccess();
         var identity = new ClaimsIdentity(
             [
                 new Claim(ClientIdClaim, client.ClientId),
@@ -62,6 +101,7 @@ internal sealed class AgentTokenAuthenticationMiddleware
         context.User = new ClaimsPrincipal(identity);
         context.Response.Headers.CacheControl = "no-store";
         context.Response.Headers.Pragma = "no-cache";
+        using var connection = _sessions.EnterClient();
         await _next(context);
     }
 
@@ -93,5 +133,27 @@ internal sealed class AgentTokenAuthenticationMiddleware
             StatusCodes.Status401Unauthorized,
             HostErrorCode.InvalidToken,
             "A valid agent token is required.");
+    }
+
+    private Task LogAsync(
+        HttpContext context,
+        string eventType,
+        string reasonCode)
+    {
+        var requestId = context.Items.TryGetValue(
+                HostHttpContextKeys.RequestId,
+                out var value)
+            ? value as string
+            : null;
+        return _securityLog.WriteAsync(
+            new HostSecurityLogEvent(
+                DateTimeOffset.UtcNow,
+                eventType,
+                ClientId: null,
+                ConnectionId: null,
+                requestId,
+                "denied",
+                reasonCode),
+            context.RequestAborted);
     }
 }

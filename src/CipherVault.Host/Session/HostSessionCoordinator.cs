@@ -22,6 +22,7 @@ public sealed class HostSessionCoordinator
     private VaultSessionState _state = VaultSessionState.Locked;
     private string? _lockReason;
     private int _activeLeases;
+    private int _connectedClients;
     private TaskCompletionSource? _leasesDrained;
     private CancellationTokenSource? _leaseCancellation;
     private bool _maintenanceActive;
@@ -198,6 +199,15 @@ public sealed class HostSessionCoordinator
                 leaseToken,
                 ReleaseLease);
         }
+    }
+
+    public HostClientConnection EnterClient()
+    {
+        lock (_stateSync)
+        {
+            _connectedClients++;
+        }
+        return new HostClientConnection(ReleaseClient);
     }
 
     public async Task<T> ExecuteMaintenanceAsync<T>(
@@ -589,6 +599,17 @@ public sealed class HostSessionCoordinator
         }
     }
 
+    private void ReleaseClient()
+    {
+        lock (_stateSync)
+        {
+            if (_connectedClients > 0)
+            {
+                _connectedClients--;
+            }
+        }
+    }
+
     private void EnsureLeaseCancellation()
     {
         lock (_stateSync)
@@ -618,7 +639,7 @@ public sealed class HostSessionCoordinator
             HardExpiresAt: null,
             LockReason: _lockReason,
             ActiveLeases: _activeLeases,
-            ConnectedClients: 0,
+            ConnectedClients: _connectedClients,
             RecoveryVerified: false);
     }
 
@@ -633,7 +654,7 @@ public sealed class HostSessionCoordinator
             status.HardExpiresAt,
             _lockReason ?? status.LockReason,
             _activeLeases,
-            ConnectedClients: 0,
+            ConnectedClients: _connectedClients,
             status.RecoveryVerified);
     }
 }

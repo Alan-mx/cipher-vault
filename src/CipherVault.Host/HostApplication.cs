@@ -25,12 +25,18 @@ public static class HostApplication
         ResolvedCipherVaultHostConfig configuration,
         IAdminTokenStore adminTokenStore,
         IHostCredentialPrompt credentialPrompt,
-        ISystemActivityProvider? activityProvider = null)
+        ISystemActivityProvider? activityProvider = null,
+        ISecurityEventLog? securityEventLog = null,
+        HostAuthenticationRateLimiter? authenticationRateLimiter = null)
     {
         builder.Services.AddSingleton(configuration);
         builder.Services.AddSingleton(adminTokenStore);
         builder.Services.AddSingleton(credentialPrompt);
         builder.Services.AddSingleton<AgentTokenStore>();
+        builder.Services.AddSingleton(
+            authenticationRateLimiter ?? new HostAuthenticationRateLimiter());
+        builder.Services.AddSingleton<ISecurityEventLog>(
+            securityEventLog ?? new JsonlSecurityEventLog());
         builder.Services.AddSingleton<IVaultService>(_ => new VaultService(
             activityProvider ?? new WindowsSystemActivityProvider(),
             sessionOptions: configuration.SessionOptions));
