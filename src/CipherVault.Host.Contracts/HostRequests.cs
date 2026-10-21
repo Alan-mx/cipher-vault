@@ -42,3 +42,7 @@ public sealed record HostUpdateNoteRequest(
 
 public sealed record HostTrashNoteRequest(
     int ExpectedRevision);
+
+public sealed record HostRestoreTrashRequest(
+    int ExpectedRevision,
+    string? RenamePath);
