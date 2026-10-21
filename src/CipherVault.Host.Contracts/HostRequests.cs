@@ -21,3 +21,10 @@ public sealed record HostUpdateClientRequest(
     string? AccessMode,
     bool? AllowLock,
     bool? Enabled);
+
+public sealed record HostCreateNoteRequest(
+    string? Title,
+    string? Folder,
+    string? Format,
+    string? Content,
+    IReadOnlyList<string>? Tags);

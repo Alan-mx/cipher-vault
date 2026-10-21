@@ -303,6 +303,49 @@ public static class HostApplication
                 }
             });
         app.MapPost(
+            configuration.Endpoint.AdminPath + "/notes",
+            async (
+                HostCreateNoteRequest request,
+                HostVaultGateway vault,
+                HttpContext context,
+                CancellationToken cancellationToken) =>
+            {
+                try
+                {
+                    var result = await vault.ExecuteAsync(
+                        (service, token) => service.CreateNoteAsync(
+                            request.Title ?? string.Empty,
+                            request.Folder,
+                            request.Format ?? "md",
+                            request.Content ?? string.Empty,
+                            request.Tags,
+                            VaultActorKind.UserUi,
+                            token),
+                        cancellationToken);
+                    return Results.Json(
+                        new HostApiResponse<VaultWriteResult>(true, result),
+                        statusCode: StatusCodes.Status201Created);
+                }
+                catch (HostException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception.Code),
+                        exception.Code,
+                        exception.Message);
+                    return Results.Empty;
+                }
+                catch (VaultException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception),
+                        HostHttpResponses.ToHostErrorCode(exception),
+                        exception.Message);
+                    return Results.Empty;
+                }
+            });
+        app.MapPost(
             configuration.Endpoint.AdminPath + "/session/unlock",
             async (
                 HostUnlockRequest request,
