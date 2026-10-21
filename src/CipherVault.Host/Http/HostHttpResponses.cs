@@ -40,6 +40,7 @@ internal static class HostHttpResponses
             HostErrorCode.VaultInUse => StatusCodes.Status409Conflict,
             HostErrorCode.AlreadyExists => StatusCodes.Status409Conflict,
             HostErrorCode.MaintenanceInProgress => StatusCodes.Status423Locked,
+            HostErrorCode.StorageError => StatusCodes.Status503ServiceUnavailable,
             HostErrorCode.HostUnavailable => StatusCodes.Status503ServiceUnavailable,
             _ => StatusCodes.Status503ServiceUnavailable
         };
@@ -62,6 +63,7 @@ internal static class HostHttpResponses
             HostErrorCode.LockInProgress => "lock_in_progress",
             HostErrorCode.ConfigMigrationRequired => "config_migration_required",
             HostErrorCode.MaintenanceInProgress => "maintenance_in_progress",
+            HostErrorCode.StorageError => "storage_error",
             _ => "host_error"
         };
     }

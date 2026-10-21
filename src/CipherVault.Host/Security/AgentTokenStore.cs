@@ -1,29 +1,101 @@
+using System.IO;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using CipherVault.Core.Configuration;
+using CipherVault.Core.Errors;
+using CipherVault.Core.Security;
 using CipherVault.Host.Contracts;
 
 namespace CipherVault.Host.Security;
 
 public sealed class AgentTokenStore
 {
-    private readonly IReadOnlyList<AgentClientPolicy> _clients;
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true
+    };
+    private readonly object _sync = new();
+    private readonly SemaphoreSlim _writeGate = new(1, 1);
+    private readonly ResolvedCipherVaultHostConfig _configuration;
+    private List<AgentClientPolicy> _clients;
 
     public AgentTokenStore(ResolvedCipherVaultHostConfig configuration)
     {
-        _clients = configuration.Clients;
+        _configuration = configuration;
+        _clients = configuration.Clients
+            .Select(Clone)
+            .ToList();
     }
 
     public Task<IReadOnlyList<HostClientData>> ListAsync(
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        IReadOnlyList<HostClientData> result = _clients
-            .Select(client => new HostClientData(
-                client.ClientId,
-                ToAccessMode(client.AccessMode),
-                client.AllowLock,
-                client.Enabled))
-            .ToList();
-        return Task.FromResult(result);
+        lock (_sync)
+        {
+            IReadOnlyList<HostClientData> result = _clients
+                .Select(ToData)
+                .ToList();
+            return Task.FromResult(result);
+        }
+    }
+
+    public async Task<HostCreateClientData> CreateAsync(
+        HostCreateClientRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var clientId = GetNonEmpty(request.Id)
+            ?? throw new HostException(
+                HostErrorCode.InvalidInput,
+                "Client id is required.");
+        if (!IsValidClientId(clientId))
+        {
+            throw new HostException(
+                HostErrorCode.InvalidInput,
+                "Client id is invalid.");
+        }
+        var accessMode = ParseAccessMode(request.AccessMode)
+            ?? McpAccessMode.ReadOnly;
+        var (rawToken, tokenHash) = GenerateToken();
+
+        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            List<AgentClientPolicy> next;
+            lock (_sync)
+            {
+                if (_clients.Any(client => string.Equals(
+                        client.ClientId,
+                        clientId,
+                        StringComparison.OrdinalIgnoreCase)))
+                {
+                    throw new HostException(
+                        HostErrorCode.AlreadyExists,
+                        $"Client '{clientId}' already exists.");
+                }
+                next = [.. _clients];
+            }
+
+            var policy = new AgentClientPolicy(
+                clientId,
+                tokenHash,
+                accessMode,
+                request.AllowLock ?? false,
+                Enabled: true);
+            next.Add(policy);
+            await PersistAsync(next, cancellationToken).ConfigureAwait(false);
+            lock (_sync)
+            {
+                _clients = next;
+            }
+            return new HostCreateClientData(ToData(policy), rawToken);
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
     }
 
     internal static string ToAccessMode(McpAccessMode accessMode)
@@ -31,5 +103,175 @@ public sealed class AgentTokenStore
         return accessMode == McpAccessMode.ReadOnly
             ? "readOnly"
             : "readWrite";
+    }
+
+    private async Task PersistAsync(
+        IReadOnlyList<AgentClientPolicy> clients,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var configPath = _configuration.ConfigPath;
+            JsonObject root;
+            if (File.Exists(configPath))
+            {
+                var existing = await File.ReadAllTextAsync(configPath, cancellationToken)
+                    .ConfigureAwait(false);
+                root = JsonNode.Parse(existing) as JsonObject
+                    ?? throw new JsonException("Host config root must be an object.");
+            }
+            else
+            {
+                root = CreateDefaultConfigRoot();
+            }
+
+            var clientArray = new JsonArray();
+            foreach (var client in clients)
+            {
+                clientArray.Add(new JsonObject
+                {
+                    ["id"] = client.ClientId,
+                    ["tokenHash"] = "sha256:" + Convert.ToHexString(client.TokenHash),
+                    ["accessMode"] = ToAccessMode(client.AccessMode),
+                    ["allowLock"] = client.AllowLock,
+                    ["enabled"] = client.Enabled
+                });
+            }
+            root["clients"] = clientArray;
+
+            var directory = Path.GetDirectoryName(configPath)
+                ?? throw new HostException(
+                    HostErrorCode.InvalidInput,
+                    "Config path has no parent directory.");
+            Directory.CreateDirectory(directory);
+            VaultFileSecurity.ProtectDirectory(directory);
+            var temporaryPath = configPath + $".tmp-{Guid.NewGuid():N}";
+            try
+            {
+                await File.WriteAllTextAsync(
+                    temporaryPath,
+                    root.ToJsonString(JsonOptions),
+                    new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+                    cancellationToken).ConfigureAwait(false);
+                VaultFileSecurity.ProtectFile(temporaryPath);
+                File.Move(temporaryPath, configPath, overwrite: true);
+                VaultFileSecurity.ProtectFile(configPath);
+            }
+            finally
+            {
+                if (File.Exists(temporaryPath))
+                {
+                    File.Delete(temporaryPath);
+                }
+            }
+        }
+        catch (HostException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is JsonException or
+            IOException or
+            UnauthorizedAccessException or
+            CryptographicException or
+            VaultException)
+        {
+            throw new HostException(
+                HostErrorCode.StorageError,
+                "Host configuration could not be written.",
+                exception);
+        }
+    }
+
+    private JsonObject CreateDefaultConfigRoot()
+    {
+        return new JsonObject
+        {
+            ["configVersion"] = CipherVaultHostConfiguration.CurrentConfigVersion,
+            ["vaultPath"] = _configuration.VaultPath,
+            ["session"] = new JsonObject
+            {
+                ["idleMinutes"] = (int)_configuration.SessionOptions.IdleTimeout.TotalMinutes,
+                ["hardHours"] = (int)_configuration.SessionOptions.HardLifetime.TotalHours
+            },
+            ["host"] = new JsonObject
+            {
+                ["bindAddress"] = _configuration.Endpoint.BindAddress,
+                ["port"] = _configuration.Endpoint.Port,
+                ["mcpPath"] = _configuration.Endpoint.McpPath,
+                ["adminPath"] = _configuration.Endpoint.AdminPath,
+                ["maxRequestBodyBytes"] = _configuration.Endpoint.MaxRequestBodyBytes,
+                ["allowedOrigins"] = new JsonArray(
+                    _configuration.Endpoint.AllowedOrigins
+                        .Select(origin => JsonValue.Create(origin))
+                        .ToArray<JsonNode?>())
+            }
+        };
+    }
+
+    private static HostClientData ToData(AgentClientPolicy client)
+    {
+        return new HostClientData(
+            client.ClientId,
+            ToAccessMode(client.AccessMode),
+            client.AllowLock,
+            client.Enabled);
+    }
+
+    private static AgentClientPolicy Clone(AgentClientPolicy client)
+    {
+        return new AgentClientPolicy(
+            client.ClientId,
+            [.. client.TokenHash],
+            client.AccessMode,
+            client.AllowLock,
+            client.Enabled);
+    }
+
+    private static McpAccessMode? ParseAccessMode(string? value)
+    {
+        var normalized = GetNonEmpty(value);
+        if (normalized is null)
+        {
+            return null;
+        }
+        return normalized.ToLowerInvariant() switch
+        {
+            "readonly" => McpAccessMode.ReadOnly,
+            "readwrite" => McpAccessMode.ReadWrite,
+            _ => throw new HostException(
+                HostErrorCode.InvalidInput,
+                "accessMode must be readOnly or readWrite.")
+        };
+    }
+
+    private static bool IsValidClientId(string clientId)
+    {
+        return clientId.Length is >= 1 and <= 64 &&
+            clientId.All(character =>
+                char.IsAsciiLetterOrDigit(character) ||
+                character is '.' or '_' or '-');
+    }
+
+    private static string? GetNonEmpty(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static (string RawToken, byte[] TokenHash) GenerateToken()
+    {
+        var bytes = RandomNumberGenerator.GetBytes(32);
+        try
+        {
+            var rawToken = Convert.ToBase64String(bytes)
+                .TrimEnd('=')
+                .Replace('+', '-')
+                .Replace('/', '_');
+            return (rawToken, SHA256.HashData(Encoding.UTF8.GetBytes(rawToken)));
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(bytes);
+        }
     }
 }

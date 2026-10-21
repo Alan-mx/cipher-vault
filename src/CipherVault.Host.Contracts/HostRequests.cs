@@ -11,3 +11,8 @@ public sealed record HostLockRequest(
 
 public sealed record HostInitializeRequest(
     string? VaultPath);
+
+public sealed record HostCreateClientRequest(
+    string? Id,
+    string? AccessMode,
+    bool? AllowLock);

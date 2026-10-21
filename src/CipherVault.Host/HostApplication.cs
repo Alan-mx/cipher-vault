@@ -72,6 +72,31 @@ public static class HostApplication
                     items));
             });
         app.MapPost(
+            configuration.Endpoint.AdminPath + "/clients",
+            async (
+                HostCreateClientRequest request,
+                AgentTokenStore clients,
+                HttpContext context,
+                CancellationToken cancellationToken) =>
+            {
+                try
+                {
+                    var created = await clients.CreateAsync(request, cancellationToken);
+                    return Results.Json(
+                        new HostApiResponse<HostCreateClientData>(true, created),
+                        statusCode: StatusCodes.Status201Created);
+                }
+                catch (HostException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception.Code),
+                        exception.Code,
+                        exception.Message);
+                    return Results.Empty;
+                }
+            });
+        app.MapPost(
             configuration.Endpoint.AdminPath + "/session/unlock",
             async (
                 HostUnlockRequest request,

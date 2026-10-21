@@ -52,3 +52,7 @@ public sealed record HostClientData(
     string AccessMode,
     bool AllowLock,
     bool Enabled);
+
+public sealed record HostCreateClientData(
+    HostClientData Client,
+    string Token);
