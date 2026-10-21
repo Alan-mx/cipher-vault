@@ -5,7 +5,7 @@ using CipherVault.Core.Errors;
 
 namespace CipherVault.Core.Security;
 
-internal static class VaultFileSecurity
+public static class VaultFileSecurity
 {
     public static void ProtectDirectory(string path)
     {

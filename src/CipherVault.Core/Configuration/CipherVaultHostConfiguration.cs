@@ -401,11 +401,14 @@ public static class CipherVaultHostConfiguration
             path.StartsWith("//", StringComparison.Ordinal) ||
             path.Contains('?') ||
             path.Contains('#') ||
-            path.Any(char.IsWhiteSpace))
+            path.Any(character =>
+                char.IsWhiteSpace(character) ||
+                !(char.IsAsciiLetterOrDigit(character) ||
+                  character is '/' or '-' or '_' or '.')))
         {
             throw new VaultException(
                 VaultErrorCode.InvalidInput,
-                $"{fieldName} must be an absolute path without query, fragment or whitespace.");
+                $"{fieldName} must be a safe absolute path without query or fragment.");
         }
         return path.Length > 1 ? path.TrimEnd('/') : path;
     }
