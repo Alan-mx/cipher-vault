@@ -110,7 +110,8 @@ public static class AccessGrantHeaders
 public sealed record AccessGrantValidationResult(
     AccessGrantValidationStatus Status,
     AccessGrantContext? Grant,
-    string? ReasonCode);
+    string? ReasonCode,
+    AccessGrantRecord? Record = null);
 
 public static class AccessGrantScopes
 {

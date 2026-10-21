@@ -5,6 +5,9 @@ public sealed record HostSecurityLogEvent(
     string EventType,
     string? ClientId,
     Guid? ConnectionId,
+    Guid? ClientInstanceId,
+    Guid? GrantId,
+    string? GrantScopes,
     string? RequestId,
     string Result,
     string? ReasonCode);

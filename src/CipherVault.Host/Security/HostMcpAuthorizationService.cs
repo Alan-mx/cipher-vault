@@ -77,7 +77,7 @@ public sealed class HostMcpAuthorizationService
         var plaintextGrant = httpContext.Request
             .Headers[AccessGrantHeaders.Grant]
             .ToString();
-        var validation = _grants.Validate(
+        var validation = await _grants.ValidateAsync(
             clientId,
             plaintextGrant,
             new AccessGrantVaultGeneration(

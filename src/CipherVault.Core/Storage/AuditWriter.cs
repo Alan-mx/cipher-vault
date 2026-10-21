@@ -119,13 +119,18 @@ internal static class AuditWriter
         command.Parameters.AddWithValue("$bytesReturned", bytesReturned ?? (object)DBNull.Value);
         command.Parameters.AddWithValue(
             "$details",
-            AddRequestId(detailsJson, auditContext.RequestId));
+            MergeDetails(detailsJson, auditContext));
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private static string AddRequestId(string detailsJson, string? requestId)
+    private static string MergeDetails(
+        string detailsJson,
+        VaultAuditContext auditContext)
     {
-        if (string.IsNullOrWhiteSpace(requestId))
+        if (auditContext.RequestId is null &&
+            auditContext.ClientInstanceId is null &&
+            auditContext.GrantId is null &&
+            auditContext.GrantScopes is null)
         {
             return detailsJson;
         }
@@ -139,7 +144,22 @@ internal static class AuditWriter
         {
             details = new JsonObject();
         }
-        details["requestId"] = requestId;
+        if (auditContext.RequestId is not null)
+        {
+            details["requestId"] = auditContext.RequestId;
+        }
+        if (auditContext.ClientInstanceId is not null)
+        {
+            details["clientInstanceId"] = auditContext.ClientInstanceId.ToString()!;
+        }
+        if (auditContext.GrantId is not null)
+        {
+            details["grantId"] = auditContext.GrantId.ToString()!;
+        }
+        if (auditContext.GrantScopes is not null)
+        {
+            details["grantScopes"] = auditContext.GrantScopes;
+        }
         return details.ToJsonString();
     }
 

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.IO;
 using System.Text.Json;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Security;
@@ -235,6 +236,36 @@ public sealed class AccessGrantEndpointTests
         Assert.Equal("access_grant_required", error.Error.Code);
     }
 
+    [Fact]
+    public async Task GrantApprovalEventsAreLoggedWithoutSecret()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        await UnlockHostAsync(fixture.Client);
+        var token = await CreateAgentAsync(
+            fixture.Client,
+            "logged-agent",
+            "readOnly",
+            "accessGrant");
+        var issued = await CreateGrantAsync(
+            fixture.Client,
+            token,
+            Guid.NewGuid());
+
+        var log = await ReadSecurityLogAsync(fixture.SecurityLogDirectory);
+        Assert.Contains("\"grant_requested\"", log, StringComparison.Ordinal);
+        Assert.Contains("\"grant_approved\"", log, StringComparison.Ordinal);
+        Assert.Contains(
+            issued.Grant.GrantId.ToString("D"),
+            log,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            issued.Grant.ClientInstanceId.ToString("D"),
+            log,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\"grantScopes\":\"read\"", log, StringComparison.Ordinal);
+        Assert.DoesNotContain(issued.Secret, log, StringComparison.Ordinal);
+    }
+
     private static async Task UnlockHostAsync(HttpClient client)
     {
         using var request = new HttpRequestMessage(
@@ -335,5 +366,19 @@ public sealed class AccessGrantEndpointTests
             AccessGrantHeaders.Grant,
             grantSecret);
         return await client.SendAsync(request);
+    }
+
+    private static async Task<string> ReadSecurityLogAsync(string directory)
+    {
+        if (!Directory.Exists(directory))
+        {
+            return string.Empty;
+        }
+        var contents = new List<string>();
+        foreach (var file in Directory.GetFiles(directory, "security-*.jsonl"))
+        {
+            contents.Add(await File.ReadAllTextAsync(file));
+        }
+        return string.Join(Environment.NewLine, contents);
     }
 }

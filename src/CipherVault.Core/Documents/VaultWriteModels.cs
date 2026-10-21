@@ -11,7 +11,10 @@ public enum VaultActorKind
 public sealed record VaultAuditContext(
     VaultActorKind Actor,
     string? ClientName = null,
-    string? RequestId = null);
+    string? RequestId = null,
+    Guid? ClientInstanceId = null,
+    Guid? GrantId = null,
+    string? GrantScopes = null);
 
 public sealed record VaultWriteResult(
     Guid DocumentId,

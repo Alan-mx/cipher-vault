@@ -38,7 +38,8 @@ public static class HostApplication
         builder.Services.AddSingleton(
             accessGrantPrompt ?? new WindowsHostAccessGrantPrompt());
         builder.Services.AddSingleton<AgentTokenStore>();
-        builder.Services.AddSingleton<AccessGrantService>();
+        builder.Services.AddSingleton(serviceProvider => new AccessGrantService(
+            securityLog: serviceProvider.GetRequiredService<ISecurityEventLog>()));
         builder.Services.AddSingleton<HostMcpAuthorizationService>();
         builder.Services.AddSingleton(
             authenticationRateLimiters ?? new HostAuthenticationRateLimiters());
@@ -286,11 +287,10 @@ public static class HostApplication
                     return Results.Empty;
                 }
 
-                var status = grants.Revoke(
+                var status = await grants.RevokeAsync(
                     clientId,
                     grantId,
-                    plaintextSecret,
-                    out _);
+                    plaintextSecret);
                 if (status == AccessGrantRevokeStatus.Invalid)
                 {
                     await HostHttpResponses.WriteErrorAsync(
@@ -334,7 +334,8 @@ public static class HostApplication
                 AccessGrantService grants,
                 HttpContext context) =>
             {
-                if (!grants.TryRevokeById(grantId, out _))
+                var status = await grants.RevokeByIdAsync(grantId);
+                if (status == AccessGrantRevokeStatus.AlreadyRemoved)
                 {
                     await HostHttpResponses.WriteErrorAsync(
                         context,

@@ -139,13 +139,13 @@ public sealed class AccessGrantServiceTests
             AccessGrantScope.Read,
             generation);
 
-        var valid = service.Validate(
+        var valid = await service.ValidateAsync(
             "agent",
             issued.PlaintextSecret,
             generation);
         Assert.Equal(AccessGrantValidationStatus.Valid, valid.Status);
 
-        var mismatch = service.Validate(
+        var mismatch = await service.ValidateAsync(
             "agent",
             issued.PlaintextSecret,
             new AccessGrantVaultGeneration(
@@ -172,7 +172,7 @@ public sealed class AccessGrantServiceTests
             generation);
 
         time.Advance(TimeSpan.FromSeconds(8));
-        var validation = service.Validate(
+        var validation = await service.ValidateAsync(
             "agent",
             issued.PlaintextSecret,
             generation);
@@ -180,14 +180,18 @@ public sealed class AccessGrantServiceTests
         Assert.True(service.RecordUse(validation.Grant!));
 
         time.Advance(TimeSpan.FromSeconds(8));
-        Assert.Equal(
-            AccessGrantValidationStatus.Valid,
-            service.Validate("agent", issued.PlaintextSecret, generation).Status);
+        var beforeHard = await service.ValidateAsync(
+            "agent",
+            issued.PlaintextSecret,
+            generation);
+        Assert.Equal(AccessGrantValidationStatus.Valid, beforeHard.Status);
 
         time.Advance(TimeSpan.FromSeconds(5));
-        Assert.Equal(
-            AccessGrantValidationStatus.Expired,
-            service.Validate("agent", issued.PlaintextSecret, generation).Status);
+        var expired = await service.ValidateAsync(
+            "agent",
+            issued.PlaintextSecret,
+            generation);
+        Assert.Equal(AccessGrantValidationStatus.Expired, expired.Status);
     }
 
     [Fact]
@@ -212,25 +216,25 @@ public sealed class AccessGrantServiceTests
             generation,
             "agent-b");
 
-        Assert.Equal(1, service.RevokeClient("agent-a", "token-revoked"));
+        Assert.Equal(1, await service.RevokeClientAsync("agent-a", "token-revoked"));
         Assert.Equal(
             AccessGrantValidationStatus.Invalid,
-            service.Validate(
+            (await service.ValidateAsync(
                 "agent-a",
                 revoked.PlaintextSecret,
-                generation).Status);
+                generation)).Status);
         Assert.Equal(
             AccessGrantValidationStatus.Invalid,
-            service.Validate(
+            (await service.ValidateAsync(
                 "agent-b",
                 "wrong-secret",
-                generation).Status);
+                generation)).Status);
         Assert.Equal(
             AccessGrantValidationStatus.Valid,
-            service.Validate(
+            (await service.ValidateAsync(
                 "agent-b",
                 other.PlaintextSecret,
-                generation).Status);
+                generation)).Status);
     }
 
     [Fact]
@@ -257,7 +261,7 @@ public sealed class AccessGrantServiceTests
             });
         await handlerStarted.Task;
 
-        Assert.Equal(0, service.RevokeAll("vault-locked"));
+        Assert.Equal(1, await service.RevokeAllAsync("vault-locked"));
         approval.SetResult(new AccessGrantApprovalResult(
             true,
             AccessGrantScope.Read));
@@ -284,33 +288,28 @@ public sealed class AccessGrantServiceTests
 
         Assert.Equal(
             AccessGrantRevokeStatus.Invalid,
-            service.Revoke(
+            await service.RevokeAsync(
                 "other-agent",
                 issued.Record.GrantId,
-                issued.PlaintextSecret,
-                out _));
+                issued.PlaintextSecret));
         Assert.Equal(
             AccessGrantRevokeStatus.Invalid,
-            service.Revoke(
+            await service.RevokeAsync(
                 "agent",
                 issued.Record.GrantId,
-                "wrong-secret",
-                out _));
+                "wrong-secret"));
         Assert.Equal(
             AccessGrantRevokeStatus.Revoked,
-            service.Revoke(
+            await service.RevokeAsync(
                 "agent",
                 issued.Record.GrantId,
-                issued.PlaintextSecret,
-                out var revoked));
-        Assert.Equal(AccessGrantState.Revoked, revoked!.State);
+                issued.PlaintextSecret));
         Assert.Equal(
             AccessGrantRevokeStatus.AlreadyRemoved,
-            service.Revoke(
+            await service.RevokeAsync(
                 "agent",
                 issued.Record.GrantId,
-                issued.PlaintextSecret,
-                out _));
+                issued.PlaintextSecret));
     }
 
     [Fact]

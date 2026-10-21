@@ -7,9 +7,6 @@ public sealed record PasswordPromptResult(bool Confirmed, string? Password);
 
 public static class WindowsPasswordPrompt
 {
-    private static readonly object ApplicationGate = new();
-    private static Application? _application;
-
     public static Task<PasswordPromptResult> RequestAsync(
         string title,
         string message,
@@ -20,7 +17,7 @@ public static class WindowsPasswordPrompt
             return Task.FromResult(new PasswordPromptResult(false, null));
         }
 
-        var application = EnsureApplication();
+        var application = WindowsPromptApplication.Get();
         var completion = new TaskCompletionSource<PasswordPromptResult>(
             TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -42,54 +39,6 @@ public static class WindowsPasswordPrompt
 
         return completion.Task;
     }
-
-    private static Application EnsureApplication()
-    {
-        lock (ApplicationGate)
-        {
-            if (_application is not null)
-            {
-                return _application;
-            }
-
-            var ready = new ManualResetEventSlim(false);
-            Exception? startupException = null;
-            var thread = new Thread(() =>
-            {
-                try
-                {
-                    _application = new Application
-                    {
-                        ShutdownMode = ShutdownMode.OnExplicitShutdown
-                    };
-                    ready.Set();
-                    _application.Run();
-                }
-                catch (Exception exception)
-                {
-                    startupException = exception;
-                    ready.Set();
-                }
-            })
-            {
-                IsBackground = true,
-                Name = "CipherVault.AuthDispatcher"
-            };
-            thread.SetApartmentState(ApartmentState.STA);
-            thread.Start();
-            ready.Wait();
-
-            if (startupException is not null || _application is null)
-            {
-                throw new InvalidOperationException(
-                    "无法启动 Windows 授权窗口。",
-                    startupException);
-            }
-
-            return _application;
-        }
-    }
-
     private sealed class PasswordPromptWindow : Window
     {
         private readonly PasswordBox _passwordBox;

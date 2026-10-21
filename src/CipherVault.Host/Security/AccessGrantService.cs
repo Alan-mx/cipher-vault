@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using CipherVault.Core.Configuration;
+using CipherVault.Host.Contracts;
 
 namespace CipherVault.Host.Security;
 
@@ -15,6 +16,7 @@ public sealed class AccessGrantService
     private readonly TimeSpan _idleLifetime;
     private readonly TimeSpan _hardLifetime;
     private readonly TimeSpan _denialCooldown;
+    private readonly ISecurityEventLog? _securityLog;
     private readonly Dictionary<Guid, AccessGrantRecord> _grants = [];
     private readonly Dictionary<AccessGrantSlotKey, AccessGrantRecord> _activeSlots = [];
     private readonly Dictionary<AccessGrantSlotKey, PendingGrant> _pendingSlots = [];
@@ -27,12 +29,14 @@ public sealed class AccessGrantService
         TimeProvider? timeProvider = null,
         TimeSpan? idleLifetime = null,
         TimeSpan? hardLifetime = null,
-        TimeSpan? denialCooldown = null)
+        TimeSpan? denialCooldown = null,
+        ISecurityEventLog? securityLog = null)
     {
         _timeProvider = timeProvider ?? TimeProvider.System;
         _idleLifetime = idleLifetime ?? DefaultIdleLifetime;
         _hardLifetime = hardLifetime ?? DefaultHardLifetime;
         _denialCooldown = denialCooldown ?? DefaultDenialCooldown;
+        _securityLog = securityLog;
         if (_idleLifetime <= TimeSpan.Zero ||
             _hardLifetime <= TimeSpan.Zero ||
             _denialCooldown < TimeSpan.Zero)
@@ -128,6 +132,11 @@ public sealed class AccessGrantService
                 .ConfigureAwait(false);
         }
 
+        await LogGrantAsync(
+            "grant_requested",
+            pending.Record,
+            "pending",
+            ReasonCode: null).ConfigureAwait(false);
         AccessGrantRequestOutcome outcome;
         var propagateCancellation = false;
         try
@@ -180,6 +189,25 @@ public sealed class AccessGrantService
         }
 
         pending.Completion.TrySetResult(outcome);
+        if (outcome.Status == AccessGrantRequestStatus.Approved)
+        {
+            await LogGrantAsync(
+                "grant_approved",
+                outcome.IssuedGrant!.Record,
+                "success",
+                ReasonCode: null).ConfigureAwait(false);
+        }
+        else if (string.Equals(
+                     outcome.ReasonCode,
+                     "user-denied",
+                     StringComparison.Ordinal))
+        {
+            await LogGrantAsync(
+                "grant_denied",
+                pending.Record,
+                "denied",
+                outcome.ReasonCode).ConfigureAwait(false);
+        }
         if (propagateCancellation)
         {
             throw new OperationCanceledException(cancellationToken);
@@ -187,7 +215,17 @@ public sealed class AccessGrantService
         return outcome;
     }
 
-    public AccessGrantValidationResult Validate(
+    public async Task<AccessGrantValidationResult> ValidateAsync(
+        string clientId,
+        string? plaintextSecret,
+        AccessGrantVaultGeneration vaultGeneration)
+    {
+        var result = ValidateCore(clientId, plaintextSecret, vaultGeneration);
+        await LogValidationAsync(clientId, result).ConfigureAwait(false);
+        return result;
+    }
+
+    private AccessGrantValidationResult ValidateCore(
         string clientId,
         string? plaintextSecret,
         AccessGrantVaultGeneration vaultGeneration)
@@ -245,7 +283,8 @@ public sealed class AccessGrantService
                     return new AccessGrantValidationResult(
                         AccessGrantValidationStatus.Expired,
                         Grant: null,
-                        ReasonCode: "access_grant_expired");
+                        ReasonCode: "access_grant_expired",
+                        Record: matched with { State = AccessGrantState.Expired });
                 }
 
                 if (matched.VaultSessionId != vaultGeneration.SessionId)
@@ -254,7 +293,8 @@ public sealed class AccessGrantService
                     return new AccessGrantValidationResult(
                         AccessGrantValidationStatus.Revoked,
                         Grant: null,
-                        ReasonCode: "access_grant_revoked");
+                        ReasonCode: "access_grant_revoked",
+                        Record: matched with { State = AccessGrantState.Revoked });
                 }
 
                 return new AccessGrantValidationResult(
@@ -265,7 +305,8 @@ public sealed class AccessGrantService
                         matched.ClientInstanceId,
                         matched.Scopes,
                         matched.VaultSessionId.Value),
-                    ReasonCode: null);
+                    ReasonCode: null,
+                    Record: matched);
             }
         }
         finally
@@ -305,12 +346,13 @@ public sealed class AccessGrantService
         }
     }
 
-    public AccessGrantRevokeStatus Revoke(
+    public async Task<AccessGrantRevokeStatus> RevokeAsync(
         string clientId,
         Guid grantId,
-        string plaintextSecret,
-        out AccessGrantRecord? revoked)
+        string plaintextSecret)
     {
+        AccessGrantRecord? revoked = null;
+        AccessGrantRevokeStatus status;
         var presentedHash = SHA256.HashData(
             Encoding.UTF8.GetBytes(plaintextSecret));
         try
@@ -319,8 +361,8 @@ public sealed class AccessGrantService
             {
                 if (!_grants.TryGetValue(grantId, out var record))
                 {
-                    revoked = null;
-                    return AccessGrantRevokeStatus.AlreadyRemoved;
+                    status = AccessGrantRevokeStatus.AlreadyRemoved;
+                    return status;
                 }
                 if (!string.Equals(
                         record.ClientId,
@@ -330,23 +372,27 @@ public sealed class AccessGrantService
                         presentedHash,
                         record.SecretHash ?? []))
                 {
-                    revoked = null;
-                    return AccessGrantRevokeStatus.Invalid;
+                    status = AccessGrantRevokeStatus.Invalid;
+                    return status;
                 }
 
                 revoked = record with { State = AccessGrantState.Revoked };
                 RemoveGrant(record);
-                return AccessGrantRevokeStatus.Revoked;
+                status = AccessGrantRevokeStatus.Revoked;
             }
         }
         finally
         {
             CryptographicOperations.ZeroMemory(presentedHash);
         }
+        await LogGrantAsync("grant_revoked", revoked!, "success", "client-requested")
+            .ConfigureAwait(false);
+        return status;
     }
 
-    public bool TryRevokeById(Guid grantId, out AccessGrantRecord? revoked)
+    public async Task<AccessGrantRevokeStatus> RevokeByIdAsync(Guid grantId)
     {
+        AccessGrantRecord? revoked = null;
         lock (_sync)
         {
             var pending = _pendingSlots.Values.FirstOrDefault(item =>
@@ -355,18 +401,20 @@ public sealed class AccessGrantService
             {
                 revoked = pending.Record with { State = AccessGrantState.Revoked };
                 CancelPending(pending, "revoked");
-                return true;
             }
-
-            if (!_grants.TryGetValue(grantId, out var record))
+            else if (!_grants.TryGetValue(grantId, out var record))
             {
-                revoked = null;
-                return false;
+                return AccessGrantRevokeStatus.AlreadyRemoved;
             }
-            revoked = record with { State = AccessGrantState.Revoked };
-            RemoveGrant(record);
-            return true;
+            else
+            {
+                revoked = record with { State = AccessGrantState.Revoked };
+                RemoveGrant(record);
+            }
         }
+        await LogGrantAsync("grant_revoked", revoked!, "success", "admin-requested")
+            .ConfigureAwait(false);
+        return AccessGrantRevokeStatus.Revoked;
     }
 
     public IReadOnlyList<AccessGrantRecord> List()
@@ -380,8 +428,9 @@ public sealed class AccessGrantService
         }
     }
 
-    public int RevokeClient(string clientId, string reasonCode)
+    public async Task<int> RevokeClientAsync(string clientId, string reasonCode)
     {
+        var revoked = new List<AccessGrantRecord>();
         lock (_sync)
         {
             foreach (var pending in _pendingSlots.Values
@@ -391,45 +440,65 @@ public sealed class AccessGrantService
                              StringComparison.OrdinalIgnoreCase))
                          .ToArray())
             {
+                revoked.Add(pending.Record with
+                {
+                    State = AccessGrantState.Revoked
+                });
                 CancelPending(pending, reasonCode);
             }
 
-            if (!_clientGrants.TryGetValue(clientId, out var grantIds))
+            if (_clientGrants.TryGetValue(clientId, out var grantIds))
             {
-                return 0;
-            }
-
-            var count = 0;
-            foreach (var grantId in grantIds.ToArray())
-            {
-                if (_grants.TryGetValue(grantId, out var record))
+                foreach (var grantId in grantIds.ToArray())
                 {
-                    RemoveGrant(record);
-                    count++;
+                    if (_grants.TryGetValue(grantId, out var record))
+                    {
+                        revoked.Add(record with { State = AccessGrantState.Revoked });
+                        RemoveGrant(record);
+                    }
                 }
             }
-            _ = reasonCode;
-            return count;
         }
+        foreach (var record in revoked)
+        {
+            await LogGrantAsync(
+                "grant_revoked",
+                record,
+                "success",
+                reasonCode).ConfigureAwait(false);
+        }
+        return revoked.Count;
     }
 
-    public int RevokeAll(string reasonCode)
+    public async Task<int> RevokeAllAsync(string reasonCode)
     {
+        var revoked = new List<AccessGrantRecord>();
         lock (_sync)
         {
             foreach (var pending in _pendingSlots.Values.ToArray())
             {
+                revoked.Add(pending.Record with
+                {
+                    State = AccessGrantState.Revoked
+                });
                 CancelPending(pending, reasonCode);
             }
 
-            var count = 0;
             foreach (var record in _grants.Values.ToArray())
             {
+                revoked.Add(record with { State = AccessGrantState.Revoked });
                 RemoveGrant(record);
-                count++;
             }
-            return count;
         }
+        foreach (var record in revoked)
+        {
+            await LogGrantAsync(
+                "grant_revoked",
+                record,
+                "success",
+                reasonCode).ConfigureAwait(false);
+        }
+        return revoked.Count;
     }
 
     private AccessGrantRequestOutcome ApprovePending(
@@ -560,7 +629,79 @@ public sealed class AccessGrantService
         return new AccessGrantValidationResult(
             AccessGrantValidationStatus.Invalid,
             Grant: null,
-            ReasonCode: "access_grant_invalid");
+            ReasonCode: "access_grant_invalid",
+            Record: null);
+    }
+
+    private Task LogValidationAsync(
+        string clientId,
+        AccessGrantValidationResult result)
+    {
+        if (result.Status == AccessGrantValidationStatus.Valid ||
+            _securityLog is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        var eventType = result.Status == AccessGrantValidationStatus.Expired
+            ? "grant_expired"
+            : "grant_rejected";
+        var record = result.Record;
+        return SecurityLogSafety.TryWriteAsync(
+            _securityLog,
+            new HostSecurityLogEvent(
+                DateTimeOffset.UtcNow,
+                eventType,
+                record?.ClientId ?? clientId,
+                ConnectionId: null,
+                record?.ClientInstanceId,
+                record?.GrantId,
+                record is null
+                    ? null
+                    : ScopeNames(record.Scopes),
+                RequestId: null,
+                result.Status == AccessGrantValidationStatus.Expired
+                    ? "denied"
+                    : "denied",
+                result.ReasonCode),
+            CancellationToken.None);
+    }
+
+    private Task LogGrantAsync(
+        string eventType,
+        AccessGrantRecord record,
+        string result,
+        string? ReasonCode)
+    {
+        if (_securityLog is null)
+        {
+            return Task.CompletedTask;
+        }
+        return SecurityLogSafety.TryWriteAsync(
+            _securityLog,
+            new HostSecurityLogEvent(
+                DateTimeOffset.UtcNow,
+                eventType,
+                record.ClientId,
+                ConnectionId: null,
+                record.ClientInstanceId,
+                record.GrantId,
+                ScopeNames(
+                    record.Scopes == AccessGrantScope.None
+                        ? record.RequestedScopes
+                        : record.Scopes),
+                RequestId: null,
+                result,
+                ReasonCode),
+            CancellationToken.None);
+    }
+
+    private static string ScopeNames(AccessGrantScope scopes)
+    {
+        return string.Join(
+            ",",
+            AccessGrantScopes.ToNames(scopes)
+                .OrderBy(value => value, StringComparer.Ordinal));
     }
 
     private static (string PlaintextSecret, byte[] SecretHash) GenerateSecret()

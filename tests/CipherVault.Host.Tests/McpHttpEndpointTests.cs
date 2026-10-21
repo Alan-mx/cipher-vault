@@ -90,13 +90,16 @@ public sealed class McpHttpEndpointTests
             "readwrite-agent",
             "readWrite",
             "accessGrant");
-        var grantSecret = await RequestGrantAsync(
+        var issuedGrant = await RequestGrantAsync(
             fixture.Client,
             token,
             Guid.NewGuid(),
             "read",
             "write");
-        var session = new McpTestSession(fixture.Client, token, grantSecret);
+        var session = new McpTestSession(
+            fixture.Client,
+            token,
+            issuedGrant.Secret);
         await session.InitializeAsync();
 
         using var create = await session.CallToolAsync(
@@ -152,13 +155,16 @@ public sealed class McpHttpEndpointTests
             "audited-agent",
             "readWrite",
             "accessGrant");
-        var grantSecret = await RequestGrantAsync(
+        var issuedGrant = await RequestGrantAsync(
             fixture.Client,
             token,
             Guid.NewGuid(),
             "read",
             "write");
-        var session = new McpTestSession(fixture.Client, token, grantSecret);
+        var session = new McpTestSession(
+            fixture.Client,
+            token,
+            issuedGrant.Secret);
         await session.InitializeAsync();
 
         using var create = await session.CallToolAsync(
@@ -198,6 +204,15 @@ public sealed class McpHttpEndpointTests
         Assert.Equal(
             "mcp-audit-request",
             details.RootElement.GetProperty("requestId").GetString());
+        Assert.Equal(
+            issuedGrant.Grant.GrantId.ToString("D"),
+            details.RootElement.GetProperty("grantId").GetString());
+        Assert.Equal(
+            issuedGrant.Grant.ClientInstanceId.ToString("D"),
+            details.RootElement.GetProperty("clientInstanceId").GetString());
+        Assert.Equal(
+            "read,write",
+            details.RootElement.GetProperty("grantScopes").GetString());
     }
 
     [Fact]
@@ -261,13 +276,16 @@ public sealed class McpHttpEndpointTests
             "delete-scope-agent",
             "readWrite",
             "accessGrant");
-        var grantSecret = await RequestGrantAsync(
+        var issuedGrant = await RequestGrantAsync(
             fixture.Client,
             token,
             Guid.NewGuid(),
             "read",
             "write");
-        var session = new McpTestSession(fixture.Client, token, grantSecret);
+        var session = new McpTestSession(
+            fixture.Client,
+            token,
+            issuedGrant.Secret);
         await session.InitializeAsync();
 
         using var create = await session.CallToolAsync(
@@ -312,7 +330,7 @@ public sealed class McpHttpEndpointTests
         var deleteSession = new McpTestSession(
             fixture.Client,
             token,
-            deleteGrant);
+            deleteGrant.Secret);
         await deleteSession.InitializeAsync();
         using var allowedDelete = await deleteSession.CallToolAsync(
             11,
@@ -337,12 +355,15 @@ public sealed class McpHttpEndpointTests
             "readOnly",
             "accessGrant");
         var clientInstanceId = Guid.NewGuid();
-        var grantSecret = await RequestGrantAsync(
+        var issuedGrant = await RequestGrantAsync(
             fixture.Client,
             token,
             clientInstanceId,
             "read");
-        var session = new McpTestSession(fixture.Client, token, grantSecret);
+        var session = new McpTestSession(
+            fixture.Client,
+            token,
+            issuedGrant.Secret);
         await session.InitializeAsync();
 
         await LockHostAsync(fixture.Client);
@@ -422,7 +443,7 @@ public sealed class McpHttpEndpointTests
         return payload.Data.Token;
     }
 
-    private static async Task<string> RequestGrantAsync(
+    private static async Task<HostIssuedAccessGrantData> RequestGrantAsync(
         HttpClient client,
         string agentToken,
         Guid clientInstanceId,
@@ -446,7 +467,7 @@ public sealed class McpHttpEndpointTests
         var payload = await response.Content.ReadFromJsonAsync<
             HostApiResponse<HostIssuedAccessGrantData>>(JsonOptions);
         Assert.NotNull(payload);
-        return payload.Data.Secret;
+        return payload.Data;
     }
 
     private static object InitializePayload(int id)

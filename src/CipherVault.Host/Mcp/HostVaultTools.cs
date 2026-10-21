@@ -342,7 +342,15 @@ public sealed class HostVaultTools
         return new VaultAuditContext(
             VaultActorKind.Mcp,
             authorization.ClientId,
-            requestId);
+            requestId,
+            authorization.Grant?.ClientInstanceId,
+            authorization.Grant?.GrantId,
+            authorization.Grant is null
+                ? null
+                : string.Join(
+                    ",",
+                    AccessGrantScopes.ToNames(authorization.Grant.Scopes)
+                        .OrderBy(value => value, StringComparer.Ordinal)));
     }
 
     private static object Error(string code, string message)
