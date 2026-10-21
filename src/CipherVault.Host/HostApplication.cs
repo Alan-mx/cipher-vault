@@ -152,6 +152,29 @@ public static class HostApplication
                     return Results.Empty;
                 }
             });
+        app.MapDelete(
+            configuration.Endpoint.AdminPath + "/clients/{clientId}",
+            async (
+                string clientId,
+                AgentTokenStore clients,
+                HttpContext context,
+                CancellationToken cancellationToken) =>
+            {
+                try
+                {
+                    await clients.DeleteAsync(clientId, cancellationToken);
+                    return Results.NoContent();
+                }
+                catch (HostException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception.Code),
+                        exception.Code,
+                        exception.Message);
+                    return Results.Empty;
+                }
+            });
         app.MapPost(
             configuration.Endpoint.AdminPath + "/session/unlock",
             async (

@@ -211,6 +211,44 @@ public sealed class ClientsEndpointTests
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
+    [Fact]
+    public async Task DeleteClientRemovesPolicyAndPersists()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        using var create = CreateCreateRequest(
+            new HostCreateClientRequest("codex", "readOnly", false));
+        using var createResponse = await fixture.Client.SendAsync(create);
+        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+
+        using var delete = CreateDeleteRequest("codex");
+        using var deleteResponse = await fixture.Client.SendAsync(delete);
+
+        Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode);
+        var configText = await File.ReadAllTextAsync(fixture.ConfigPath);
+        Assert.Contains("\"clients\": []", configText, StringComparison.Ordinal);
+
+        using var list = CreateRequest();
+        list.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            HostTestFixture.AdminToken);
+        using var listResponse = await fixture.Client.SendAsync(list);
+        var payload = await listResponse.Content.ReadFromJsonAsync<
+            HostApiResponse<IReadOnlyList<HostClientData>>>(JsonOptions);
+        Assert.NotNull(payload);
+        Assert.Empty(payload.Data);
+    }
+
+    [Fact]
+    public async Task DeleteMissingClientReturnsNotFound()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        using var request = CreateDeleteRequest("missing");
+
+        using var response = await fixture.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
     private static HttpRequestMessage CreateRequest()
     {
         var request = new HttpRequestMessage(HttpMethod.Get, "/admin/v1/clients");
@@ -242,6 +280,18 @@ public sealed class ClientsEndpointTests
         {
             Content = JsonContent.Create(body)
         };
+        request.Headers.Host = "127.0.0.1:43127";
+        request.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            HostTestFixture.AdminToken);
+        return request;
+    }
+
+    private static HttpRequestMessage CreateDeleteRequest(string clientId)
+    {
+        var request = new HttpRequestMessage(
+            HttpMethod.Delete,
+            $"/admin/v1/clients/{clientId}");
         request.Headers.Host = "127.0.0.1:43127";
         request.Headers.Authorization = new AuthenticationHeaderValue(
             "Bearer",

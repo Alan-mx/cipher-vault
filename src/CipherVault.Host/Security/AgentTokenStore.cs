@@ -189,6 +189,42 @@ public sealed class AgentTokenStore
         }
     }
 
+    public async Task DeleteAsync(
+        string clientId,
+        CancellationToken cancellationToken = default)
+    {
+        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            List<AgentClientPolicy> next;
+            lock (_sync)
+            {
+                var index = _clients.FindIndex(client => string.Equals(
+                    client.ClientId,
+                    clientId,
+                    StringComparison.OrdinalIgnoreCase));
+                if (index < 0)
+                {
+                    throw new HostException(
+                        HostErrorCode.NotFound,
+                        $"Client '{clientId}' was not found.");
+                }
+                next = [.. _clients];
+                next.RemoveAt(index);
+            }
+
+            await PersistAsync(next, cancellationToken).ConfigureAwait(false);
+            lock (_sync)
+            {
+                _clients = next;
+            }
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
+    }
+
     internal static string ToAccessMode(McpAccessMode accessMode)
     {
         return accessMode == McpAccessMode.ReadOnly
