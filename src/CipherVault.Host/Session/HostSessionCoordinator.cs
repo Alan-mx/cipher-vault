@@ -22,6 +22,7 @@ public sealed class HostSessionCoordinator
     private int _activeLeases;
     private TaskCompletionSource? _leasesDrained;
     private CancellationTokenSource? _leaseCancellation;
+    private bool _maintenanceActive;
 
     public HostSessionCoordinator(
         IVaultService vault,
@@ -159,9 +160,25 @@ public sealed class HostSessionCoordinator
     public async Task<HostVaultLease> AcquireLeaseAsync(
         CancellationToken cancellationToken = default)
     {
+        lock (_stateSync)
+        {
+            if (_maintenanceActive)
+            {
+                throw new HostException(
+                    HostErrorCode.MaintenanceInProgress,
+                    "Vault maintenance is in progress.");
+            }
+        }
+
         var status = await _vault.GetStatusAsync(cancellationToken).ConfigureAwait(false);
         lock (_stateSync)
         {
+            if (_maintenanceActive)
+            {
+                throw new HostException(
+                    HostErrorCode.MaintenanceInProgress,
+                    "Vault maintenance is in progress.");
+            }
             if (_state == VaultSessionState.Locking ||
                 status.State is not (VaultSessionState.Unlocked or VaultSessionState.Expiring))
             {
@@ -178,6 +195,73 @@ public sealed class HostSessionCoordinator
                 status.SessionId,
                 leaseToken,
                 ReleaseLease);
+        }
+    }
+
+    public async Task<T> ExecuteMaintenanceAsync<T>(
+        Func<IVaultService, CancellationToken, Task<T>> operation,
+        CancellationToken cancellationToken = default)
+    {
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var status = await _vault.GetStatusAsync(cancellationToken)
+                .ConfigureAwait(false);
+            Task drainedTask;
+            lock (_stateSync)
+            {
+                if (_maintenanceActive)
+                {
+                    throw new HostException(
+                        HostErrorCode.MaintenanceInProgress,
+                        "Vault maintenance is already in progress.");
+                }
+                if (_state == VaultSessionState.Locking ||
+                    status.State is not (
+                        VaultSessionState.Unlocked or
+                        VaultSessionState.Expiring))
+                {
+                    throw new HostException(
+                        HostErrorCode.SessionLocked,
+                        "Vault is locked.");
+                }
+
+                _maintenanceActive = true;
+                _state = status.State;
+                if (_activeLeases == 0)
+                {
+                    drainedTask = Task.CompletedTask;
+                }
+                else
+                {
+                    _leasesDrained = new TaskCompletionSource(
+                        TaskCreationOptions.RunContinuationsAsynchronously);
+                    drainedTask = _leasesDrained.Task;
+                }
+            }
+
+            var timeoutTask = Task.Delay(_lockDrainTimeout, cancellationToken);
+            if (await Task.WhenAny(drainedTask, timeoutTask).ConfigureAwait(false) !=
+                drainedTask)
+            {
+                throw new HostException(
+                    HostErrorCode.MaintenanceInProgress,
+                    "Vault operations did not drain before maintenance started.");
+            }
+
+            return await operation(_vault, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_stateSync)
+            {
+                _maintenanceActive = false;
+                if (_activeLeases == 0)
+                {
+                    _leasesDrained = null;
+                }
+            }
+            _operationGate.Release();
         }
     }
 

@@ -26,4 +26,11 @@ public sealed class HostVaultGateway
             lease.CancellationToken);
         return await operation(_vault, linked.Token).ConfigureAwait(false);
     }
+
+    public Task<T> ExecuteMaintenanceAsync<T>(
+        Func<IVaultService, CancellationToken, Task<T>> operation,
+        CancellationToken cancellationToken = default)
+    {
+        return _sessions.ExecuteMaintenanceAsync(operation, cancellationToken);
+    }
 }

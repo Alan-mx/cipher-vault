@@ -46,6 +46,39 @@ public sealed class HostSessionCoordinatorTests
         Assert.Equal(0, locked.ActiveLeases);
     }
 
+    [Fact]
+    public async Task MaintenanceDrainsLeasesAndRejectsNewLeases()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var coordinator = fixture.App.Services.GetRequiredService<HostSessionCoordinator>();
+        _ = await coordinator.UnlockAsync(HostCredentialPreference.Password);
+        var lease = await coordinator.AcquireLeaseAsync();
+        var entered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var maintenanceTask = coordinator.ExecuteMaintenanceAsync(
+            async (_, _) =>
+            {
+                entered.TrySetResult();
+                await release.Task;
+                return 42;
+            });
+
+        await Assert.ThrowsAsync<HostException>(() =>
+            coordinator.AcquireLeaseAsync());
+        Assert.False(maintenanceTask.IsCompleted);
+
+        await lease.DisposeAsync();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.ThrowsAsync<HostException>(() =>
+            coordinator.AcquireLeaseAsync());
+
+        release.TrySetResult();
+        Assert.Equal(42, await maintenanceTask);
+        await using var after = await coordinator.AcquireLeaseAsync();
+    }
+
     private static async Task WaitUntilAsync(
         Func<Task<bool>> condition,
         TimeSpan timeout)

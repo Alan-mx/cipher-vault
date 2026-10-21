@@ -49,3 +49,6 @@ public sealed record HostRestoreTrashRequest(
 
 public sealed record HostRestoreRevisionRequest(
     int ExpectedRevision);
+
+public sealed record HostBackupRequest(
+    string? DestinationPath);

@@ -1,5 +1,6 @@
 using CipherVault.Auth.Win;
 using CipherVault.Core;
+using CipherVault.Core.Backup;
 using CipherVault.Core.Configuration;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
@@ -653,6 +654,44 @@ public static class HostApplication
                         cancellationToken);
                     return Results.Json(
                         new HostApiResponse<VaultWriteResult>(true, result));
+                }
+                catch (HostException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception.Code),
+                        exception.Code,
+                        exception.Message);
+                    return Results.Empty;
+                }
+                catch (VaultException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception),
+                        HostHttpResponses.ToHostErrorCode(exception),
+                        exception.Message);
+                    return Results.Empty;
+                }
+            });
+        app.MapPost(
+            configuration.Endpoint.AdminPath + "/maintenance/backup",
+            async (
+                HostBackupRequest request,
+                HostVaultGateway vault,
+                HttpContext context,
+                CancellationToken cancellationToken) =>
+            {
+                try
+                {
+                    var result = await vault.ExecuteMaintenanceAsync(
+                        (service, token) => service.CreateBackupAsync(
+                            request.DestinationPath ?? string.Empty,
+                            VaultActorKind.UserUi,
+                            token),
+                        cancellationToken);
+                    return Results.Json(
+                        new HostApiResponse<VaultBackupResult>(true, result));
                 }
                 catch (HostException exception)
                 {
