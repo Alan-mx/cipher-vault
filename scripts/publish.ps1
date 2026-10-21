@@ -53,6 +53,9 @@ $archive = Join-Path $OutputRoot "CipherVault-win-x64.zip"
 if (Test-Path $archive) {
     Remove-Item -LiteralPath $archive -Force
 }
-Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $archive
+tar -a -cf $archive -C $OutputRoot (Split-Path $stage -Leaf)
+if ($LASTEXITCODE -ne 0) {
+    throw "Archive creation failed with exit code $LASTEXITCODE"
+}
 
 Write-Host "Published ZIP: $archive"
