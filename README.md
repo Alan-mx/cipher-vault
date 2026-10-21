@@ -62,7 +62,8 @@ later lock operation.
 Losing both the password and recovery key makes the Vault unrecoverable.
 
 WPF normal close leaves the Host session unlocked. Use **退出并锁定** to lock the
-global session before closing.
+global session before closing, or **停止 Host** to lock and terminate the Host.
+In Host mode, credential input is accepted only by the Host authorization window.
 
 ## Configuration
 
@@ -114,6 +115,12 @@ Start Host explicitly with:
 WPF and online CLI commands can also ensure Host is running. HTTP-only agents do
 not start Host. The STDIO bridge also does not start Host; if Host is unavailable,
 tool calls return `host_unavailable`.
+
+Stop a running Host explicitly:
+
+```powershell
+.\CipherVault.Cli.exe host-stop --config .\config.json
+```
 
 ## Agent Tokens
 
@@ -184,7 +191,7 @@ CLI commands use Host by default:
 Explicit direct mode is available for offline maintenance:
 
 ```powershell
-.\CipherVault.Cli.exe status --standalone --config .\legacy-config.json
+.\CipherVault.Cli.exe status --standalone --config .\config.json
 ```
 
 `--standalone` acquires the `VaultOwnershipLock` before opening the database and
