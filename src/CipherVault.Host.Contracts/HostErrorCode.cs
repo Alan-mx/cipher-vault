@@ -15,6 +15,7 @@ public enum HostErrorCode
     RateLimited,
     LockInProgress,
     SessionLocked,
+    Conflict,
     ConfigMigrationRequired,
     MaintenanceInProgress,
     StorageError

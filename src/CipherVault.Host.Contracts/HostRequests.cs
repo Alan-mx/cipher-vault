@@ -28,3 +28,7 @@ public sealed record HostCreateNoteRequest(
     string? Format,
     string? Content,
     IReadOnlyList<string>? Tags);
+
+public sealed record HostAppendNoteRequest(
+    int ExpectedRevision,
+    string? Content);

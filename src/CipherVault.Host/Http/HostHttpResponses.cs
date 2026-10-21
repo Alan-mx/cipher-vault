@@ -39,6 +39,7 @@ internal static class HostHttpResponses
             HostErrorCode.RateLimited => StatusCodes.Status429TooManyRequests,
             HostErrorCode.LockInProgress => StatusCodes.Status409Conflict,
             HostErrorCode.SessionLocked => StatusCodes.Status423Locked,
+            HostErrorCode.Conflict => StatusCodes.Status409Conflict,
             HostErrorCode.VaultInUse => StatusCodes.Status409Conflict,
             HostErrorCode.AlreadyExists => StatusCodes.Status409Conflict,
             HostErrorCode.NotFound => StatusCodes.Status404NotFound,
@@ -69,7 +70,7 @@ internal static class HostHttpResponses
         {
             VaultErrorCode.InvalidInput => HostErrorCode.InvalidInput,
             VaultErrorCode.NotFound => HostErrorCode.NotFound,
-            VaultErrorCode.Conflict => HostErrorCode.VaultInUse,
+            VaultErrorCode.Conflict => HostErrorCode.Conflict,
             VaultErrorCode.AlreadyExists => HostErrorCode.AlreadyExists,
             VaultErrorCode.SessionLocked or VaultErrorCode.SessionExpired =>
                 HostErrorCode.SessionLocked,
@@ -94,6 +95,7 @@ internal static class HostHttpResponses
             HostErrorCode.RateLimited => "rate_limited",
             HostErrorCode.LockInProgress => "lock_in_progress",
             HostErrorCode.SessionLocked => "session_locked",
+            HostErrorCode.Conflict => "conflict",
             HostErrorCode.ConfigMigrationRequired => "config_migration_required",
             HostErrorCode.MaintenanceInProgress => "maintenance_in_progress",
             HostErrorCode.StorageError => "storage_error",
