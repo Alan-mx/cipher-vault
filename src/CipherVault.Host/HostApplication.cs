@@ -471,6 +471,45 @@ public static class HostApplication
                     return Results.Empty;
                 }
             });
+        app.MapGet(
+            configuration.Endpoint.AdminPath + "/trash",
+            async (
+                string? cursor,
+                int? limit,
+                HostVaultGateway vault,
+                HttpContext context,
+                CancellationToken cancellationToken) =>
+            {
+                try
+                {
+                    var page = await vault.ExecuteAsync(
+                        (service, token) => service.ListTrashAsync(
+                            cursor,
+                            limit ?? 50,
+                            token),
+                        cancellationToken);
+                    return Results.Json(
+                        new HostApiResponse<VaultTrashPage>(true, page));
+                }
+                catch (HostException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception.Code),
+                        exception.Code,
+                        exception.Message);
+                    return Results.Empty;
+                }
+                catch (VaultException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception),
+                        HostHttpResponses.ToHostErrorCode(exception),
+                        exception.Message);
+                    return Results.Empty;
+                }
+            });
         app.MapPost(
             configuration.Endpoint.AdminPath + "/session/unlock",
             async (
