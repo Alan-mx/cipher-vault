@@ -11,7 +11,10 @@ public sealed class McpStdioProcessTests
     public async Task RealToolCallReturnsHostUnavailableWhenHostIsNotRunning()
     {
         using var fixture = new ProcessFixture(accessMode: "readWrite");
-        await using var server = McpServerProcess.Start(fixture.ConfigPath);
+        await using var server = McpServerProcess.Start(
+            fixture.ConfigPath,
+            "--access-mode",
+            fixture.AccessMode);
         using var initialize = await server.RequestAsync(
             1,
             "initialize",
@@ -177,10 +180,57 @@ public sealed class McpStdioProcessTests
         }
     }
 
+    [Fact]
+    public async Task WriteScopeDoesNotBlockWritesWhenHostIsUnavailable()
+    {
+        using var fixture = new ProcessFixture(accessMode: "readWrite");
+        await using var server = McpServerProcess.Start(
+            fixture.ConfigPath,
+            "--access-mode",
+            fixture.AccessMode);
+        using var initialize = await server.RequestAsync(
+            1,
+            "initialize",
+            new
+            {
+                protocolVersion = "2025-11-25",
+                capabilities = new { },
+                clientInfo = new
+                {
+                    name = "CipherVault.Mcp.Tests",
+                    version = "1.0.0"
+                }
+            });
+        await server.NotifyAsync("notifications/initialized");
+
+        using var write = await server.RequestAsync(
+            2,
+            "tools/call",
+            new
+            {
+                name = "create_note",
+                arguments = new
+                {
+                    title = "write scope",
+                    content = "Host is unavailable"
+                }
+            });
+        using var document = JsonDocument.Parse(GetToolText(write));
+
+        Assert.Equal(
+            "host_unavailable",
+            document.RootElement
+                .GetProperty("error")
+                .GetProperty("code")
+                .GetString());
+        await server.CloseInputAndWaitAsync();
+    }
+
     private sealed class ProcessFixture : IDisposable
     {
         public ProcessFixture(string accessMode = "readOnly")
         {
+            AccessMode = accessMode;
             Root = Path.Combine(
                 Path.GetTempPath(),
                 $"cipher-vault-mcp-process-{Guid.NewGuid():N}");
@@ -213,6 +263,7 @@ public sealed class McpStdioProcessTests
 
         public string Root { get; }
         public string ConfigPath { get; }
+        public string AccessMode { get; }
         private static int ReservePort()
         {
             var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -277,7 +328,9 @@ public sealed class McpStdioProcessTests
         public List<string> StdoutLines { get; } = [];
         public int ExitCode => _process.ExitCode;
 
-        public static McpServerProcess Start(string configPath)
+        public static McpServerProcess Start(
+            string configPath,
+            params string[] extraArguments)
         {
             var executable = Path.Combine(AppContext.BaseDirectory, "CipherVault.Mcp.exe");
             Assert.True(File.Exists(executable), $"MCP executable was not found: {executable}");
@@ -292,6 +345,10 @@ public sealed class McpStdioProcessTests
             };
             startInfo.ArgumentList.Add("--config");
             startInfo.ArgumentList.Add(configPath);
+            foreach (var argument in extraArguments)
+            {
+                startInfo.ArgumentList.Add(argument);
+            }
             foreach (var variable in CipherVaultEnvironmentVariables)
             {
                 startInfo.Environment.Remove(variable);
