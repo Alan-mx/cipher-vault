@@ -483,19 +483,18 @@ static async Task<CliHostSession> CreateHostSessionAsync(
 {
     if (standalone)
     {
-        var configuration = CipherVaultConfiguration.Load(
-            CreateStandaloneOverrides(arguments),
+        var configuration = CipherVaultHostConfiguration.Load(
+            CreateHostOverrides(arguments),
             GetOption(arguments, "--config"));
-        var standaloneVaultPath = Require(configuration.VaultPath);
         var ownership = await VaultOwnershipLock.AcquireAsync(
-            standaloneVaultPath);
+            configuration.VaultPath);
         try
         {
             var vault = new VaultService(
                 new CliActivityProvider(),
                 sessionOptions: configuration.SessionOptions);
             return new CliHostSession(
-                standaloneVaultPath,
+                configuration.VaultPath,
                 new StandaloneHostVaultClient(vault, VaultActorKind.UserCli),
                 ownership);
         }
@@ -633,20 +632,6 @@ static string ReadCredential(VaultCredentialType credentialType)
 static CipherVaultHostConfigOverrides CreateHostOverrides(string[] arguments)
 {
     return new CipherVaultHostConfigOverrides
-    {
-        VaultPath = GetOption(arguments, "--vault"),
-        IdleMinutes = ParseOptionalInteger(
-            GetOption(arguments, "--idle-minutes"),
-            "--idle-minutes"),
-        HardHours = ParseOptionalInteger(
-            GetOption(arguments, "--hard-hours"),
-            "--hard-hours")
-    };
-}
-
-static CipherVaultConfigOverrides CreateStandaloneOverrides(string[] arguments)
-{
-    return new CipherVaultConfigOverrides
     {
         VaultPath = GetOption(arguments, "--vault"),
         IdleMinutes = ParseOptionalInteger(

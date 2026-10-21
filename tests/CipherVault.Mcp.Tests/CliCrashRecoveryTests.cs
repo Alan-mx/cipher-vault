@@ -268,7 +268,7 @@ public sealed class CliCrashRecoveryTests
                 configPath,
                 JsonSerializer.Serialize(new
                 {
-                    configVersion = 1,
+                    configVersion = 2,
                     vaultPath,
                     session = new
                     {
