@@ -105,6 +105,10 @@ public sealed class WindowsPasswordPromptTests
         {
             return false;
         }
+        if (new WindowsSystemActivityProvider().GetSnapshot().IsWorkstationLocked)
+        {
+            return false;
+        }
         if (string.Equals(
                 Environment.GetEnvironmentVariable("CIPHER_VAULT_RUN_UI_TESTS"),
                 "1",

@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
+using CipherVault.Auth.Win;
 using CipherVault.Core;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Session;
@@ -65,6 +66,130 @@ public sealed class MainWindowTests
             {
                 await fixture.DisposeWindowAsync(window);
                 window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task RefreshLoadsNoteCreatedByAnotherService()
+    {
+        if (!ShouldRunInteractiveUiTests())
+        {
+            return;
+        }
+
+        using var uiLock = UiAutomationLock.Acquire();
+        await RunOnStaAsync(async () =>
+        {
+            using var fixture = new WindowFixture();
+            await fixture.InitializeVaultAsync();
+            var window = fixture.CreateWindow();
+            try
+            {
+                window.Show();
+                await UnlockWindowAsync(window, fixture.Root);
+                await WaitUntilAsync(
+                    () => Find<TextBlock>(window, "CatalogSummaryText").Text.Contains(
+                        "当前显示 0 篇",
+                        StringComparison.Ordinal),
+                    TimeSpan.FromSeconds(10));
+
+                await using (var writer = new VaultService(new AlwaysActiveActivityProvider()))
+                {
+                    await writer.UnlockAsync(
+                        Path.Combine(fixture.Root, "vault"),
+                        Password,
+                        VaultCredentialType.Password);
+                    await writer.CreateNoteAsync(
+                        "external write",
+                        "inbox",
+                        "md",
+                        "created outside the desktop session",
+                        null,
+                        VaultActorKind.Mcp);
+                }
+
+                InvokePrivate(
+                    window,
+                    "RefreshCatalogButton_Click",
+                    window,
+                    new RoutedEventArgs());
+                await WaitUntilAsync(
+                    () => Find<TextBlock>(window, "CatalogSummaryText").Text.Contains(
+                        "当前显示 1 篇",
+                        StringComparison.Ordinal),
+                    TimeSpan.FromSeconds(10));
+                Assert.Single(Find<DataGrid>(window, "CatalogGrid").Items.Cast<object>());
+            }
+            finally
+            {
+                await fixture.DisposeWindowAsync(window);
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task ReopenedWindowLoadsPersistedNote()
+    {
+        if (!ShouldRunInteractiveUiTests())
+        {
+            return;
+        }
+
+        using var uiLock = UiAutomationLock.Acquire();
+        await RunOnStaAsync(async () =>
+        {
+            using var fixture = new WindowFixture();
+            await fixture.InitializeVaultAsync();
+            await using (var writer = new VaultService(new AlwaysActiveActivityProvider()))
+            {
+                await writer.UnlockAsync(
+                    Path.Combine(fixture.Root, "vault"),
+                    Password,
+                    VaultCredentialType.Password);
+                await writer.CreateNoteAsync(
+                    "persisted note",
+                    "inbox",
+                    "md",
+                    "survives a new desktop window",
+                    null,
+                    VaultActorKind.Mcp);
+            }
+
+            var firstWindow = fixture.CreateWindow();
+            try
+            {
+                firstWindow.Show();
+                await UnlockWindowAsync(firstWindow, fixture.Root);
+                await WaitUntilAsync(
+                    () => Find<TextBlock>(firstWindow, "CatalogSummaryText").Text.Contains(
+                        "当前显示 1 篇",
+                        StringComparison.Ordinal),
+                    TimeSpan.FromSeconds(10));
+            }
+            finally
+            {
+                await fixture.DisposeWindowAsync(firstWindow);
+                firstWindow.Close();
+            }
+
+            var secondWindow = fixture.CreateWindow();
+            try
+            {
+                secondWindow.Show();
+                await UnlockWindowAsync(secondWindow, fixture.Root);
+                await WaitUntilAsync(
+                    () => Find<TextBlock>(secondWindow, "CatalogSummaryText").Text.Contains(
+                        "当前显示 1 篇",
+                        StringComparison.Ordinal),
+                    TimeSpan.FromSeconds(10));
+                Assert.Single(Find<DataGrid>(secondWindow, "CatalogGrid").Items.Cast<object>());
+            }
+            finally
+            {
+                await fixture.DisposeWindowAsync(secondWindow);
+                secondWindow.Close();
             }
         });
     }
@@ -315,6 +440,20 @@ public sealed class MainWindowTests
             ?? throw new InvalidOperationException($"Control {name} was not found.");
     }
 
+    private static async Task UnlockWindowAsync(MainWindow window, string fixtureRoot)
+    {
+        await WaitUntilAsync(
+            () => Find<TextBox>(window, "VaultPathTextBox").Text ==
+                Path.Combine(fixtureRoot, "vault"),
+            TimeSpan.FromSeconds(10));
+        Find<PasswordBox>(window, "PasswordBox").Password = Password;
+        Find<Button>(window, "UnlockButton").RaiseEvent(
+            new RoutedEventArgs(Button.ClickEvent));
+        await WaitUntilAsync(
+            () => Find<TextBlock>(window, "StatusText").Text == "已解锁",
+            TimeSpan.FromSeconds(10));
+    }
+
     private static object? InvokePrivate(
         object target,
         string methodName,
@@ -411,6 +550,10 @@ public sealed class MainWindowTests
     private static bool ShouldRunInteractiveUiTests()
     {
         if (!OperatingSystem.IsWindows() || !Environment.UserInteractive)
+        {
+            return false;
+        }
+        if (new WindowsSystemActivityProvider().GetSnapshot().IsWorkstationLocked)
         {
             return false;
         }

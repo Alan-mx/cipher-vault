@@ -105,11 +105,10 @@ public sealed class VaultToolsTests
     }
 
     [Fact]
-    public void WindowsActivityProviderRecognizesInteractiveUnlockedSession()
+    public void WindowsActivityProviderReturnsValidSnapshot()
     {
         var snapshot = new WindowsSystemActivityProvider().GetSnapshot();
 
-        Assert.False(snapshot.IsWorkstationLocked);
         Assert.True(snapshot.SystemIdleTime >= TimeSpan.Zero);
     }
 
