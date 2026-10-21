@@ -1,6 +1,8 @@
 using System.IO;
 using CipherVault.Core;
+using CipherVault.Core.Backup;
 using CipherVault.Core.Configuration;
+using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
 using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
@@ -334,6 +336,83 @@ public sealed class HostSessionCoordinator
                     : HostErrorCode.InvalidInput,
                 exception.Message,
                 exception);
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
+    public async Task<VaultRestoreBackupResult> RestoreBackupToNewAsync(
+        string backupPath,
+        string targetPath,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(backupPath) ||
+            string.IsNullOrWhiteSpace(targetPath))
+        {
+            throw new HostException(
+                HostErrorCode.InvalidInput,
+                "backupPath and targetPath are required.");
+        }
+
+        var fullTargetPath = Path.GetFullPath(targetPath);
+        if (string.Equals(
+                fullTargetPath,
+                Path.GetFullPath(_configuration.VaultPath),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new HostException(
+                HostErrorCode.InvalidInput,
+                "Online restore cannot overwrite the active Vault.");
+        }
+        if (Directory.Exists(fullTargetPath) || File.Exists(fullTargetPath))
+        {
+            throw new HostException(
+                HostErrorCode.AlreadyExists,
+                "Restore target must be a new directory.");
+        }
+
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var prompt = await _credentialPrompt.RequestAsync(
+                HostCredentialPreference.Any,
+                "输入备份密码或恢复密钥以恢复到新目录。",
+                cancellationToken).ConfigureAwait(false);
+            if (!prompt.Confirmed || string.IsNullOrEmpty(prompt.Credential))
+            {
+                throw new HostException(
+                    HostErrorCode.AccessDenied,
+                    "Backup restore authorization was cancelled.");
+            }
+
+            try
+            {
+                return await _vault.RestoreBackupAsync(
+                    Path.GetFullPath(backupPath),
+                    fullTargetPath,
+                    prompt.Credential,
+                    prompt.CredentialType,
+                    VaultActorKind.UserUi,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (VaultException exception) when (
+                exception.Code == VaultErrorCode.InvalidCredential)
+            {
+                throw new HostException(
+                    HostErrorCode.InvalidCredential,
+                    "Backup credential is invalid.",
+                    exception);
+            }
+            catch (VaultException exception) when (
+                exception.Code == VaultErrorCode.InvalidInput)
+            {
+                throw new HostException(
+                    HostErrorCode.InvalidInput,
+                    exception.Message,
+                    exception);
+            }
         }
         finally
         {

@@ -52,3 +52,7 @@ public sealed record HostRestoreRevisionRequest(
 
 public sealed record HostBackupRequest(
     string? DestinationPath);
+
+public sealed record HostRestoreNewRequest(
+    string? BackupPath,
+    string? TargetPath);
