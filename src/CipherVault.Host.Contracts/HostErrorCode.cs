@@ -6,6 +6,7 @@ public enum HostErrorCode
     VaultInUse,
     InvalidInput,
     InvalidToken,
+    InvalidCredential,
     InvalidOrigin,
     InvalidHost,
     AccessDenied,

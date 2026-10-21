@@ -19,7 +19,8 @@ try
     var app = HostApplication.Configure(
         builder,
         configuration,
-        new DpapiAdminTokenStore());
+        new DpapiAdminTokenStore(),
+        new WindowsHostCredentialPrompt());
     await app.RunAsync();
     return 0;
 }

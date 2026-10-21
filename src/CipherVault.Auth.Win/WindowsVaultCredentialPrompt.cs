@@ -1,0 +1,231 @@
+using System.Windows;
+using System.Windows.Controls;
+using CipherVault.Core.Session;
+
+namespace CipherVault.Auth.Win;
+
+public sealed record VaultCredentialPromptResult(
+    bool Confirmed,
+    string? Credential,
+    VaultCredentialType CredentialType);
+
+public static class WindowsVaultCredentialPrompt
+{
+    private static readonly object ApplicationGate = new();
+    private static Application? _application;
+
+    public static Task<VaultCredentialPromptResult> RequestAsync(
+        string title,
+        string message,
+        VaultCredentialType? preferredType = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Task.FromResult(new VaultCredentialPromptResult(
+                false,
+                null,
+                preferredType ?? VaultCredentialType.Password));
+        }
+
+        var application = EnsureApplication();
+        var completion = new TaskCompletionSource<VaultCredentialPromptResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        _ = application.Dispatcher.InvokeAsync(() =>
+        {
+            try
+            {
+                var window = new VaultCredentialPromptWindow(
+                    title,
+                    message,
+                    preferredType);
+                using var registration = cancellationToken.Register(
+                    () => window.Dispatcher.BeginInvoke(window.Close));
+                _ = window.ShowDialog();
+                completion.TrySetResult(window.Result);
+            }
+            catch (Exception exception)
+            {
+                completion.TrySetException(exception);
+            }
+        });
+
+        return completion.Task;
+    }
+
+    private static Application EnsureApplication()
+    {
+        lock (ApplicationGate)
+        {
+            if (_application is not null)
+            {
+                return _application;
+            }
+
+            var ready = new ManualResetEventSlim(false);
+            Exception? startupException = null;
+            var thread = new Thread(() =>
+            {
+                try
+                {
+                    _application = new Application
+                    {
+                        ShutdownMode = ShutdownMode.OnExplicitShutdown
+                    };
+                    ready.Set();
+                    _application.Run();
+                }
+                catch (Exception exception)
+                {
+                    startupException = exception;
+                    ready.Set();
+                }
+            })
+            {
+                IsBackground = true,
+                Name = "CipherVault.CredentialDispatcher"
+            };
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.Start();
+            ready.Wait();
+
+            if (startupException is not null || _application is null)
+            {
+                throw new InvalidOperationException(
+                    "无法启动 Windows 授权窗口。",
+                    startupException);
+            }
+
+            return _application;
+        }
+    }
+
+    private sealed class VaultCredentialPromptWindow : Window
+    {
+        private readonly PasswordBox _credentialBox;
+        private readonly ComboBox? _typeSelector;
+        private readonly TextBlock _credentialLabel;
+        private bool _confirmed;
+
+        public VaultCredentialPromptWindow(
+            string title,
+            string message,
+            VaultCredentialType? preferredType)
+        {
+            Title = title;
+            Width = 480;
+            Height = preferredType is null ? 270 : 225;
+            ResizeMode = ResizeMode.NoResize;
+            WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            Topmost = true;
+            ShowInTaskbar = true;
+
+            _credentialBox = new PasswordBox
+            {
+                MinHeight = 28,
+                Margin = new Thickness(0, 6, 0, 10)
+            };
+            _credentialLabel = new TextBlock
+            {
+                Text = "资料库密码：",
+                Margin = new Thickness(0, 10, 0, 0)
+            };
+
+            var approveButton = new Button
+            {
+                Content = "解锁",
+                MinWidth = 90,
+                Margin = new Thickness(0, 0, 8, 0),
+                IsDefault = true
+            };
+            approveButton.Click += (_, _) => Confirm();
+
+            var cancelButton = new Button
+            {
+                Content = "取消",
+                MinWidth = 90,
+                IsCancel = true
+            };
+            cancelButton.Click += (_, _) => Close();
+
+            var buttons = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right
+            };
+            buttons.Children.Add(approveButton);
+            buttons.Children.Add(cancelButton);
+
+            var panel = new StackPanel
+            {
+                Margin = new Thickness(20)
+            };
+            panel.Children.Add(new TextBlock
+            {
+                Text = message,
+                TextWrapping = TextWrapping.Wrap
+            });
+
+            if (preferredType is null)
+            {
+                _typeSelector = new ComboBox
+                {
+                    MinHeight = 28,
+                    Margin = new Thickness(0, 10, 0, 4),
+                    SelectedIndex = 0
+                };
+                _typeSelector.Items.Add(new ComboBoxItem { Content = "密码" });
+                _typeSelector.Items.Add(new ComboBoxItem { Content = "恢复密钥" });
+                _typeSelector.SelectionChanged += (_, _) => UpdateCredentialLabel();
+                panel.Children.Add(_typeSelector);
+            }
+            else
+            {
+                _initialType = preferredType.Value;
+            }
+
+            panel.Children.Add(_credentialLabel);
+            panel.Children.Add(_credentialBox);
+            panel.Children.Add(buttons);
+            Content = panel;
+            Loaded += (_, _) => _credentialBox.Focus();
+            UpdateCredentialLabel();
+        }
+
+        public VaultCredentialPromptResult Result => new(
+            _confirmed,
+            _confirmed ? _credentialBox.Password : null,
+            SelectedType);
+
+        private VaultCredentialType SelectedType => _initialType;
+
+        private VaultCredentialType _initialType { get; set; } =
+            VaultCredentialType.Password;
+
+        private void UpdateCredentialLabel()
+        {
+            if (_typeSelector is not null)
+            {
+                _initialType = _typeSelector.SelectedIndex == 1
+                    ? VaultCredentialType.RecoveryKey
+                    : VaultCredentialType.Password;
+            }
+            _credentialLabel.Text =
+                _initialType == VaultCredentialType.RecoveryKey
+                    ? "恢复密钥："
+                    : "资料库密码：";
+        }
+
+        private void Confirm()
+        {
+            if (string.IsNullOrEmpty(_credentialBox.Password))
+            {
+                return;
+            }
+
+            _confirmed = true;
+            Close();
+        }
+    }
+}

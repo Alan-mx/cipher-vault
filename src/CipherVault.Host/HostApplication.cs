@@ -1,4 +1,7 @@
+using CipherVault.Auth.Win;
+using CipherVault.Core;
 using CipherVault.Core.Configuration;
+using CipherVault.Core.Errors;
 using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Http;
@@ -14,10 +17,16 @@ public static class HostApplication
     public static WebApplication Configure(
         WebApplicationBuilder builder,
         ResolvedCipherVaultHostConfig configuration,
-        IAdminTokenStore adminTokenStore)
+        IAdminTokenStore adminTokenStore,
+        IHostCredentialPrompt credentialPrompt,
+        ISystemActivityProvider? activityProvider = null)
     {
         builder.Services.AddSingleton(configuration);
         builder.Services.AddSingleton(adminTokenStore);
+        builder.Services.AddSingleton(credentialPrompt);
+        builder.Services.AddSingleton<IVaultService>(_ => new VaultService(
+            activityProvider ?? new WindowsSystemActivityProvider(),
+            sessionOptions: configuration.SessionOptions));
         builder.Services.AddSingleton<HostSessionCoordinator>();
 
         var app = builder.Build();
@@ -35,9 +44,9 @@ public static class HostApplication
                         ProtocolVersion))));
         app.MapGet(
             configuration.Endpoint.AdminPath + "/status",
-            (HostSessionCoordinator sessions) =>
+            async (HostSessionCoordinator sessions, CancellationToken cancellationToken) =>
             {
-                var snapshot = sessions.GetSnapshot();
+                var snapshot = await sessions.GetSnapshotAsync(cancellationToken);
                 return Results.Json(
                     new HostApiResponse<HostStatusData>(
                         true,
@@ -50,16 +59,56 @@ public static class HostApplication
                                 $"http://{configuration.Endpoint.BindAddress}:{configuration.Endpoint.Port}",
                                 configuration.Endpoint.McpPath,
                                 configuration.Endpoint.AdminPath),
-                            new HostSessionStatusData(
-                                snapshot.State.ToString().ToLowerInvariant(),
-                                snapshot.SessionId,
-                                snapshot.StartedAt,
-                                snapshot.LastUserActivityAt,
-                                snapshot.IdleExpiresAt,
-                                snapshot.HardExpiresAt,
-                                snapshot.LockReason,
-                                snapshot.ActiveLeases,
-                                snapshot.ConnectedClients))));
+                            HostDtoMapper.ToSessionStatus(snapshot))));
+            });
+        app.MapPost(
+            configuration.Endpoint.AdminPath + "/session/unlock",
+            async (
+                HostUnlockRequest request,
+                HostSessionCoordinator sessions,
+                HttpContext context,
+                CancellationToken cancellationToken) =>
+            {
+                if (!TryParseCredentialPreference(
+                        request.CredentialType,
+                        out var preference))
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        StatusCodes.Status400BadRequest,
+                        HostErrorCode.InvalidInput,
+                        "credentialType must be any, password or recoveryKey.");
+                    return Results.Empty;
+                }
+
+                try
+                {
+                    var snapshot = await sessions.UnlockAsync(
+                        preference,
+                        cancellationToken);
+                    return Results.Json(
+                        new HostApiResponse<HostSessionStatusData>(
+                            true,
+                            HostDtoMapper.ToSessionStatus(snapshot)));
+                }
+                catch (HostException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        StatusCodes.Status403Forbidden,
+                        exception.Code,
+                        exception.Message);
+                    return Results.Empty;
+                }
+                catch (VaultException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        StatusCodes.Status400BadRequest,
+                        HostErrorCode.InvalidInput,
+                        exception.Message);
+                    return Results.Empty;
+                }
             });
         app.MapPost(
             configuration.Endpoint.AdminPath + "/host/stop",
@@ -102,5 +151,29 @@ public static class HostApplication
                 return Results.NoContent();
             });
         return app;
+    }
+
+    private static bool TryParseCredentialPreference(
+        string? value,
+        out HostCredentialPreference preference)
+    {
+        switch (value?.Trim().ToLowerInvariant())
+        {
+            case null:
+            case "":
+            case "any":
+                preference = HostCredentialPreference.Any;
+                return true;
+            case "password":
+                preference = HostCredentialPreference.Password;
+                return true;
+            case "recoverykey":
+            case "recovery-key":
+                preference = HostCredentialPreference.RecoveryKey;
+                return true;
+            default:
+                preference = HostCredentialPreference.Any;
+                return false;
+        }
     }
 }

@@ -1,3 +1,4 @@
+using System.IO;
 using CipherVault.Host.Security;
 
 namespace CipherVault.Host.Tests;

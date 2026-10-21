@@ -1,5 +1,6 @@
 using CipherVault.Core.Session;
 using CipherVault.Host.Session;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace CipherVault.Host.Tests;
 
@@ -8,7 +9,8 @@ public sealed class HostSessionCoordinatorTests
     [Fact]
     public async Task LockReturnsCompletedLockedSnapshot()
     {
-        var coordinator = new HostSessionCoordinator();
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var coordinator = fixture.App.Services.GetRequiredService<HostSessionCoordinator>();
 
         var snapshot = await coordinator.LockAsync("test-lock");
 
