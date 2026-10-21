@@ -1,6 +1,7 @@
 using CipherVault.Auth.Win;
 using CipherVault.Core;
 using CipherVault.Core.Configuration;
+using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
 using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
@@ -29,6 +30,7 @@ public static class HostApplication
             activityProvider ?? new WindowsSystemActivityProvider(),
             sessionOptions: configuration.SessionOptions));
         builder.Services.AddSingleton<HostSessionCoordinator>();
+        builder.Services.AddSingleton<HostVaultGateway>();
 
         var app = builder.Build();
         app.UseMiddleware<HostRequestValidationMiddleware>();
@@ -171,6 +173,47 @@ public static class HostApplication
                         context,
                         HostHttpResponses.ToStatusCode(exception.Code),
                         exception.Code,
+                        exception.Message);
+                    return Results.Empty;
+                }
+            });
+        app.MapGet(
+            configuration.Endpoint.AdminPath + "/catalog",
+            async (
+                string? folder,
+                string? cursor,
+                int? limit,
+                HostVaultGateway vault,
+                HttpContext context,
+                CancellationToken cancellationToken) =>
+            {
+                try
+                {
+                    var page = await vault.ExecuteAsync(
+                        (service, token) => service.ListCatalogAsync(
+                            folder,
+                            cursor,
+                            limit ?? 50,
+                            token),
+                        cancellationToken);
+                    return Results.Json(
+                        new HostApiResponse<VaultCatalogPage>(true, page));
+                }
+                catch (HostException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception.Code),
+                        exception.Code,
+                        exception.Message);
+                    return Results.Empty;
+                }
+                catch (VaultException exception)
+                {
+                    await HostHttpResponses.WriteErrorAsync(
+                        context,
+                        HostHttpResponses.ToStatusCode(exception),
+                        HostHttpResponses.ToHostErrorCode(exception),
                         exception.Message);
                     return Results.Empty;
                 }

@@ -47,6 +47,25 @@ internal sealed class HostTestFixture : IAsyncDisposable
     public IHostApplicationLifetime Lifetime =>
         App.Services.GetRequiredService<IHostApplicationLifetime>();
 
+    public async Task<VaultWriteResult> CreateNoteAsync(
+        string title,
+        string content,
+        string? folder = null)
+    {
+        await using var writer = new VaultService(new AlwaysActiveActivityProvider());
+        await writer.UnlockAsync(
+            VaultPath,
+            VaultPassword,
+            VaultCredentialType.Password);
+        return await writer.CreateNoteAsync(
+            title,
+            folder,
+            "md",
+            content,
+            tags: null,
+            VaultActorKind.UserUi);
+    }
+
     public static async Task<HostTestFixture> CreateAsync(
         string[]? allowedOrigins = null,
         bool initializeVault = true,

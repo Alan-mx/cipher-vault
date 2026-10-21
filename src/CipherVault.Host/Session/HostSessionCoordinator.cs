@@ -166,7 +166,7 @@ public sealed class HostSessionCoordinator
                 status.State is not (VaultSessionState.Unlocked or VaultSessionState.Expiring))
             {
                 throw new HostException(
-                    HostErrorCode.AccessDenied,
+                    HostErrorCode.SessionLocked,
                     "Vault is locked.");
             }
 

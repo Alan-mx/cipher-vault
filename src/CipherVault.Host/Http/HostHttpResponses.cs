@@ -1,4 +1,5 @@
 using CipherVault.Host.Contracts;
+using CipherVault.Core.Errors;
 
 namespace CipherVault.Host.Http;
 
@@ -37,6 +38,7 @@ internal static class HostHttpResponses
             HostErrorCode.AccessDenied => StatusCodes.Status403Forbidden,
             HostErrorCode.RateLimited => StatusCodes.Status429TooManyRequests,
             HostErrorCode.LockInProgress => StatusCodes.Status409Conflict,
+            HostErrorCode.SessionLocked => StatusCodes.Status423Locked,
             HostErrorCode.VaultInUse => StatusCodes.Status409Conflict,
             HostErrorCode.AlreadyExists => StatusCodes.Status409Conflict,
             HostErrorCode.NotFound => StatusCodes.Status404NotFound,
@@ -44,6 +46,34 @@ internal static class HostHttpResponses
             HostErrorCode.StorageError => StatusCodes.Status503ServiceUnavailable,
             HostErrorCode.HostUnavailable => StatusCodes.Status503ServiceUnavailable,
             _ => StatusCodes.Status503ServiceUnavailable
+        };
+    }
+
+    public static int ToStatusCode(VaultException exception)
+    {
+        return exception.Code switch
+        {
+            VaultErrorCode.InvalidInput => StatusCodes.Status400BadRequest,
+            VaultErrorCode.NotFound => StatusCodes.Status404NotFound,
+            VaultErrorCode.Conflict or VaultErrorCode.AlreadyExists =>
+                StatusCodes.Status409Conflict,
+            VaultErrorCode.SessionLocked or VaultErrorCode.SessionExpired =>
+                StatusCodes.Status423Locked,
+            _ => StatusCodes.Status503ServiceUnavailable
+        };
+    }
+
+    public static HostErrorCode ToHostErrorCode(VaultException exception)
+    {
+        return exception.Code switch
+        {
+            VaultErrorCode.InvalidInput => HostErrorCode.InvalidInput,
+            VaultErrorCode.NotFound => HostErrorCode.NotFound,
+            VaultErrorCode.Conflict => HostErrorCode.VaultInUse,
+            VaultErrorCode.AlreadyExists => HostErrorCode.AlreadyExists,
+            VaultErrorCode.SessionLocked or VaultErrorCode.SessionExpired =>
+                HostErrorCode.SessionLocked,
+            _ => HostErrorCode.StorageError
         };
     }
 
@@ -63,6 +93,7 @@ internal static class HostHttpResponses
             HostErrorCode.AccessDenied => "access_denied",
             HostErrorCode.RateLimited => "rate_limited",
             HostErrorCode.LockInProgress => "lock_in_progress",
+            HostErrorCode.SessionLocked => "session_locked",
             HostErrorCode.ConfigMigrationRequired => "config_migration_required",
             HostErrorCode.MaintenanceInProgress => "maintenance_in_progress",
             HostErrorCode.StorageError => "storage_error",
