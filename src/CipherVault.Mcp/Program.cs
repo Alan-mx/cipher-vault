@@ -38,13 +38,25 @@ builder.Services
     .WithStdioServerTransport()
     .WithTools<BridgeVaultTools>(tools);
 
-await builder.Build().RunAsync();
+var server = builder.Build();
+try
+{
+    await server.RunAsync();
+}
+finally
+{
+    await bridge.RevokeGrantAsync();
+}
 
 public sealed record BridgeSettings(
     Uri McpEndpoint,
     string AgentToken,
-    bool ReadOnly)
+    Guid ClientInstanceId,
+    IReadOnlySet<string> RequestedScopes)
 {
+    public bool ReadOnly => !RequestedScopes.Contains("write") &&
+        !RequestedScopes.Contains("delete");
+
     public static BridgeSettings Load(string[] arguments)
     {
         var configuration = CipherVaultHostConfiguration.Load(
@@ -86,33 +98,72 @@ public sealed record BridgeSettings(
         return new BridgeSettings(
             endpoint,
             token.Trim(),
-            ParseReadOnly(arguments));
+            Guid.NewGuid(),
+            ParseRequestedScopes(arguments));
     }
 
-    private static bool ParseReadOnly(string[] arguments)
+    private static IReadOnlySet<string> ParseRequestedScopes(string[] arguments)
     {
         var accessMode = GetOption(arguments, "--access-mode");
         var readOnly = arguments.Any(argument =>
             string.Equals(argument, "--read-only", StringComparison.OrdinalIgnoreCase));
-        if (readOnly)
+        var allowDelete = arguments.Any(argument =>
+            string.Equals(
+                argument,
+                "--allow-delete",
+                StringComparison.OrdinalIgnoreCase));
+        var scopesText = GetOption(arguments, "--scopes");
+        var scopes = new HashSet<string>(StringComparer.Ordinal);
+        if (string.IsNullOrWhiteSpace(scopesText))
         {
-            if (accessMode is not null &&
-                !string.Equals(accessMode, "readOnly", StringComparison.OrdinalIgnoreCase))
+            switch (accessMode?.ToLowerInvariant())
             {
-                throw new VaultException(
-                    VaultErrorCode.InvalidInput,
-                    "--read-only conflicts with --access-mode readWrite.");
+                case null:
+                case "":
+                case "readonly":
+                    scopes.Add("read");
+                    break;
+                case "readwrite":
+                    scopes.Add("read");
+                    scopes.Add("write");
+                    break;
+                default:
+                    throw new VaultException(
+                        VaultErrorCode.InvalidInput,
+                        "--access-mode must be readOnly or readWrite.");
             }
-            return true;
         }
-        return accessMode?.ToLowerInvariant() switch
+        else
         {
-            null or "" or "readonly" => true,
-            "readwrite" => false,
-            _ => throw new VaultException(
+            foreach (var scope in scopesText.Split(
+                         ',',
+                         StringSplitOptions.RemoveEmptyEntries |
+                         StringSplitOptions.TrimEntries))
+            {
+                var normalized = scope.ToLowerInvariant();
+                if (normalized is not ("read" or "write" or "delete"))
+                {
+                    throw new VaultException(
+                        VaultErrorCode.InvalidInput,
+                        "--scopes must contain only read, write and delete.");
+                }
+                scopes.Add(normalized);
+            }
+        }
+
+        if (allowDelete)
+        {
+            scopes.Add("read");
+            scopes.Add("write");
+            scopes.Add("delete");
+        }
+        if (readOnly && (scopes.Contains("write") || scopes.Contains("delete")))
+        {
+            throw new VaultException(
                 VaultErrorCode.InvalidInput,
-                "--access-mode must be readOnly or readWrite.")
-        };
+                "--read-only conflicts with requested write or delete scopes.");
+        }
+        return scopes;
     }
 
     private static string? GetOption(string[] arguments, string option)
@@ -169,16 +220,216 @@ public sealed class HostMcpBridgeClient
         new(JsonSerializerDefaults.Web);
     private readonly BridgeSettings _settings;
     private readonly HttpClient _http;
+    private readonly SemaphoreSlim _grantGate = new(1, 1);
+    private Guid _clientInstanceId;
+    private Guid? _grantId;
+    private string? _grantSecret;
 
     public HostMcpBridgeClient(BridgeSettings settings)
+        : this(settings, new HttpClient { Timeout = TimeSpan.FromMinutes(2) })
+    {
+    }
+
+    public HostMcpBridgeClient(BridgeSettings settings, HttpClient http)
     {
         _settings = settings;
-        _http = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
+        _clientInstanceId = settings.ClientInstanceId;
+        _http = http;
     }
 
     public async Task<string> CallToolAsync(
         string name,
         IReadOnlyDictionary<string, object?> arguments,
+        CancellationToken cancellationToken)
+    {
+        var result = await CallToolCoreAsync(
+            name,
+            arguments,
+            allowGrantRetry: true,
+            cancellationToken).ConfigureAwait(false);
+        if (!IsGrantRefreshError(result))
+        {
+            return result;
+        }
+
+        ClearGrant();
+        var grantError = await EnsureGrantAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (grantError is not null)
+        {
+            return grantError;
+        }
+        return await CallToolCoreAsync(
+            name,
+            arguments,
+            allowGrantRetry: false,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task RevokeGrantAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await _grantGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_grantId is null || _grantSecret is null)
+            {
+                return;
+            }
+
+            using var request = new HttpRequestMessage(
+                HttpMethod.Delete,
+                GrantEndpoint(_grantId.Value));
+            request.Headers.Authorization = new AuthenticationHeaderValue(
+                "Bearer",
+                _settings.AgentToken);
+            request.Headers.TryAddWithoutValidation(
+                "X-CipherVault-Grant",
+                _grantSecret);
+            using var response = await _http.SendAsync(
+                request,
+                cancellationToken).ConfigureAwait(false);
+            _ = response.IsSuccessStatusCode;
+        }
+        finally
+        {
+            ClearGrant();
+            _grantGate.Release();
+        }
+    }
+
+    private async Task<string?> EnsureGrantAsync(
+        CancellationToken cancellationToken)
+    {
+        await _grantGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_grantSecret is not null)
+            {
+                return null;
+            }
+
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                var requestId = Guid.NewGuid().ToString("N");
+                using var request = new HttpRequestMessage(
+                    HttpMethod.Post,
+                    GrantEndpoint())
+                {
+                    Content = new StringContent(
+                        JsonSerializer.Serialize(
+                            new
+                            {
+                                clientInstanceId = _clientInstanceId,
+                                scopes = _settings.RequestedScopes
+                                    .OrderBy(value => value, StringComparer.Ordinal)
+                                    .ToArray()
+                            },
+                            JsonOptions),
+                        Encoding.UTF8,
+                        "application/json")
+                };
+                request.Headers.Authorization = new AuthenticationHeaderValue(
+                    "Bearer",
+                    _settings.AgentToken);
+                request.Headers.TryAddWithoutValidation("X-Request-Id", requestId);
+                using var response = await _http.SendAsync(
+                    request,
+                    cancellationToken).ConfigureAwait(false);
+                if (response.StatusCode == HttpStatusCode.Conflict && attempt == 0)
+                {
+                    _clientInstanceId = Guid.NewGuid();
+                    continue;
+                }
+                if (response.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    return Error("invalid_token", "Host rejected the Agent Token.");
+                }
+                if (response.StatusCode == (HttpStatusCode)423)
+                {
+                    return Error(
+                        "auth_required",
+                        "Unlock CipherVault before using MCP tools.");
+                }
+                if (response.StatusCode == HttpStatusCode.Forbidden)
+                {
+                    return Error(
+                        "access_denied",
+                        "CipherVault access was not approved.");
+                }
+                if (response.StatusCode == (HttpStatusCode)429)
+                {
+                    return Error(
+                        "access_grant_cooldown",
+                        "CipherVault access requests are temporarily blocked.");
+                }
+                if (!response.IsSuccessStatusCode)
+                {
+                    return Error(
+                        "host_error",
+                        $"Host returned HTTP {(int)response.StatusCode}.");
+                }
+
+                var body = await response.Content.ReadAsStringAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                var json = ExtractJson(
+                    body,
+                    response.Content.Headers.ContentType?.MediaType);
+                using var document = JsonDocument.Parse(json);
+                var root = document.RootElement;
+                if (!root.TryGetProperty("ok", out var ok) || !ok.GetBoolean())
+                {
+                    return Error(
+                        "access_denied",
+                        "CipherVault access was not approved.");
+                }
+                var data = root.GetProperty("data");
+                var secret = data.GetProperty("secret").GetString();
+                var grantId = data
+                    .GetProperty("grant")
+                    .GetProperty("grantId")
+                    .GetGuid();
+                if (string.IsNullOrWhiteSpace(secret))
+                {
+                    return Error(
+                        "host_error",
+                        "Host returned an invalid Access Grant.");
+                }
+
+                _grantId = grantId;
+                _grantSecret = secret;
+                return null;
+            }
+            return Error(
+                "host_error",
+                "Host already has an Access Grant for this Bridge instance.");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is HttpRequestException or
+                TaskCanceledException or
+                JsonException or
+                InvalidOperationException or
+                KeyNotFoundException)
+        {
+            return Error(
+                "host_unavailable",
+                "CipherVault Host is unavailable. Start CipherVault.Host.exe " +
+                "or open the desktop app, then try again.");
+        }
+        finally
+        {
+            _grantGate.Release();
+        }
+    }
+
+    private async Task<string> CallToolCoreAsync(
+        string name,
+        IReadOnlyDictionary<string, object?> arguments,
+        bool allowGrantRetry,
         CancellationToken cancellationToken)
     {
         var requestId = Guid.NewGuid().ToString("N");
@@ -221,6 +472,12 @@ public sealed class HostMcpBridgeClient
         request.Headers.TryAddWithoutValidation("Mcp-Method", "tools/call");
         request.Headers.TryAddWithoutValidation("Mcp-Name", name);
         request.Headers.TryAddWithoutValidation("X-Request-Id", requestId);
+        if (_grantSecret is not null)
+        {
+            request.Headers.TryAddWithoutValidation(
+                "X-CipherVault-Grant",
+                _grantSecret);
+        }
 
         try
         {
@@ -289,6 +546,47 @@ public sealed class HostMcpBridgeClient
                 "host_unavailable",
                 "CipherVault Host is unavailable. Start CipherVault.Host.exe " +
                 "or open the desktop app, then try again.");
+        }
+    }
+
+    private Uri GrantEndpoint(Guid? grantId = null)
+    {
+        var root = _settings.McpEndpoint.AbsoluteUri.TrimEnd('/');
+        return new Uri(
+            grantId is null
+                ? root + "/access-grants"
+                : root + "/access-grants/" + grantId.Value.ToString("D"));
+    }
+
+    private void ClearGrant()
+    {
+        _grantId = null;
+        _grantSecret = null;
+    }
+
+    private static bool IsGrantRefreshError(string result)
+    {
+        var code = GetErrorCode(result);
+        return code is
+            "access_grant_required" or
+            "access_grant_invalid" or
+            "access_grant_expired" or
+            "access_grant_revoked";
+    }
+
+    private static string? GetErrorCode(string result)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(result);
+            return document.RootElement.TryGetProperty("error", out var error) &&
+                error.TryGetProperty("code", out var code)
+                ? code.GetString()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 
