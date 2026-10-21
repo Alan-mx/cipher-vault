@@ -200,6 +200,27 @@ public sealed class ClientsEndpointTests
     }
 
     [Fact]
+    public async Task UpdateToStaticTokenWithWriteAccessIsRejected()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        using var create = CreateCreateRequest(
+            new HostCreateClientRequest("codex", "readWrite", "accessGrant"));
+        using var createResponse = await fixture.Client.SendAsync(create);
+        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+
+        using var update = CreateUpdateRequest(
+            "codex",
+            new HostUpdateClientRequest("readWrite", "staticToken", true));
+        using var updateResponse = await fixture.Client.SendAsync(update);
+
+        Assert.Equal(HttpStatusCode.BadRequest, updateResponse.StatusCode);
+        var payload = await updateResponse.Content.ReadFromJsonAsync<
+            HostApiErrorResponse>(JsonOptions);
+        Assert.NotNull(payload);
+        Assert.Equal("invalid_input", payload.Error.Code);
+    }
+
+    [Fact]
     public async Task RotateClientReturnsNewTokenAndReplacesHash()
     {
         await using var fixture = await HostTestFixture.CreateAsync();

@@ -333,6 +333,65 @@ public sealed class AccessGrantEndpointTests
         Assert.Empty(await ReadAccessGrantsAsync(fixture.Client));
     }
 
+    [Fact]
+    public async Task ChangingAuthorizationModeOrAccessModeRevokesGrant()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        await UnlockHostAsync(fixture.Client);
+        var token = await CreateAgentAsync(
+            fixture.Client,
+            "mode-change-agent",
+            "readWrite",
+            "accessGrant");
+        await CreateGrantAsync(fixture.Client, token, Guid.NewGuid(), "read", "write");
+
+        using (var modeChange = await SendAdminAsync(
+                   fixture.Client,
+                   HttpMethod.Patch,
+                   "/admin/v1/clients/mode-change-agent",
+                   new HostUpdateClientRequest(
+                       "readOnly",
+                       "staticToken",
+                       true)))
+        {
+            modeChange.EnsureSuccessStatusCode();
+        }
+        Assert.Empty(await ReadAccessGrantsAsync(fixture.Client));
+
+        using (var grantAfterModeChange = await SendGrantRequestAsync(
+                   fixture.Client,
+                   token,
+                   Guid.NewGuid(),
+                   "read"))
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, grantAfterModeChange.StatusCode);
+        }
+
+        var readWriteToken = await CreateAgentAsync(
+            fixture.Client,
+            "access-mode-agent",
+            "readWrite",
+            "accessGrant");
+        await CreateGrantAsync(
+            fixture.Client,
+            readWriteToken,
+            Guid.NewGuid(),
+            "read",
+            "write");
+        using (var accessModeChange = await SendAdminAsync(
+                   fixture.Client,
+                   HttpMethod.Patch,
+                   "/admin/v1/clients/access-mode-agent",
+                   new HostUpdateClientRequest(
+                       "readOnly",
+                       "accessGrant",
+                       true)))
+        {
+            accessModeChange.EnsureSuccessStatusCode();
+        }
+        Assert.Empty(await ReadAccessGrantsAsync(fixture.Client));
+    }
+
     private static async Task UnlockHostAsync(HttpClient client)
     {
         using var request = new HttpRequestMessage(
@@ -427,13 +486,14 @@ public sealed class AccessGrantEndpointTests
     private static async Task<HostIssuedAccessGrantData> CreateGrantAsync(
         HttpClient client,
         string agentToken,
-        Guid clientInstanceId)
+        Guid clientInstanceId,
+        params string[] scopes)
     {
         using var response = await SendGrantRequestAsync(
             client,
             agentToken,
             clientInstanceId,
-            "read");
+            scopes.Length == 0 ? ["read"] : scopes);
         response.EnsureSuccessStatusCode();
         var payload = await response.Content.ReadFromJsonAsync<
             HostApiResponse<HostIssuedAccessGrantData>>(JsonOptions);
