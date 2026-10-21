@@ -73,7 +73,7 @@ public sealed class HttpHostVaultClient : IHostVaultClient
             expectedFingerprint);
         try
         {
-            var health = await client.ProbeHealthAsync(cancellationToken)
+            var health = await client.ProbeIdentityAsync(cancellationToken)
                 .ConfigureAwait(false);
             if (health is null)
             {
@@ -460,15 +460,16 @@ public sealed class HttpHostVaultClient : IHostVaultClient
         return ValueTask.CompletedTask;
     }
 
-    private async Task<HostHealthData?> ProbeHealthAsync(
+    private async Task<HostHealthData?> ProbeIdentityAsync(
         CancellationToken cancellationToken)
     {
         try
         {
             using var request = CreateRequest(
                 HttpMethod.Get,
-                "/health",
-                body: null);
+                "/identity",
+                body: null,
+                includeAuthorization: false);
             using var response = await _http.SendAsync(
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
@@ -478,14 +479,14 @@ public sealed class HttpHostVaultClient : IHostVaultClient
                 throw new VaultException(
                     VaultErrorCode.StorageError,
                     "A process is listening on the configured Host port, " +
-                    "but it rejected the CipherVault health request.");
+                    "but it rejected the CipherVault identity request.");
             }
             var payload = await response.Content.ReadFromJsonAsync<
                 HostApiResponse<HostHealthData>>(JsonOptions, cancellationToken)
                 .ConfigureAwait(false);
             return payload?.Data ?? throw new VaultException(
                 VaultErrorCode.StorageError,
-                "CipherVault Host returned an invalid health response.");
+                "CipherVault Host returned an invalid identity response.");
         }
         catch (HttpRequestException)
         {
@@ -502,7 +503,7 @@ public sealed class HttpHostVaultClient : IHostVaultClient
         var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(15);
         while (DateTimeOffset.UtcNow < deadline)
         {
-            var health = await ProbeHealthAsync(cancellationToken).ConfigureAwait(false);
+            var health = await ProbeIdentityAsync(cancellationToken).ConfigureAwait(false);
             if (health is not null)
             {
                 ValidateFingerprint(health);
@@ -596,14 +597,18 @@ public sealed class HttpHostVaultClient : IHostVaultClient
     private HttpRequestMessage CreateRequest(
         HttpMethod method,
         string path,
-        object? body)
+        object? body,
+        bool includeAuthorization = true)
     {
         var request = new HttpRequestMessage(
             method,
             _adminPath + path);
-        request.Headers.Authorization = new AuthenticationHeaderValue(
-            "Bearer",
-            _adminToken);
+        if (includeAuthorization)
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue(
+                "Bearer",
+                _adminToken);
+        }
         if (body is not null)
         {
             request.Content = JsonContent.Create(body, options: JsonOptions);

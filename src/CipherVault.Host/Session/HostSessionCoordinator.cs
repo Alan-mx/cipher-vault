@@ -249,16 +249,28 @@ public sealed class HostSessionCoordinator
         return new HostClientConnection(ReleaseClient);
     }
 
-    public async Task<T> ExecuteMaintenanceAsync<T>(
+    public Task<T> ExecuteMaintenanceAsync<T>(
         Func<IVaultService, CancellationToken, Task<T>> operation,
         CancellationToken cancellationToken = default)
+    {
+        return ExecuteMaintenanceCoreAsync(
+            operation,
+            allowLocked: false,
+            cancellationToken);
+    }
+
+    private async Task<T> ExecuteMaintenanceCoreAsync<T>(
+        Func<IVaultService, CancellationToken, Task<T>> operation,
+        bool allowLocked,
+        CancellationToken cancellationToken)
     {
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             var status = await _vault.GetStatusAsync(cancellationToken)
                 .ConfigureAwait(false);
-            Task drainedTask;
+            var drainedTask = Task.CompletedTask;
+            var waitForLeases = false;
             lock (_stateSync)
             {
                 if (_maintenanceActive)
@@ -267,10 +279,13 @@ public sealed class HostSessionCoordinator
                         HostErrorCode.MaintenanceInProgress,
                         "Vault maintenance is already in progress.");
                 }
+                var isLocked = status.State == VaultSessionState.Locked;
                 if (_state == VaultSessionState.Locking ||
-                    status.State is not (
-                        VaultSessionState.Unlocked or
-                        VaultSessionState.Expiring))
+                    (!isLocked &&
+                        status.State is not (
+                            VaultSessionState.Unlocked or
+                            VaultSessionState.Expiring)) ||
+                    (isLocked && !allowLocked))
                 {
                     throw new HostException(
                         HostErrorCode.SessionLocked,
@@ -279,7 +294,11 @@ public sealed class HostSessionCoordinator
 
                 _maintenanceActive = true;
                 _state = status.State;
-                if (_activeLeases == 0)
+                if (isLocked)
+                {
+                    _leaseCancellation?.Cancel();
+                }
+                else if (_activeLeases == 0)
                 {
                     drainedTask = Task.CompletedTask;
                 }
@@ -288,16 +307,20 @@ public sealed class HostSessionCoordinator
                     _leasesDrained = new TaskCompletionSource(
                         TaskCreationOptions.RunContinuationsAsynchronously);
                     drainedTask = _leasesDrained.Task;
+                    waitForLeases = true;
                 }
             }
 
-            var timeoutTask = Task.Delay(_lockDrainTimeout, cancellationToken);
-            if (await Task.WhenAny(drainedTask, timeoutTask).ConfigureAwait(false) !=
-                drainedTask)
+            if (waitForLeases)
             {
-                throw new HostException(
-                    HostErrorCode.MaintenanceInProgress,
-                    "Vault operations did not drain before maintenance started.");
+                var timeoutTask = Task.Delay(_lockDrainTimeout, cancellationToken);
+                if (await Task.WhenAny(drainedTask, timeoutTask).ConfigureAwait(false) !=
+                    drainedTask)
+                {
+                    throw new HostException(
+                        HostErrorCode.MaintenanceInProgress,
+                        "Vault operations did not drain before maintenance started.");
+                }
             }
 
             return await operation(_vault, cancellationToken).ConfigureAwait(false);
@@ -588,7 +611,7 @@ public sealed class HostSessionCoordinator
         VaultActorKind actor,
         CancellationToken cancellationToken = default)
     {
-        await ExecuteMaintenanceAsync(
+        await ExecuteMaintenanceCoreAsync(
             async (vault, token) =>
             {
                 var prompt = await _credentialPrompt.RequestAsync(
@@ -615,6 +638,7 @@ public sealed class HostSessionCoordinator
                     token).ConfigureAwait(false);
                 return true;
             },
+            allowLocked: true,
             cancellationToken).ConfigureAwait(false);
     }
 

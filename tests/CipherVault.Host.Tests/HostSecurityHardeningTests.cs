@@ -97,6 +97,44 @@ public sealed class HostSecurityHardeningTests
     }
 
     [Fact]
+    public async Task AgentTokenFailuresDoNotBlockOtherAgentTokens()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var token = await CreateAgentAsync(fixture.Client);
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            using var invalid = CreateMcpRequest("wrong-agent-token");
+            using var response = await fixture.Client.SendAsync(invalid);
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+
+        using var validRequest = CreateMcpRequest(token);
+        using var validResponse = await fixture.Client.SendAsync(validRequest);
+
+        Assert.NotEqual(HttpStatusCode.Unauthorized, validResponse.StatusCode);
+        Assert.NotEqual((HttpStatusCode)429, validResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task GlobalRateLimitBackstopBlocksAfterManyDistinctFailures()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            using var invalid = await SendHealthAsync(
+                fixture.Client,
+                $"wrong-token-{attempt}");
+            Assert.Equal(HttpStatusCode.Unauthorized, invalid.StatusCode);
+        }
+
+        using var blocked = await SendHealthAsync(
+            fixture.Client,
+            HostTestFixture.AdminToken);
+
+        Assert.Equal((HttpStatusCode)429, blocked.StatusCode);
+    }
+
+    [Fact]
     public async Task AgentTokenIsRevokedImmediatelyAndCannotUseAdminApi()
     {
         await using var fixture = await HostTestFixture.CreateAsync();

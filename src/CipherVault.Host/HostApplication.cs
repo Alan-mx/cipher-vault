@@ -303,18 +303,29 @@ public static class HostApplication
 
                 return Results.NoContent();
             });
+        HostHealthData CreateHealthData()
+        {
+            return new HostHealthData(
+                "ready",
+                typeof(HostApplication).Assembly.GetName().Version?.ToString()
+                    ?? "1.0.0",
+                ProtocolVersion,
+                hostInstanceId,
+                configFingerprint);
+        }
+
+        app.MapGet(
+            configuration.Endpoint.AdminPath + "/identity",
+            () => Results.Json(
+                new HostApiResponse<HostHealthData>(
+                    true,
+                    CreateHealthData())));
         app.MapGet(
             configuration.Endpoint.AdminPath + "/health",
             () => Results.Json(
                 new HostApiResponse<HostHealthData>(
                     true,
-                    new HostHealthData(
-                        "ready",
-                        typeof(HostApplication).Assembly.GetName().Version?.ToString()
-                            ?? "1.0.0",
-                        ProtocolVersion,
-                        hostInstanceId,
-                        configFingerprint))));
+                    CreateHealthData())));
         app.MapGet(
             configuration.Endpoint.AdminPath + "/access-grants",
             (AccessGrantService grants) =>

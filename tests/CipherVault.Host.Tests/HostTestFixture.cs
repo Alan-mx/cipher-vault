@@ -77,7 +77,8 @@ internal sealed class HostTestFixture : IAsyncDisposable
     public static async Task<HostTestFixture> CreateAsync(
         string[]? allowedOrigins = null,
         bool initializeVault = true,
-        IReadOnlyList<AgentClientPolicy>? clients = null)
+        IReadOnlyList<AgentClientPolicy>? clients = null,
+        bool confirmRecoveryKey = true)
     {
         var root = Path.Combine(
             Path.GetTempPath(),
@@ -91,10 +92,13 @@ internal sealed class HostTestFixture : IAsyncDisposable
                 new AlwaysActiveActivityProvider());
             var initialized = await initializer.InitializeAsync(vaultPath, VaultPassword);
             recoveryKey = initialized.RecoveryKey;
-            await initializer.ConfirmRecoveryKeyAsync(
-                vaultPath,
-                initialized.RecoveryKey,
-                VaultActorKind.UserUi);
+            if (confirmRecoveryKey)
+            {
+                await initializer.ConfirmRecoveryKeyAsync(
+                    vaultPath,
+                    initialized.RecoveryKey,
+                    VaultActorKind.UserUi);
+            }
         }
 
         var builder = WebApplication.CreateBuilder();

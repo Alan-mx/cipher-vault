@@ -1,5 +1,7 @@
 using System.Net.Http.Headers;
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using CipherVault.Core.Configuration;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Security;
@@ -15,6 +17,7 @@ internal sealed class AgentTokenAuthenticationMiddleware
     private readonly RequestDelegate _next;
     private readonly AgentTokenStore _tokenStore;
     private readonly HostAuthenticationRateLimiter _rateLimiter;
+    private readonly HostAuthenticationKeyedRateLimiter _keyedRateLimiter;
     private readonly ISecurityEventLog _securityLog;
     private readonly HostSessionCoordinator _sessions;
     private readonly string _mcpPath;
@@ -30,6 +33,7 @@ internal sealed class AgentTokenAuthenticationMiddleware
         _next = next;
         _tokenStore = tokenStore;
         _rateLimiter = rateLimiters.Agent;
+        _keyedRateLimiter = rateLimiters.AgentKeys;
         _securityLog = securityLog;
         _sessions = sessions;
         _mcpPath = configuration.Endpoint.McpPath;
@@ -45,27 +49,27 @@ internal sealed class AgentTokenAuthenticationMiddleware
             return;
         }
 
+        var hasToken = TryReadBearerToken(context.Request, out var presentedToken);
+        var attemptKey = hasToken
+            ? ComputeAttemptKey(presentedToken)
+            : GetMissingTokenKey(context);
         if (_rateLimiter.TryGetBlockedUntil(out var blockedUntil))
         {
-            await LogAsync(
-                context,
-                "rate_limited",
-                "rate_limited").ConfigureAwait(false);
-            context.Response.Headers.RetryAfter = Math.Max(
-                1,
-                (int)Math.Ceiling((blockedUntil - DateTimeOffset.UtcNow).TotalSeconds))
-                .ToString(System.Globalization.CultureInfo.InvariantCulture);
-            await HostHttpResponses.WriteErrorAsync(
-                context,
-                StatusCodes.Status429TooManyRequests,
-                HostErrorCode.RateLimited,
-                "Too many authentication failures. Try again later.");
+            await RejectRateLimitedAsync(context, blockedUntil).ConfigureAwait(false);
+            return;
+        }
+        if (_keyedRateLimiter.TryGetBlockedUntil(
+                attemptKey,
+                out blockedUntil))
+        {
+            await RejectRateLimitedAsync(context, blockedUntil).ConfigureAwait(false);
             return;
         }
 
-        if (!TryReadBearerToken(context.Request, out var presentedToken))
+        if (!hasToken)
         {
             _rateLimiter.RecordFailure();
+            _keyedRateLimiter.RecordFailure(attemptKey);
             await LogAsync(
                 context,
                 "invalid_token",
@@ -80,6 +84,7 @@ internal sealed class AgentTokenAuthenticationMiddleware
         if (client is null)
         {
             _rateLimiter.RecordFailure();
+            _keyedRateLimiter.RecordFailure(attemptKey);
             await LogAsync(
                 context,
                 "invalid_token",
@@ -88,7 +93,7 @@ internal sealed class AgentTokenAuthenticationMiddleware
             return;
         }
 
-        _rateLimiter.RecordSuccess();
+        _keyedRateLimiter.RecordSuccess(attemptKey);
         var identity = new ClaimsIdentity(
             [
                 new Claim(ClientIdClaim, client.ClientId),
@@ -105,6 +110,37 @@ internal sealed class AgentTokenAuthenticationMiddleware
         context.Response.Headers.Pragma = "no-cache";
         using var connection = _sessions.EnterClient();
         await _next(context);
+    }
+
+    private static string ComputeAttemptKey(string token)
+    {
+        return "token:" + Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+    }
+
+    private static string GetMissingTokenKey(HttpContext context)
+    {
+        return "missing:" +
+            (context.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+    }
+
+    private async Task RejectRateLimitedAsync(
+        HttpContext context,
+        DateTimeOffset blockedUntil)
+    {
+        await LogAsync(
+            context,
+            "rate_limited",
+            "rate_limited").ConfigureAwait(false);
+        context.Response.Headers.RetryAfter = Math.Max(
+            1,
+            (int)Math.Ceiling((blockedUntil - DateTimeOffset.UtcNow).TotalSeconds))
+            .ToString(System.Globalization.CultureInfo.InvariantCulture);
+        await HostHttpResponses.WriteErrorAsync(
+            context,
+            StatusCodes.Status429TooManyRequests,
+            HostErrorCode.RateLimited,
+            "Too many authentication failures. Try again later.");
     }
 
     private static bool TryReadBearerToken(

@@ -37,6 +37,24 @@ public sealed class HealthEndpointTests
     }
 
     [Fact]
+    public async Task IdentityEndpointDoesNotRequireAuthentication()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        using var request = HostTestFixture.CreateRequest("/admin/v1/identity");
+
+        using var response = await fixture.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("no-store", response.Headers.CacheControl?.ToString());
+        var payload = await response.Content.ReadFromJsonAsync<
+            HostApiResponse<HostHealthData>>(JsonOptions);
+        Assert.NotNull(payload);
+        Assert.True(payload.Ok);
+        Assert.Equal("ready", payload.Data.Status);
+        Assert.Equal(64, payload.Data.ConfigFingerprint.Length);
+    }
+
+    [Fact]
     public async Task MissingTokenIsRejected()
     {
         await using var fixture = await HostTestFixture.CreateAsync();
