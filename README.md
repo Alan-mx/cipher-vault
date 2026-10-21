@@ -35,7 +35,15 @@ CipherVault.Ui.Wpf / CipherVault.Cli / CipherVault.Mcp
 - Unlocking once in Host is shared by WPF, CLI, HTTP MCP and STDIO bridge clients.
 - Agent Tokens are stored only as SHA-256 hashes and are shown once when created
   or rotated.
-- MCP clients default to `readOnly`; write access must be assigned explicitly.
+- Agent clients default to `accessGrant`; content tools then require a
+  user-approved short-lived Access Grant in addition to the Agent Token.
+- `staticToken` is an explicit read-only compatibility mode for clients that
+  cannot supply a dynamic Grant credential. It never supports writes or deletes.
+- A Grant is bound to a ClientId, Bridge instance and Vault session; it expires
+  after 30 minutes idle or 4 hours, whichever is earlier, and is revoked by
+  Vault locking, Token rotation, disabling or deletion.
+- Grant scopes are `read`, `write` and `delete`; delete must be explicitly
+  approved and never implies more than the Agent Token's permission ceiling.
 - Admin and Agent Tokens use separate routes and cannot substitute for each other.
 - WPF and CLI use separate DPAPI-protected Admin Tokens, so audit identity is
   derived from the authenticated token rather than a client-supplied header.
@@ -179,6 +187,12 @@ default_tools_approval_mode = "prompt"
 The HTTP transport is SDK-managed Streamable HTTP and uses stateless MCP protocol
 sessions. Vault unlock state is maintained independently by Host.
 
+With `authorizationMode=staticToken`, this configuration can call read-only
+tools after the Host is unlocked. With `authorizationMode=accessGrant`, content
+tools require an `X-CipherVault-Grant` credential. Since Codex and other clients
+cannot usually configure a dynamic second header, use the STDIO bridge for the
+complete Grant flow.
+
 ## STDIO Bridge
 
 Use the bridge only when the client cannot configure Streamable HTTP:
@@ -186,14 +200,20 @@ Use the bridge only when the client cannot configure Streamable HTTP:
 ```toml
 [mcp_servers.cipher_vault]
 command = 'D:\path\to\CipherVault.Mcp.exe'
-args = ['--config', 'D:\path\to\config.json', '--read-only']
+args = ['--config', 'D:\path\to\config.json', '--access-mode', 'readWrite']
 tool_timeout_sec = 120
 default_tools_approval_mode = "prompt"
 ```
 
 Set `CIPHER_VAULT_MCP_TOKEN` for the bridge process. A different variable can be
-selected with `--token-env`. `--read-only` is only a local upper bound; Host Token
-permissions remain authoritative.
+selected with `--token-env`. By default the Bridge requests only `read`.
+`--access-mode readWrite` requests `read,write`; add `--allow-delete` only when
+the user should be able to approve deletion.
+
+On the first content tool call, the Bridge requests an Access Grant and the Host
+shows one approval window. After approval, the Bridge keeps the Grant in process
+memory and does not ask again unless it expires, is revoked, or Vault locks. The
+Host remains the authority if the Bridge is misconfigured.
 
 The bridge always derives its HTTP endpoint from the validated CipherVault
 configuration. It does not support an external URL override, so the Agent Token
