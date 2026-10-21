@@ -39,7 +39,8 @@ public sealed record HostSessionStatusData(
     DateTimeOffset? HardExpiresAt,
     string? LockReason,
     int ActiveLeases,
-    int ConnectedClients);
+    int ConnectedClients,
+    bool RecoveryVerified);
 
 public sealed record HostInitializeData(
     Guid VaultId,

@@ -16,6 +16,7 @@ internal static class HostDtoMapper
             snapshot.HardExpiresAt,
             snapshot.LockReason,
             snapshot.ActiveLeases,
-            snapshot.ConnectedClients);
+            snapshot.ConnectedClients,
+            snapshot.RecoveryVerified);
     }
 }

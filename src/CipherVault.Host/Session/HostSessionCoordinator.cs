@@ -618,7 +618,8 @@ public sealed class HostSessionCoordinator
             HardExpiresAt: null,
             LockReason: _lockReason,
             ActiveLeases: _activeLeases,
-            ConnectedClients: 0);
+            ConnectedClients: 0,
+            RecoveryVerified: false);
     }
 
     private HostSessionSnapshot CreateSnapshot(VaultSessionStatus status)
@@ -632,6 +633,7 @@ public sealed class HostSessionCoordinator
             status.HardExpiresAt,
             _lockReason ?? status.LockReason,
             _activeLeases,
-            ConnectedClients: 0);
+            ConnectedClients: 0,
+            status.RecoveryVerified);
     }
 }

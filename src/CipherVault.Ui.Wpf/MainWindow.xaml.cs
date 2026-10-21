@@ -24,8 +24,8 @@ public partial class MainWindow : Window
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
     };
 
-    private readonly VaultService _service;
-    private readonly DispatcherTimer _statusTimer;
+    private IHostVaultClient _service = null!;
+    private DispatcherTimer _statusTimer = null!;
     private readonly string _configuredVaultPath;
     private readonly bool _startupFailed;
     private Guid? _importJobId;
@@ -39,33 +39,52 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        ResolvedCipherVaultConfig configuration;
+        ResolvedCipherVaultHostConfig configuration;
         try
         {
             var arguments = Environment.GetCommandLineArgs();
-            configuration = CipherVaultConfiguration.Load(
+            configuration = CipherVaultHostConfiguration.Load(
                 CreateCommandLineOverrides(arguments),
                 GetOption(arguments, "--config"));
+            _service = HttpHostVaultClient.CreateAsync(configuration)
+                .GetAwaiter()
+                .GetResult();
         }
-        catch (VaultException exception)
+        catch (Exception exception)
         {
             MessageBox.Show(
-                $"错误 {exception.Code}：{exception.Message}",
+                $"错误：{exception.Message}",
                 "CipherVault 加密资料库",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
             _startupFailed = true;
-            configuration = new ResolvedCipherVaultConfig(
+            configuration = new ResolvedCipherVaultHostConfig(
                 CipherVaultConfiguration.DefaultVaultPath,
                 VaultSessionOptions.Default,
-                McpAccessMode.ReadWrite,
+                new HostEndpointOptions(
+                    "127.0.0.1",
+                    43127,
+                    "/mcp",
+                    "/admin/v1",
+                    4 * 1024 * 1024,
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase)),
+                [],
                 CipherVaultConfiguration.DefaultConfigPath);
         }
-        _configuredVaultPath = configuration.VaultPath
-            ?? CipherVaultConfiguration.DefaultVaultPath;
-        _service = new VaultService(
-            new WindowsSystemActivityProvider(),
-            sessionOptions: configuration.SessionOptions);
+        _configuredVaultPath = configuration.VaultPath;
+        InitializeWindow();
+    }
+
+    public MainWindow(string configuredVaultPath, IHostVaultClient service)
+    {
+        InitializeComponent();
+        _configuredVaultPath = Path.GetFullPath(configuredVaultPath);
+        _service = service;
+        InitializeWindow();
+    }
+
+    private void InitializeWindow()
+    {
         _statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _statusTimer.Tick += StatusTimer_Tick;
         Loaded += MainWindow_Loaded;
@@ -89,7 +108,10 @@ public partial class MainWindow : Window
     private async void MainWindow_Closed(object? sender, EventArgs e)
     {
         _statusTimer.Stop();
-        await _service.DisposeAsync();
+        if (_service is not null)
+        {
+            await _service.DisposeAsync();
+        }
     }
 
     private async void InitializeButton_Click(object sender, RoutedEventArgs e)
@@ -100,7 +122,8 @@ public partial class MainWindow : Window
         }
         var path = VaultPathTextBox.Text.Trim();
         var password = PasswordBox.Password;
-        if (string.IsNullOrWhiteSpace(path) || string.IsNullOrEmpty(password))
+        if (string.IsNullOrWhiteSpace(path) ||
+            (!_service.PromptsForCredentials && string.IsNullOrEmpty(password)))
         {
             ShowInfo("请输入资料库文件夹和密码。");
             return;
@@ -128,7 +151,8 @@ public partial class MainWindow : Window
             credentialType,
             PasswordBox,
             RecoveryKeyUnlockBox);
-        if (string.IsNullOrWhiteSpace(path) || string.IsNullOrEmpty(credential))
+        if (string.IsNullOrWhiteSpace(path) ||
+            (!_service.PromptsForCredentials && string.IsNullOrEmpty(credential)))
         {
             ShowInfo("请输入资料库文件夹和凭据。");
             return;
@@ -183,6 +207,20 @@ public partial class MainWindow : Window
         });
     }
 
+    private async void ExitAndLockButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy)
+        {
+            return;
+        }
+        await RunBusyAsync(async () =>
+        {
+            await _service.LockAsync("desktop-exit");
+            _statusTimer.Stop();
+            Close();
+        });
+    }
+
     private void CopyRecoveryButton_Click(object sender, RoutedEventArgs e)
     {
         if (!string.IsNullOrEmpty(RecoveryKeyTextBox.Text))
@@ -198,7 +236,7 @@ public partial class MainWindow : Window
             return;
         }
         var recoveryKey = NormalizeRecoveryKey(RecoveryConfirmTextBox.Text);
-        if (string.IsNullOrEmpty(recoveryKey))
+        if (!_service.PromptsForCredentials && string.IsNullOrEmpty(recoveryKey))
         {
             ShowInfo("请重新输入恢复密钥，确认已保存。");
             return;
@@ -207,8 +245,7 @@ public partial class MainWindow : Window
         {
             await _service.ConfirmRecoveryKeyAsync(
                 VaultPathTextBox.Text.Trim(),
-                recoveryKey,
-                VaultActorKind.UserUi);
+                recoveryKey);
             RecoveryPanel.Visibility = Visibility.Collapsed;
             RecoveryKeyTextBox.Clear();
             RecoveryConfirmTextBox.Clear();
@@ -361,8 +398,7 @@ public partial class MainWindow : Window
             await _service.RestoreTrashAsync(
                 item.DocumentId,
                 item.Revision,
-                null,
-                VaultActorKind.UserUi);
+                null);
             await RefreshTrashAsync();
             await RefreshCatalogAsync();
         });
@@ -386,7 +422,7 @@ public partial class MainWindow : Window
         }
         await RunBusyAsync(async () =>
         {
-            await _service.PurgeNoteAsync(item.DocumentId, VaultActorKind.UserUi);
+            await _service.PurgeNoteAsync(item.DocumentId);
             await RefreshTrashAsync();
         });
     }
@@ -431,8 +467,7 @@ public partial class MainWindow : Window
         await RunBusyAsync(async () =>
         {
             var preview = await _service.PreviewImportAsync(
-                ImportSourceTextBox.Text.Trim(),
-                VaultActorKind.UserUi);
+                ImportSourceTextBox.Text.Trim());
             _importJobId = preview.JobId;
             PrintJson(preview);
         });
@@ -452,8 +487,7 @@ public partial class MainWindow : Window
         await RunBusyAsync(async () =>
         {
             var result = await _service.CommitImportAsync(
-                _importJobId.Value,
-                VaultActorKind.UserUi);
+                _importJobId.Value);
             PrintJson(result);
             _importJobId = null;
             await RefreshCatalogAsync();
@@ -469,8 +503,7 @@ public partial class MainWindow : Window
         await RunBusyAsync(async () =>
         {
             var result = await _service.ExportSnapshotAsync(
-                ExportDestinationTextBox.Text.Trim(),
-                VaultActorKind.UserUi);
+                ExportDestinationTextBox.Text.Trim());
             PrintJson(result);
         });
     }
@@ -495,8 +528,7 @@ public partial class MainWindow : Window
         await RunBusyAsync(async () =>
         {
             var result = await _service.CreateBackupAsync(
-                dialog.FileName,
-                VaultActorKind.UserUi);
+                dialog.FileName);
             RestoreBackupTextBox.Text = result.BackupPath;
             PrintJson(result);
         });
@@ -521,7 +553,7 @@ public partial class MainWindow : Window
             credentialType,
             RestorePasswordBox,
             RestoreRecoveryKeyBox);
-        if (string.IsNullOrEmpty(credential))
+        if (!_service.PromptsForCredentials && string.IsNullOrEmpty(credential))
         {
             ShowInfo("请输入备份密码或离线恢复密钥。");
             return;
@@ -532,8 +564,7 @@ public partial class MainWindow : Window
                 RestoreBackupTextBox.Text.Trim(),
                 RestoreTargetTextBox.Text.Trim(),
                 credential,
-                credentialType,
-                VaultActorKind.UserUi);
+                credentialType);
             PrintJson(result);
             RestorePasswordBox.Clear();
             RestoreRecoveryKeyBox.Clear();
@@ -583,7 +614,7 @@ public partial class MainWindow : Window
         }
         await RunBusyAsync(async () =>
         {
-            var count = await _service.RebuildSearchIndexAsync(VaultActorKind.UserUi);
+            var count = await _service.RebuildSearchIndexAsync();
             MaintenanceOutput.Text = $"搜索索引行数：{count}";
         });
     }
@@ -602,7 +633,9 @@ public partial class MainWindow : Window
         var current = MaintenancePasswordBox.Password;
         var next = NewPasswordBox.Password;
         var confirmation = ConfirmNewPasswordBox.Password;
-        if (string.IsNullOrEmpty(current) || !string.Equals(next, confirmation, StringComparison.Ordinal))
+        if (!_service.PromptsForCredentials &&
+            (string.IsNullOrEmpty(current) ||
+             !string.Equals(next, confirmation, StringComparison.Ordinal)))
         {
             ShowInfo("请输入当前密码，并确认两次新密码一致。");
             return;
@@ -612,8 +645,7 @@ public partial class MainWindow : Window
             await _service.ChangePasswordAsync(
                 VaultPathTextBox.Text.Trim(),
                 current,
-                next,
-                VaultActorKind.UserUi);
+                next);
             MaintenancePasswordBox.Clear();
             NewPasswordBox.Clear();
             ConfirmNewPasswordBox.Clear();
@@ -624,7 +656,7 @@ public partial class MainWindow : Window
     private async void RotateRecoveryButton_Click(object sender, RoutedEventArgs e)
     {
         var current = MaintenancePasswordBox.Password;
-        if (string.IsNullOrEmpty(current))
+        if (!_service.PromptsForCredentials && string.IsNullOrEmpty(current))
         {
             ShowInfo("请输入当前密码。");
             return;
@@ -633,8 +665,7 @@ public partial class MainWindow : Window
         {
             var recoveryKey = await _service.RotateRecoveryKeyAsync(
                 VaultPathTextBox.Text.Trim(),
-                current,
-                VaultActorKind.UserUi);
+                current);
             MaintenancePasswordBox.Clear();
             RecoveryKeyTextBox.Text = recoveryKey;
             RecoveryConfirmTextBox.Clear();
@@ -950,10 +981,10 @@ public partial class MainWindow : Window
         };
     }
 
-    private static CipherVaultConfigOverrides CreateCommandLineOverrides(
+    private static CipherVaultHostConfigOverrides CreateCommandLineOverrides(
         string[] arguments)
     {
-        return new CipherVaultConfigOverrides
+        return new CipherVaultHostConfigOverrides
         {
             VaultPath = GetOption(arguments, "--vault"),
             IdleMinutes = ParseOptionalInteger(

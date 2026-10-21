@@ -11,4 +11,5 @@ public sealed record HostSessionSnapshot(
     DateTimeOffset? HardExpiresAt,
     string? LockReason,
     int ActiveLeases,
-    int ConnectedClients);
+    int ConnectedClients,
+    bool RecoveryVerified);

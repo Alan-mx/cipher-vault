@@ -433,6 +433,49 @@ public sealed class MainWindowTests
         });
     }
 
+    [Fact]
+    public Task NormalCloseDoesNotRequestGlobalLock()
+    {
+        return RunOnStaAsync(async () =>
+        {
+            using var fixture = new WindowFixture();
+            var client = new InProcessHostVaultClient();
+            var window = new MainWindow(fixture.VaultPath, client);
+            window.Show();
+
+            window.Close();
+            await WaitUntilAsync(
+                () => !window.IsVisible,
+                TimeSpan.FromSeconds(5));
+
+            Assert.Equal(0, client.LockCallCount);
+        });
+    }
+
+    [Fact]
+    public Task ExitAndLockLocksBeforeClosing()
+    {
+        return RunOnStaAsync(async () =>
+        {
+            using var fixture = new WindowFixture();
+            var client = new InProcessHostVaultClient();
+            var window = new MainWindow(fixture.VaultPath, client);
+            window.Show();
+
+            InvokePrivate(
+                window,
+                "ExitAndLockButton_Click",
+                window,
+                new RoutedEventArgs());
+            await WaitUntilAsync(
+                () => !window.IsVisible,
+                TimeSpan.FromSeconds(5));
+
+            Assert.Equal(1, client.LockCallCount);
+            Assert.Equal("desktop-exit", client.LastLockReason);
+        });
+    }
+
     private static T Find<T>(FrameworkElement element, string name)
         where T : class
     {
@@ -581,6 +624,9 @@ public sealed class MainWindowTests
                 $"cipher-vault-wpf-{Guid.NewGuid():N}");
             Directory.CreateDirectory(Root);
             var configPath = Path.Combine(Root, "config.json");
+            VaultPath = Path.Combine(
+                Root,
+                useRelativeVaultPath ? "relative-vault" : "vault");
             File.WriteAllText(
                 configPath,
                 JsonSerializer.Serialize(new
@@ -588,7 +634,7 @@ public sealed class MainWindowTests
                     configVersion = 1,
                     vaultPath = useRelativeVaultPath
                         ? "relative-vault"
-                        : Path.Combine(Root, "vault"),
+                        : VaultPath,
                     session = new
                     {
                         idleMinutes = 15,
@@ -604,10 +650,11 @@ public sealed class MainWindowTests
         }
 
         public string Root { get; }
+        public string VaultPath { get; }
 
         public MainWindow CreateWindow()
         {
-            return new MainWindow();
+            return new MainWindow(VaultPath, new InProcessHostVaultClient());
         }
 
         public async Task InitializeVaultAsync()
@@ -628,7 +675,8 @@ public sealed class MainWindowTests
                 "_service",
                 BindingFlags.Instance | BindingFlags.NonPublic)
                 ?? throw new InvalidOperationException("Vault service field was not found.");
-            var service = Assert.IsType<VaultService>(field.GetValue(window));
+            var service = Assert.IsAssignableFrom<IHostVaultClient>(
+                field.GetValue(window));
             await service.DisposeAsync();
         }
 
