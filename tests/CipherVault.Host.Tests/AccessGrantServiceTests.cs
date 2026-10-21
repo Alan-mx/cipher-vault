@@ -284,6 +284,10 @@ public sealed class AccessGrantServiceTests
             AccessGrantScope.Write |
             AccessGrantScope.Delete,
             AccessGrantScopes.Ceiling(McpAccessMode.ReadWrite));
+        Assert.Equal(
+            ["delete", "read", "write"],
+            AccessGrantScopes.ToNames(AccessGrantScope.Delete)
+                .OrderBy(value => value, StringComparer.Ordinal));
     }
 
     private static async Task<IssuedAccessGrant> ApproveAsync(

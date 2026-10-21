@@ -26,6 +26,7 @@ public static class HostApplication
         ResolvedCipherVaultHostConfig configuration,
         IAdminTokenStore adminTokenStore,
         IHostCredentialPrompt credentialPrompt,
+        IHostAccessGrantPrompt? accessGrantPrompt = null,
         ISystemActivityProvider? activityProvider = null,
         ISecurityEventLog? securityEventLog = null,
         HostAuthenticationRateLimiters? authenticationRateLimiters = null)
@@ -33,7 +34,10 @@ public static class HostApplication
         builder.Services.AddSingleton(configuration);
         builder.Services.AddSingleton(adminTokenStore);
         builder.Services.AddSingleton(credentialPrompt);
+        builder.Services.AddSingleton(
+            accessGrantPrompt ?? new WindowsHostAccessGrantPrompt());
         builder.Services.AddSingleton<AgentTokenStore>();
+        builder.Services.AddSingleton<AccessGrantService>();
         builder.Services.AddSingleton(
             authenticationRateLimiters ?? new HostAuthenticationRateLimiters());
         builder.Services.AddSingleton<ISecurityEventLog>(

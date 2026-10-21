@@ -128,4 +128,23 @@ public static class AccessGrantScopes
     {
         return (granted & required) == required;
     }
+
+    public static IReadOnlySet<string> ToNames(AccessGrantScope scopes)
+    {
+        scopes = Normalize(scopes);
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        if ((scopes & AccessGrantScope.Read) != 0)
+        {
+            result.Add("read");
+        }
+        if ((scopes & AccessGrantScope.Write) != 0)
+        {
+            result.Add("write");
+        }
+        if ((scopes & AccessGrantScope.Delete) != 0)
+        {
+            result.Add("delete");
+        }
+        return result;
+    }
 }

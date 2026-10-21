@@ -22,7 +22,8 @@ try
         builder,
         configuration,
         new DpapiAdminTokenStore(),
-        new WindowsHostCredentialPrompt());
+        new WindowsHostCredentialPrompt(),
+        new WindowsHostAccessGrantPrompt());
     await app.RunAsync();
     return 0;
 }

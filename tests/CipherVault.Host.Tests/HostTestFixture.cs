@@ -29,7 +29,8 @@ internal sealed class HostTestFixture : IAsyncDisposable
         string? recoveryKey,
         WebApplication app,
         HttpClient client,
-        TestCredentialPrompt credentialPrompt)
+        TestCredentialPrompt credentialPrompt,
+        TestAccessGrantPrompt accessGrantPrompt)
     {
         Root = root;
         VaultPath = vaultPath;
@@ -39,6 +40,7 @@ internal sealed class HostTestFixture : IAsyncDisposable
         App = app;
         Client = client;
         CredentialPrompt = credentialPrompt;
+        AccessGrantPrompt = accessGrantPrompt;
     }
 
     public string Root { get; }
@@ -49,6 +51,7 @@ internal sealed class HostTestFixture : IAsyncDisposable
     public WebApplication App { get; }
     public HttpClient Client { get; }
     public TestCredentialPrompt CredentialPrompt { get; }
+    public TestAccessGrantPrompt AccessGrantPrompt { get; }
     public IHostApplicationLifetime Lifetime =>
         App.Services.GetRequiredService<IHostApplicationLifetime>();
 
@@ -113,11 +116,13 @@ internal sealed class HostTestFixture : IAsyncDisposable
             clients ?? [],
             configPath);
         var credentialPrompt = new TestCredentialPrompt();
+        var accessGrantPrompt = new TestAccessGrantPrompt();
         var app = HostApplication.Configure(
             builder,
             configuration,
             new TestAdminTokenStore(AdminToken),
             credentialPrompt,
+            accessGrantPrompt,
             new AlwaysActiveActivityProvider(),
             new JsonlSecurityEventLog(securityLogDirectory));
         await app.StartAsync();
@@ -129,7 +134,8 @@ internal sealed class HostTestFixture : IAsyncDisposable
             recoveryKey,
             app,
             app.GetTestClient(),
-            credentialPrompt);
+            credentialPrompt,
+            accessGrantPrompt);
     }
 
     public static HttpRequestMessage CreateRequest(
@@ -176,6 +182,40 @@ internal sealed class HostTestFixture : IAsyncDisposable
             LastMessage = message;
             return Task.FromResult(
                 _results.Count > 0 ? _results.Dequeue() : Result);
+        }
+    }
+
+    internal sealed class TestAccessGrantPrompt : IHostAccessGrantPrompt
+    {
+        public int RequestCount { get; private set; }
+        public HostAccessGrantPromptRequest? LastRequest { get; private set; }
+        public HostAccessGrantPromptResult Result { get; set; } = new(
+            true,
+            AccessGrantScope.None);
+        private readonly Queue<HostAccessGrantPromptResult> _results = new();
+
+        public void EnqueueResult(HostAccessGrantPromptResult result)
+        {
+            _results.Enqueue(result);
+        }
+
+        public Task<HostAccessGrantPromptResult> RequestAsync(
+            HostAccessGrantPromptRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            RequestCount++;
+            LastRequest = request;
+            var result = _results.Count > 0
+                ? _results.Dequeue()
+                : Result.Approved
+                    ? Result with
+                    {
+                        ApprovedScopes = Result.ApprovedScopes == AccessGrantScope.None
+                            ? request.RequestedScopes
+                            : Result.ApprovedScopes
+                    }
+                    : Result;
+            return Task.FromResult(result);
         }
     }
 
