@@ -53,6 +53,14 @@ public static class HostApplication
             .WithTools<HostVaultTools>();
 
         var app = builder.Build();
+        var hostInstanceId = Guid.NewGuid().ToString("D");
+        var configFingerprint = HostConfigurationFingerprint.Compute(
+            configuration.VaultPath,
+            configuration.ConfigPath,
+            configuration.Endpoint.BindAddress,
+            configuration.Endpoint.Port,
+            configuration.Endpoint.McpPath,
+            configuration.Endpoint.AdminPath);
         app.UseMiddleware<HostRequestValidationMiddleware>();
         app.UseMiddleware<AgentTokenAuthenticationMiddleware>();
         app.UseMiddleware<AdminTokenAuthenticationMiddleware>();
@@ -66,7 +74,9 @@ public static class HostApplication
                         "ready",
                         typeof(HostApplication).Assembly.GetName().Version?.ToString()
                             ?? "1.0.0",
-                        ProtocolVersion))));
+                        ProtocolVersion,
+                        hostInstanceId,
+                        configFingerprint))));
         app.MapGet(
             configuration.Endpoint.AdminPath + "/status",
             async (HostSessionCoordinator sessions, CancellationToken cancellationToken) =>

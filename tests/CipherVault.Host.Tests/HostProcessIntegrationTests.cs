@@ -9,8 +9,10 @@ using System.Text.Json;
 using CipherVault.Auth.Win;
 using CipherVault.Core;
 using CipherVault.Core.Documents;
+using CipherVault.Core.Errors;
 using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
+using CipherVault.Host.Client;
 using CipherVault.Host.Security;
 
 namespace CipherVault.Host.Tests;
@@ -71,6 +73,25 @@ public sealed class HostProcessIntegrationTests
             await WaitForHealthAsync(port, token, TimeSpan.FromSeconds(15));
             var initialStatus = await GetStatusAsync(port, token);
             Assert.Equal("locked", initialStatus.State);
+
+            var wrongConfiguration = new CipherVault.Core.Configuration
+                .ResolvedCipherVaultHostConfig(
+                Path.Combine(root, "different-vault"),
+                VaultSessionOptions.Default,
+                new CipherVault.Core.Configuration.HostEndpointOptions(
+                    "127.0.0.1",
+                    port,
+                    "/mcp",
+                    "/admin/v1",
+                    4 * 1024 * 1024,
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase)),
+                [],
+                Path.Combine(root, "different-config.json"));
+            var mismatch = await Assert.ThrowsAsync<VaultException>(() =>
+                HttpHostVaultClient.CreateAsync(
+                    wrongConfiguration,
+                    HostAdminClientKind.Ui));
+            Assert.Equal(VaultErrorCode.Conflict, mismatch.Code);
 
             using (var second = StartHost(configPath))
             {

@@ -32,6 +32,8 @@ public sealed class HealthEndpointTests
         Assert.True(payload.Ok);
         Assert.Equal("ready", payload.Data.Status);
         Assert.Equal("1", payload.Data.ProtocolVersion);
+        Assert.NotEqual(Guid.Empty, Guid.Parse(payload.Data.InstanceId));
+        Assert.Equal(64, payload.Data.ConfigFingerprint.Length);
     }
 
     [Fact]

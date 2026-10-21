@@ -16,7 +16,9 @@ public sealed record HostApiError(
 public sealed record HostHealthData(
     string Status,
     string HostVersion,
-    string ProtocolVersion);
+    string ProtocolVersion,
+    string InstanceId,
+    string ConfigFingerprint);
 
 public sealed record HostStatusData(
     string Status,

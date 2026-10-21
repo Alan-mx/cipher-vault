@@ -24,17 +24,20 @@ public sealed class HttpHostVaultClient : IHostVaultClient
     private readonly string _adminPath;
     private readonly string _adminToken;
     private readonly HostAdminClientKind _clientKind;
+    private readonly string _expectedConfigFingerprint;
 
     private HttpHostVaultClient(
         HttpClient http,
         string adminPath,
         string adminToken,
-        HostAdminClientKind clientKind)
+        HostAdminClientKind clientKind,
+        string expectedConfigFingerprint)
     {
         _http = http;
         _adminPath = adminPath;
         _adminToken = adminToken;
         _clientKind = clientKind;
+        _expectedConfigFingerprint = expectedConfigFingerprint;
     }
 
     public bool PromptsForCredentials => true;
@@ -53,17 +56,31 @@ public sealed class HttpHostVaultClient : IHostVaultClient
             BaseAddress = baseAddress,
             Timeout = TimeSpan.FromMinutes(2)
         };
+        var expectedFingerprint = HostConfigurationFingerprint.Compute(
+            configuration.VaultPath,
+            configuration.ConfigPath,
+            configuration.Endpoint.BindAddress,
+            configuration.Endpoint.Port,
+            configuration.Endpoint.McpPath,
+            configuration.Endpoint.AdminPath);
         var client = new HttpHostVaultClient(
             http,
             configuration.Endpoint.AdminPath,
             token,
-            clientKind);
+            clientKind,
+            expectedFingerprint);
         try
         {
-            if (!await client.IsHealthyAsync(cancellationToken).ConfigureAwait(false))
+            var health = await client.ProbeHealthAsync(cancellationToken)
+                .ConfigureAwait(false);
+            if (health is null)
             {
                 HostProcessLauncher.Start(configuration.ConfigPath);
                 await client.WaitUntilHealthyAsync(cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                client.ValidateFingerprint(health);
             }
             return client;
         }
@@ -430,7 +447,8 @@ public sealed class HttpHostVaultClient : IHostVaultClient
         return ValueTask.CompletedTask;
     }
 
-    private async Task<bool> IsHealthyAsync(CancellationToken cancellationToken)
+    private async Task<HostHealthData?> ProbeHealthAsync(
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -442,15 +460,27 @@ public sealed class HttpHostVaultClient : IHostVaultClient
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken).ConfigureAwait(false);
-            return response.IsSuccessStatusCode;
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new VaultException(
+                    VaultErrorCode.StorageError,
+                    "A process is listening on the configured Host port, " +
+                    "but it rejected the CipherVault health request.");
+            }
+            var payload = await response.Content.ReadFromJsonAsync<
+                HostApiResponse<HostHealthData>>(JsonOptions, cancellationToken)
+                .ConfigureAwait(false);
+            return payload?.Data ?? throw new VaultException(
+                VaultErrorCode.StorageError,
+                "CipherVault Host returned an invalid health response.");
         }
         catch (HttpRequestException)
         {
-            return false;
+            return null;
         }
         catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return false;
+            return null;
         }
     }
 
@@ -459,8 +489,10 @@ public sealed class HttpHostVaultClient : IHostVaultClient
         var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(15);
         while (DateTimeOffset.UtcNow < deadline)
         {
-            if (await IsHealthyAsync(cancellationToken).ConfigureAwait(false))
+            var health = await ProbeHealthAsync(cancellationToken).ConfigureAwait(false);
+            if (health is not null)
             {
+                ValidateFingerprint(health);
                 return;
             }
             await Task.Delay(200, cancellationToken).ConfigureAwait(false);
@@ -468,6 +500,20 @@ public sealed class HttpHostVaultClient : IHostVaultClient
         throw new VaultException(
             VaultErrorCode.StorageError,
             "CipherVault Host did not become ready.");
+    }
+
+    private void ValidateFingerprint(HostHealthData health)
+    {
+        if (!string.Equals(
+                health.ConfigFingerprint,
+                _expectedConfigFingerprint,
+                StringComparison.Ordinal))
+        {
+            throw new VaultException(
+                VaultErrorCode.Conflict,
+                "The configured Host port is owned by a different CipherVault " +
+                "configuration. Stop that Host before continuing.");
+        }
     }
 
     private async Task<T> SendAsync<T>(
