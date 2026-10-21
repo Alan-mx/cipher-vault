@@ -39,6 +39,7 @@ public static class HostApplication
             accessGrantPrompt ?? new WindowsHostAccessGrantPrompt());
         builder.Services.AddSingleton<AgentTokenStore>();
         builder.Services.AddSingleton<AccessGrantService>();
+        builder.Services.AddSingleton<HostMcpAuthorizationService>();
         builder.Services.AddSingleton(
             authenticationRateLimiters ?? new HostAuthenticationRateLimiters());
         builder.Services.AddSingleton<ISecurityEventLog>(

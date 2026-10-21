@@ -8,6 +8,7 @@ using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Http;
+using CipherVault.Host.Security;
 using CipherVault.Host.Session;
 using ModelContextProtocol.Server;
 
@@ -24,15 +25,21 @@ public sealed class HostVaultTools
 
     private readonly HostVaultGateway _vault;
     private readonly HostSessionCoordinator _sessions;
+    private readonly HostMcpAuthorizationService _authorization;
+    private readonly AccessGrantService _grants;
     private readonly IHttpContextAccessor _httpContextAccessor;
 
     public HostVaultTools(
         HostVaultGateway vault,
         HostSessionCoordinator sessions,
+        HostMcpAuthorizationService authorization,
+        AccessGrantService grants,
         IHttpContextAccessor httpContextAccessor)
     {
         _vault = vault;
         _sessions = sessions;
+        _authorization = authorization;
+        _grants = grants;
         _httpContextAccessor = httpContextAccessor;
     }
 
@@ -81,8 +88,9 @@ public sealed class HostVaultTools
         int limit = 50,
         CancellationToken cancellationToken = default)
     {
-        return await ExecuteReadAsync(
-            (service, token) => service.ListCatalogAsync(
+        return await ExecuteAuthorizedAsync(
+            AccessGrantScope.Read,
+            (service, _, token) => service.ListCatalogAsync(
                 folder,
                 cursor,
                 limit,
@@ -100,8 +108,9 @@ public sealed class HostVaultTools
         int limit = 10,
         CancellationToken cancellationToken = default)
     {
-        return await ExecuteReadAsync(
-            (service, token) => service.SearchNotesAsync(
+        return await ExecuteAuthorizedAsync(
+            AccessGrantScope.Read,
+            (service, _, token) => service.SearchNotesAsync(
                 query,
                 folder,
                 cursor,
@@ -123,8 +132,9 @@ public sealed class HostVaultTools
         {
             return Serialize(Error("invalid_input", "documentId must be a UUID."));
         }
-        return await ExecuteReadAsync(
-            (service, token) => service.ReadNoteAsync(
+        return await ExecuteAuthorizedAsync(
+            AccessGrantScope.Read,
+            (service, _, token) => service.ReadNoteAsync(
                 parsedDocumentId,
                 offset,
                 maxChars,
@@ -140,8 +150,10 @@ public sealed class HostVaultTools
         int limit = 50,
         CancellationToken cancellationToken = default)
     {
-        return await ExecuteReadAsync(
-            (service, token) => service.ScanNotesAsync(cursor, limit, token),
+        return await ExecuteAuthorizedAsync(
+            AccessGrantScope.Read,
+            (service, _, token) =>
+                service.ScanNotesAsync(cursor, limit, token),
             page => new { ok = true, page },
             cancellationToken);
     }
@@ -156,20 +168,15 @@ public sealed class HostVaultTools
         string[]? tags = null,
         CancellationToken cancellationToken = default)
     {
-        var accessError = EnsureWritable();
-        if (accessError is not null)
-        {
-            return accessError;
-        }
-        var auditContext = CurrentAuditContext();
-        return await ExecuteWriteAsync(
-            (service, token) => service.CreateNoteAsync(
+        return await ExecuteAuthorizedAsync(
+            AccessGrantScope.Write,
+            (service, authorization, token) => service.CreateNoteAsync(
                 title,
                 folder,
                 format,
                 content,
                 tags,
-                auditContext,
+                BuildAuditContext(authorization),
                 token),
             document => new { ok = true, document },
             cancellationToken);
@@ -183,22 +190,17 @@ public sealed class HostVaultTools
         string content,
         CancellationToken cancellationToken = default)
     {
-        var accessError = EnsureWritable();
-        if (accessError is not null)
-        {
-            return accessError;
-        }
         if (!Guid.TryParse(documentId, out var parsedDocumentId))
         {
             return Serialize(Error("invalid_input", "documentId must be a UUID."));
         }
-        var auditContext = CurrentAuditContext();
-        return await ExecuteWriteAsync(
-            (service, token) => service.AppendNoteAsync(
+        return await ExecuteAuthorizedAsync(
+            AccessGrantScope.Write,
+            (service, authorization, token) => service.AppendNoteAsync(
                 parsedDocumentId,
                 expectedRevision,
                 content,
-                auditContext,
+                BuildAuditContext(authorization),
                 token),
             document => new { ok = true, document },
             cancellationToken);
@@ -215,22 +217,17 @@ public sealed class HostVaultTools
         string[]? tags = null,
         CancellationToken cancellationToken = default)
     {
-        var accessError = EnsureWritable();
-        if (accessError is not null)
-        {
-            return accessError;
-        }
         if (!Guid.TryParse(documentId, out var parsedDocumentId))
         {
             return Serialize(Error("invalid_input", "documentId must be a UUID."));
         }
-        var auditContext = CurrentAuditContext();
-        return await ExecuteWriteAsync(
-            (service, token) => service.UpdateNoteAsync(
+        return await ExecuteAuthorizedAsync(
+            AccessGrantScope.Write,
+            (service, authorization, token) => service.UpdateNoteAsync(
                 parsedDocumentId,
                 expectedRevision,
                 new VaultNotePatch(title, folder, content, tags),
-                auditContext,
+                BuildAuditContext(authorization),
                 token),
             document => new { ok = true, document },
             cancellationToken);
@@ -243,39 +240,59 @@ public sealed class HostVaultTools
         int expectedRevision,
         CancellationToken cancellationToken = default)
     {
-        var accessError = EnsureWritable();
-        if (accessError is not null)
-        {
-            return accessError;
-        }
         if (!Guid.TryParse(documentId, out var parsedDocumentId))
         {
             return Serialize(Error("invalid_input", "documentId must be a UUID."));
         }
-        var auditContext = CurrentAuditContext();
-        return await ExecuteWriteAsync(
-            (service, token) => service.DeleteNoteAsync(
+        return await ExecuteAuthorizedAsync(
+            AccessGrantScope.Delete,
+            (service, authorization, token) => service.DeleteNoteAsync(
                 parsedDocumentId,
                 expectedRevision,
-                auditContext,
+                BuildAuditContext(authorization),
                 token),
             document => new { ok = true, document },
             cancellationToken);
     }
 
-    private async Task<string> ExecuteReadAsync<T>(
-        Func<IVaultService, CancellationToken, Task<T>> operation,
+    private async Task<string> ExecuteAuthorizedAsync<T>(
+        AccessGrantScope requiredScope,
+        Func<IVaultService, McpToolAuthorization, CancellationToken, Task<T>> operation,
         Func<T, object> success,
         CancellationToken cancellationToken)
     {
-        var client = RequireClient();
-        if (client.Error is not null)
-        {
-            return client.Error;
-        }
         try
         {
-            var result = await _vault.ExecuteAsync(operation, cancellationToken);
+            var httpContext = _httpContextAccessor.HttpContext
+                ?? throw new HostException(
+                    HostErrorCode.AccessDenied,
+                    "The MCP request context is unavailable.");
+            var authorization = await _authorization.ResolveAsync(
+                httpContext.User,
+                httpContext,
+                cancellationToken).ConfigureAwait(false);
+            if (!AccessGrantScopes.Includes(
+                    authorization.EffectiveScopes,
+                    requiredScope))
+            {
+                return authorization.AuthorizationMode ==
+                    AgentAuthorizationMode.StaticToken
+                    ? Serialize(Error(
+                        "read_only",
+                        "This CipherVault MCP client is configured for read-only access."))
+                    : Serialize(Error(
+                        "access_denied",
+                        "The Access Grant does not allow this operation."));
+            }
+
+            var result = await _vault.ExecuteAsync(
+                authorization.Grant?.VaultSessionId,
+                (service, token) => operation(service, authorization, token),
+                cancellationToken).ConfigureAwait(false);
+            if (authorization.Grant is not null)
+            {
+                _grants.RecordUse(authorization.Grant);
+            }
             return Serialize(success(result));
         }
         catch (HostException exception)
@@ -286,14 +303,6 @@ public sealed class HostVaultTools
         {
             return Serialize(Error(ToCode(exception.Code), exception.Message));
         }
-    }
-
-    private Task<string> ExecuteWriteAsync<T>(
-        Func<IVaultService, CancellationToken, Task<T>> operation,
-        Func<T, object> success,
-        CancellationToken cancellationToken)
-    {
-        return ExecuteReadAsync(operation, success, cancellationToken);
     }
 
     private (string? ClientId, McpAccessMode AccessMode, string? Error)
@@ -323,23 +332,8 @@ public sealed class HostVaultTools
             null);
     }
 
-    private string? EnsureWritable()
+    private VaultAuditContext BuildAuditContext(McpToolAuthorization authorization)
     {
-        var client = RequireClient();
-        if (client.Error is not null)
-        {
-            return client.Error;
-        }
-        return client.AccessMode == McpAccessMode.ReadOnly
-            ? Serialize(Error(
-                "read_only",
-                "This CipherVault MCP client is configured for read-only access."))
-            : null;
-    }
-
-    private VaultAuditContext CurrentAuditContext()
-    {
-        var client = RequireClient();
         var requestId = _httpContextAccessor.HttpContext?.Items.TryGetValue(
                 HostHttpContextKeys.RequestId,
                 out var value) == true
@@ -347,7 +341,7 @@ public sealed class HostVaultTools
             : null;
         return new VaultAuditContext(
             VaultActorKind.Mcp,
-            client.ClientId,
+            authorization.ClientId,
             requestId);
     }
 
@@ -380,6 +374,11 @@ public sealed class HostVaultTools
             HostErrorCode.SessionLocked => "auth_required",
             HostErrorCode.MaintenanceInProgress => "maintenance_in_progress",
             HostErrorCode.AccessDenied => "access_denied",
+            HostErrorCode.AccessGrantRequired => "access_grant_required",
+            HostErrorCode.AccessGrantInvalid => "access_grant_invalid",
+            HostErrorCode.AccessGrantExpired => "access_grant_expired",
+            HostErrorCode.AccessGrantRevoked => "access_grant_revoked",
+            HostErrorCode.AccessGrantCooldown => "access_grant_cooldown",
             _ => "storage_error"
         };
     }

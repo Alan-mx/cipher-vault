@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using CipherVault.Core.Backup;
 using CipherVault.Host.Contracts;
+using CipherVault.Host.Security;
 
 namespace CipherVault.Host.Tests;
 
@@ -44,7 +45,8 @@ public sealed class McpHttpEndpointTests
         var token = await CreateClientAsync(
             fixture.Client,
             "readonly-agent",
-            "readOnly");
+            "readOnly",
+            "staticToken");
         var session = new McpTestSession(fixture.Client, token);
         await session.InitializeAsync();
 
@@ -86,8 +88,15 @@ public sealed class McpHttpEndpointTests
         var token = await CreateClientAsync(
             fixture.Client,
             "readwrite-agent",
-            "readWrite");
-        var session = new McpTestSession(fixture.Client, token);
+            "readWrite",
+            "accessGrant");
+        var grantSecret = await RequestGrantAsync(
+            fixture.Client,
+            token,
+            Guid.NewGuid(),
+            "read",
+            "write");
+        var session = new McpTestSession(fixture.Client, token, grantSecret);
         await session.InitializeAsync();
 
         using var create = await session.CallToolAsync(
@@ -141,8 +150,15 @@ public sealed class McpHttpEndpointTests
         var token = await CreateClientAsync(
             fixture.Client,
             "audited-agent",
-            "readWrite");
-        var session = new McpTestSession(fixture.Client, token);
+            "readWrite",
+            "accessGrant");
+        var grantSecret = await RequestGrantAsync(
+            fixture.Client,
+            token,
+            Guid.NewGuid(),
+            "read",
+            "write");
+        var session = new McpTestSession(fixture.Client, token, grantSecret);
         await session.InitializeAsync();
 
         using var create = await session.CallToolAsync(
@@ -208,6 +224,144 @@ public sealed class McpHttpEndpointTests
                 .GetString());
     }
 
+    [Fact]
+    public async Task AccessGrantAgentMustRequestGrantBeforeReading()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        await UnlockHostAsync(fixture.Client);
+        var token = await CreateClientAsync(
+            fixture.Client,
+            "grant-required-agent",
+            "readOnly",
+            "accessGrant");
+        var session = new McpTestSession(fixture.Client, token);
+
+        using var response = await session.CallToolAsync(
+            7,
+            "list_catalog",
+            new { });
+        var payload = GetToolPayload(response);
+
+        Assert.False(payload.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal(
+            "access_grant_required",
+            payload.RootElement
+                .GetProperty("error")
+                .GetProperty("code")
+                .GetString());
+    }
+
+    [Fact]
+    public async Task DeleteRequiresSeparateDeleteScope()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        await UnlockHostAsync(fixture.Client);
+        var token = await CreateClientAsync(
+            fixture.Client,
+            "delete-scope-agent",
+            "readWrite",
+            "accessGrant");
+        var grantSecret = await RequestGrantAsync(
+            fixture.Client,
+            token,
+            Guid.NewGuid(),
+            "read",
+            "write");
+        var session = new McpTestSession(fixture.Client, token, grantSecret);
+        await session.InitializeAsync();
+
+        using var create = await session.CallToolAsync(
+            8,
+            "create_note",
+            new
+            {
+                title = "Delete scope note",
+                content = "delete scope"
+            });
+        var created = GetToolPayload(create);
+        var documentId = created.RootElement
+            .GetProperty("document")
+            .GetProperty("documentId")
+            .GetGuid();
+
+        using var delete = await session.CallToolAsync(
+            9,
+            "delete_note",
+            new
+            {
+                documentId = documentId.ToString("D"),
+                expectedRevision = 1
+            });
+        var deleted = GetToolPayload(delete);
+
+        Assert.False(deleted.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal(
+            "access_denied",
+            deleted.RootElement
+                .GetProperty("error")
+                .GetProperty("code")
+                .GetString());
+
+        var deleteGrant = await RequestGrantAsync(
+            fixture.Client,
+            token,
+            Guid.NewGuid(),
+            "read",
+            "write",
+            "delete");
+        var deleteSession = new McpTestSession(
+            fixture.Client,
+            token,
+            deleteGrant);
+        await deleteSession.InitializeAsync();
+        using var allowedDelete = await deleteSession.CallToolAsync(
+            11,
+            "delete_note",
+            new
+            {
+                documentId = documentId.ToString("D"),
+                expectedRevision = 1
+            });
+        var allowed = GetToolPayload(allowedDelete);
+        Assert.True(allowed.RootElement.GetProperty("ok").GetBoolean());
+    }
+
+    [Fact]
+    public async Task GrantCannotCrossVaultSession()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        await UnlockHostAsync(fixture.Client);
+        var token = await CreateClientAsync(
+            fixture.Client,
+            "session-agent",
+            "readOnly",
+            "accessGrant");
+        var clientInstanceId = Guid.NewGuid();
+        var grantSecret = await RequestGrantAsync(
+            fixture.Client,
+            token,
+            clientInstanceId,
+            "read");
+        var session = new McpTestSession(fixture.Client, token, grantSecret);
+        await session.InitializeAsync();
+
+        await LockHostAsync(fixture.Client);
+        await UnlockHostAsync(fixture.Client);
+        using var response = await session.CallToolAsync(
+            10,
+            "list_catalog",
+            new { });
+        var payload = GetToolPayload(response);
+
+        Assert.False(payload.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal(
+            "access_grant_revoked",
+            payload.RootElement
+                .GetProperty("error")
+                .GetProperty("code")
+                .GetString());
+    }
+
     private static async Task UnlockHostAsync(HttpClient client)
     {
         using var request = new HttpRequestMessage(
@@ -224,10 +378,27 @@ public sealed class McpHttpEndpointTests
         response.EnsureSuccessStatusCode();
     }
 
+    private static async Task LockHostAsync(HttpClient client)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            "/admin/v1/session/lock")
+        {
+            Content = JsonContent.Create(new HostLockRequest("test-lock"))
+        };
+        request.Headers.Host = "127.0.0.1:43127";
+        request.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            HostTestFixture.AdminToken);
+        using var response = await client.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+    }
+
     private static async Task<string> CreateClientAsync(
         HttpClient client,
         string clientId,
-        string accessMode)
+        string accessMode,
+        string authorizationMode = "accessGrant")
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
@@ -237,7 +408,7 @@ public sealed class McpHttpEndpointTests
                 new HostCreateClientRequest(
                     clientId,
                     accessMode,
-                    "accessGrant"))
+                    authorizationMode))
         };
         request.Headers.Host = "127.0.0.1:43127";
         request.Headers.Authorization = new AuthenticationHeaderValue(
@@ -249,6 +420,33 @@ public sealed class McpHttpEndpointTests
             HostApiResponse<HostCreateClientData>>(JsonOptions);
         Assert.NotNull(payload);
         return payload.Data.Token;
+    }
+
+    private static async Task<string> RequestGrantAsync(
+        HttpClient client,
+        string agentToken,
+        Guid clientInstanceId,
+        params string[] scopes)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            "/mcp/access-grants")
+        {
+            Content = JsonContent.Create(
+                new HostRequestAccessGrantRequest(
+                    clientInstanceId,
+                    scopes))
+        };
+        request.Headers.Host = "127.0.0.1:43127";
+        request.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            agentToken);
+        using var response = await client.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        var payload = await response.Content.ReadFromJsonAsync<
+            HostApiResponse<HostIssuedAccessGrantData>>(JsonOptions);
+        Assert.NotNull(payload);
+        return payload.Data.Secret;
     }
 
     private static object InitializePayload(int id)
@@ -345,11 +543,16 @@ public sealed class McpHttpEndpointTests
     {
         private readonly HttpClient _client;
         private readonly string _token;
+        private readonly string? _grantSecret;
 
-        public McpTestSession(HttpClient client, string token)
+        public McpTestSession(
+            HttpClient client,
+            string token,
+            string? grantSecret = null)
         {
             _client = client;
             _token = token;
+            _grantSecret = grantSecret;
         }
 
         public async Task InitializeAsync()
@@ -408,6 +611,12 @@ public sealed class McpHttpEndpointTests
                 _token,
                 method: "tools/call");
             request.Headers.TryAddWithoutValidation("Mcp-Name", name);
+            if (_grantSecret is not null)
+            {
+                request.Headers.TryAddWithoutValidation(
+                    AccessGrantHeaders.Grant,
+                    _grantSecret);
+            }
             if (requestId is not null)
             {
                 request.Headers.TryAddWithoutValidation(
