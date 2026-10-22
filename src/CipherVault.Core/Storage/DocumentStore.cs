@@ -869,7 +869,9 @@ internal static partial class DocumentStore
             fingerprint,
             limit,
             totalActive,
-            matched);
+            totalActive,
+            matched,
+            isTruncated: false);
     }
 
     private static async Task<VaultSearchPage> SearchShortAsync(
@@ -970,8 +972,10 @@ internal static partial class DocumentStore
             sessionId,
             fingerprint,
             limit,
+            totalActive,
             scanned,
-            matched);
+            matched,
+            isTruncated: totalActive > scanned);
     }
 
     private static VaultSearchPage BuildSearchPage<TCursor>(
@@ -980,8 +984,10 @@ internal static partial class DocumentStore
         Guid sessionId,
         string fingerprint,
         int limit,
+        int totalDocuments,
         int scanned,
-        int matched)
+        int matched,
+        bool isTruncated)
     {
         var hasMore = hits.Count > limit;
         if (hasMore)
@@ -998,7 +1004,12 @@ internal static partial class DocumentStore
             : null;
         return new VaultSearchPage(
             hits,
-            new VaultSearchCoverage(scanned, matched, hits.Count),
+            new VaultSearchCoverage(
+                totalDocuments,
+                scanned,
+                matched,
+                hits.Count,
+                isTruncated),
             nextCursor);
     }
 

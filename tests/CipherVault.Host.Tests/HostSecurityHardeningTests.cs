@@ -116,7 +116,7 @@ public sealed class HostSecurityHardeningTests
     }
 
     [Fact]
-    public async Task GlobalRateLimitBackstopBlocksAfterManyDistinctFailures()
+    public async Task GlobalRateLimitRejectsInvalidButAllowsValidAdminToken()
     {
         await using var fixture = await HostTestFixture.CreateAsync();
         for (var attempt = 0; attempt < 50; attempt++)
@@ -127,11 +127,37 @@ public sealed class HostSecurityHardeningTests
             Assert.Equal(HttpStatusCode.Unauthorized, invalid.StatusCode);
         }
 
-        using var blocked = await SendHealthAsync(
+        using var valid = await SendHealthAsync(
             fixture.Client,
             HostTestFixture.AdminToken);
+        Assert.Equal(HttpStatusCode.OK, valid.StatusCode);
 
+        using var blocked = await SendHealthAsync(
+            fixture.Client,
+            adminToken: "another-wrong-token");
         Assert.Equal((HttpStatusCode)429, blocked.StatusCode);
+    }
+
+    [Fact]
+    public async Task GlobalRateLimitRejectsInvalidButAllowsValidAgentToken()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var token = await CreateAgentAsync(fixture.Client);
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            using var invalid = CreateMcpRequest($"wrong-agent-{attempt}");
+            using var response = await fixture.Client.SendAsync(invalid);
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+
+        using var validRequest = CreateMcpRequest(token);
+        using var validResponse = await fixture.Client.SendAsync(validRequest);
+        Assert.NotEqual(HttpStatusCode.Unauthorized, validResponse.StatusCode);
+        Assert.NotEqual((HttpStatusCode)429, validResponse.StatusCode);
+
+        using var blockedRequest = CreateMcpRequest("another-wrong-agent");
+        using var blockedResponse = await fixture.Client.SendAsync(blockedRequest);
+        Assert.Equal((HttpStatusCode)429, blockedResponse.StatusCode);
     }
 
     [Fact]

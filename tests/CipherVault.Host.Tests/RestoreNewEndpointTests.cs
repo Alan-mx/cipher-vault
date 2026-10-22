@@ -45,7 +45,11 @@ public sealed class RestoreNewEndpointTests
             HostTestFixture.VaultPassword,
             VaultCredentialType.Password);
         var catalog = await restored.ListCatalogAsync(null, null, 10);
+        var audit = await restored.GetAuditPageAsync(null, 10);
         Assert.Equal("Restore marker", Assert.Single(catalog.Items).Title);
+        Assert.Contains(
+            audit.Items,
+            item => item.Action == "backup_restore");
     }
 
     [Fact]

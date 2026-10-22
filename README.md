@@ -52,6 +52,8 @@ CipherVault.Ui.Wpf / CipherVault.Cli / CipherVault.Mcp
   in `host.allowedOrigins`.
 - Host and Origin headers, request-size limits and authentication-failure rate
   limits are enforced before vault content access.
+- Authentication rate limiting blocks missing or invalid credentials. When the
+  global failure backstop is active, valid Admin and Agent tokens remain usable.
 - Sessions lock after 15 minutes without Windows keyboard/mouse activity, after
   4 hours, on screen lock, or on explicit lock.
 - Vault files, configuration and local logs use protected Windows ACLs.
@@ -75,6 +77,20 @@ Losing both the password and recovery key makes the Vault unrecoverable.
 WPF normal close leaves the Host session unlocked. Use **退出并锁定** to lock the
 global session before closing, or **停止 Host** to lock and terminate the Host.
 In Host mode, credential input is accepted only by the Host authorization window.
+
+## Search coverage
+
+Queries of one or two characters use a bounded scan over the 1000 most recently
+updated active documents. Search results include `totalDocuments`, `scannedDocuments`,
+`matchedDocuments`, `returnedDocuments` and `isTruncated`. When `isTruncated` is true,
+an empty result does not prove that the text is absent from older documents; use a
+longer query for full FTS coverage. Counts are scoped to the requested folder, or to
+the whole active Vault when no folder is specified.
+
+Catalog and scan pagination use keyset cursors, not a full database snapshot.
+Concurrent inserts or updates can therefore cause a not-yet-read document to be
+skipped. This is a deliberate availability tradeoff; agents that require a complete
+snapshot must restart the traversal after the vault becomes quiescent.
 
 ## Configuration
 
@@ -245,6 +261,9 @@ fails with `vault_in_use` if Host or another standalone process owns the Vault.
   Vault.
 - Online overwrite of the active Vault is rejected. Stop Host and use the explicit
   offline restore path.
+- Backup, restore and export results include `auditRecorded`. If audit persistence
+  fails after the artifact is safe, the operation still returns success with
+  `auditRecorded=false`.
 - Plaintext export is an explicit user operation outside the Vault encryption
   boundary. Protect or delete exported files appropriately.
 

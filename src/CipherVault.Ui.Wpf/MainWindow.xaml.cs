@@ -329,7 +329,7 @@ public partial class MainWindow : Window
             _searchCursor = page.NextCursor;
             SetCatalogItems(
                 page.Hits.Cast<object>().ToList(),
-                $"匹配 {page.Coverage.MatchedDocuments} 篇，扫描 {page.Coverage.ScannedDocuments} 篇",
+                FormatSearchCoverage(page.Coverage),
                 page.NextCursor);
         });
     }
@@ -356,7 +356,7 @@ public partial class MainWindow : Window
                 _searchCursor = page.NextCursor;
                 AppendCatalogItems(
                     page.Hits.Cast<object>().ToList(),
-                    $"匹配 {page.Coverage.MatchedDocuments} 篇，扫描 {page.Coverage.ScannedDocuments} 篇",
+                    FormatSearchCoverage(page.Coverage),
                     page.NextCursor);
             });
             return;
@@ -539,6 +539,7 @@ public partial class MainWindow : Window
             var result = await _service.ExportSnapshotAsync(
                 ExportDestinationTextBox.Text.Trim());
             PrintJson(result);
+            ShowAuditWarning(result.AuditRecorded, "导出");
         });
     }
 
@@ -565,6 +566,7 @@ public partial class MainWindow : Window
                 dialog.FileName);
             RestoreBackupTextBox.Text = result.BackupPath;
             PrintJson(result);
+            ShowAuditWarning(result.AuditRecorded, "备份");
         });
     }
 
@@ -600,6 +602,7 @@ public partial class MainWindow : Window
                 credential,
                 credentialType);
             PrintJson(result);
+            ShowAuditWarning(result.AuditRecorded, "恢复");
             RestorePasswordBox.Clear();
             RestoreRecoveryKeyBox.Clear();
         });
@@ -970,6 +973,16 @@ public partial class MainWindow : Window
         return $"{remaining.Minutes} 分 {remaining.Seconds} 秒";
     }
 
+    private static string FormatSearchCoverage(VaultSearchCoverage coverage)
+    {
+        var summary =
+            $"匹配 {coverage.MatchedDocuments} 篇，" +
+            $"扫描 {coverage.ScannedDocuments}/{coverage.TotalDocuments} 篇";
+        return coverage.IsTruncated
+            ? summary + "，结果可能不完整，请补充更具体的查询"
+            : summary;
+    }
+
     private async Task RunBusyAsync(Func<Task> operation)
     {
         _busy = true;
@@ -999,6 +1012,16 @@ public partial class MainWindow : Window
     private void ShowInfo(string message)
     {
         MessageBox.Show(this, message, "CipherVault 加密资料库", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private void ShowAuditWarning(bool auditRecorded, string operation)
+    {
+        if (!auditRecorded)
+        {
+            ShowInfo(
+                $"{operation}已完成，但审计事件未记录。" +
+                "请保留操作结果，并检查资料库存储状态。");
+        }
     }
 
     private static string NormalizeRecoveryKey(string value)

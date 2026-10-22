@@ -23,9 +23,11 @@ public sealed record VaultSearchHit(
     double Score);
 
 public sealed record VaultSearchCoverage(
+    int TotalDocuments,
     int ScannedDocuments,
     int MatchedDocuments,
-    int ReturnedDocuments);
+    int ReturnedDocuments,
+    bool IsTruncated);
 
 public sealed record VaultSearchPage(
     IReadOnlyList<VaultSearchHit> Hits,

@@ -75,6 +75,7 @@ public sealed class DocumentStoreTests
 
         Assert.Single(page.Hits);
         Assert.True(page.Coverage.ScannedDocuments <= 1_000);
+        Assert.False(page.Coverage.IsTruncated);
         Assert.Contains("睡眠", page.Hits[0].Snippet, StringComparison.Ordinal);
     }
 
@@ -95,8 +96,10 @@ public sealed class DocumentStoreTests
             limit: 10);
 
         Assert.Empty(page.Hits);
+        Assert.Equal(1_005, page.Coverage.TotalDocuments);
         Assert.Equal(1_000, page.Coverage.ScannedDocuments);
         Assert.Equal(0, page.Coverage.MatchedDocuments);
+        Assert.True(page.Coverage.IsTruncated);
         Assert.Null(page.NextCursor);
     }
 
@@ -254,6 +257,42 @@ public sealed class DocumentStoreTests
         Assert.DoesNotContain(
             second.Items,
             item => item.DocumentId == moved.DocumentId);
+    }
+
+    [Fact]
+    public async Task CatalogSnapshotSkipsDocumentUpdatedAfterFirstPage()
+    {
+        await using var fixture = await DocumentFixture.CreateAsync();
+        await fixture.Service.UnlockAsync(
+            fixture.VaultPath,
+            Password,
+            VaultCredentialType.Password);
+        var seeded = await fixture.Service.ListCatalogAsync(null, null, 10);
+        var first = await fixture.Service.ListCatalogAsync(null, null, 2);
+        Assert.NotNull(first.NextCursor);
+        var unseen = seeded.Items[2];
+
+        await fixture.Service.UpdateNoteAsync(
+            unseen.DocumentId,
+            unseen.Revision,
+            new VaultNotePatch(
+                "zzzz-concurrent-update",
+                string.Empty,
+                null,
+                null),
+            VaultActorKind.Mcp);
+        var second = await fixture.Service.ListCatalogAsync(
+            null,
+            first.NextCursor,
+            10);
+
+        Assert.DoesNotContain(
+            second.Items,
+            item => item.DocumentId == unseen.DocumentId);
+        Assert.DoesNotContain(
+            second.Items,
+            item => first.Items.Any(firstItem =>
+                firstItem.DocumentId == item.DocumentId));
     }
 
     [Fact]

@@ -649,7 +649,7 @@ public sealed class BridgeVaultTools
     }
 
     [McpServerTool(Name = "list_catalog")]
-    [Description("List active document titles, virtual folders, headings and tags without returning the real filesystem path.")]
+    [Description("List active document titles, virtual folders, headings and tags without returning the real filesystem path. Pagination is keyset-based, not a full database snapshot; concurrent modifications may be skipped.")]
     public Task<string> ListCatalog(
         string? folder = null,
         string? cursor = null,
@@ -666,7 +666,7 @@ public sealed class BridgeVaultTools
     }
 
     [McpServerTool(Name = "search_notes")]
-    [Description("Search active Markdown/TXT documents with FTS5 or a bounded short-query scan and return snippets.")]
+    [Description("Search active Markdown/TXT documents with FTS5 or a short-query scan limited to the 1000 most recently updated documents. Coverage includes totalDocuments and isTruncated; when truncated, an empty result does not prove the content is absent.")]
     public Task<string> SearchNotes(
         string query,
         string? folder = null,
@@ -702,7 +702,7 @@ public sealed class BridgeVaultTools
     }
 
     [McpServerTool(Name = "scan_notes")]
-    [Description("Page through active document summaries without returning document content.")]
+    [Description("Page through active document summaries without returning document content. Pagination is keyset-based, not a full database snapshot; concurrent modifications may be skipped.")]
     public Task<string> ScanNotes(
         string? cursor = null,
         int limit = 50,

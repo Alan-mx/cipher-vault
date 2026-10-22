@@ -53,16 +53,13 @@ internal sealed class AgentTokenAuthenticationMiddleware
         var attemptKey = hasToken
             ? ComputeAttemptKey(presentedToken)
             : GetMissingTokenKey(context);
-        if (_rateLimiter.TryGetBlockedUntil(out var blockedUntil))
-        {
-            await RejectRateLimitedAsync(context, blockedUntil).ConfigureAwait(false);
-            return;
-        }
+        var globallyBlocked = _rateLimiter.TryGetBlockedUntil(
+            out var globalBlockedUntil);
         if (_keyedRateLimiter.TryGetBlockedUntil(
                 attemptKey,
-                out blockedUntil))
+                out var keyedBlockedUntil))
         {
-            await RejectRateLimitedAsync(context, blockedUntil).ConfigureAwait(false);
+            await RejectRateLimitedAsync(context, keyedBlockedUntil).ConfigureAwait(false);
             return;
         }
 
@@ -74,7 +71,14 @@ internal sealed class AgentTokenAuthenticationMiddleware
                 context,
                 "invalid_token",
                 "missing_token").ConfigureAwait(false);
-            await RejectAsync(context);
+            if (globallyBlocked)
+            {
+                await RejectRateLimitedAsync(context, globalBlockedUntil).ConfigureAwait(false);
+            }
+            else
+            {
+                await RejectAsync(context);
+            }
             return;
         }
 
@@ -89,7 +93,14 @@ internal sealed class AgentTokenAuthenticationMiddleware
                 context,
                 "invalid_token",
                 "invalid_token").ConfigureAwait(false);
-            await RejectAsync(context);
+            if (globallyBlocked)
+            {
+                await RejectRateLimitedAsync(context, globalBlockedUntil).ConfigureAwait(false);
+            }
+            else
+            {
+                await RejectAsync(context);
+            }
             return;
         }
 

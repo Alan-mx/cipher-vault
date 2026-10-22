@@ -204,11 +204,9 @@ internal static class BackupService
                     temporaryDirectory,
                     material,
                     cancellationToken).ConfigureAwait(false);
-                Directory.Move(temporaryDirectory, fullTargetPath);
-                VaultFileSecurity.ProtectDirectory(fullTargetPath);
                 bool auditRecorded;
                 await using (var restoredConnection = await SqlCipherVaultStore.OpenAsync(
-                    fullTargetPath,
+                    temporaryDirectory,
                     material,
                     cancellationToken).ConfigureAwait(false))
                 {
@@ -227,6 +225,7 @@ internal static class BackupService
                         }),
                         cancellationToken).ConfigureAwait(false);
                 }
+                Directory.Move(temporaryDirectory, fullTargetPath);
                 return new VaultRestoreBackupResult(
                     fullTargetPath,
                     manifest.VaultId,
