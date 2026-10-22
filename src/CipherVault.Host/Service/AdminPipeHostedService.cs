@@ -13,22 +13,40 @@ using Microsoft.Extensions.Hosting;
 
 namespace CipherVault.Host.Service;
 
-public sealed record StrictServiceHostOptions(bool EnableAdminPipe = true);
+public sealed record StrictServiceHostOptions(
+    bool EnableAdminPipe = true,
+    bool EnableBrokerPipe = true);
 
-public sealed class StrictAdminStatusProvider(
-    Func<CancellationToken, Task<HostSessionSnapshot>> getSnapshot,
-    bool brokerAvailable = false)
+public sealed class StrictAdminStatusProvider
 {
+    private readonly Func<CancellationToken, Task<HostSessionSnapshot>> _getSnapshot;
+    private readonly Func<bool> _brokerAvailable;
+
+    public StrictAdminStatusProvider(
+        Func<CancellationToken, Task<HostSessionSnapshot>> getSnapshot,
+        bool brokerAvailable = false)
+        : this(getSnapshot, () => brokerAvailable)
+    {
+    }
+
+    public StrictAdminStatusProvider(
+        Func<CancellationToken, Task<HostSessionSnapshot>> getSnapshot,
+        Func<bool> brokerAvailable)
+    {
+        _getSnapshot = getSnapshot;
+        _brokerAvailable = brokerAvailable;
+    }
+
     public async Task<AdminPipeStatusData> GetStatusAsync(
         CancellationToken cancellationToken)
     {
-        var snapshot = await getSnapshot(cancellationToken).ConfigureAwait(false);
+        var snapshot = await _getSnapshot(cancellationToken).ConfigureAwait(false);
         return new AdminPipeStatusData(
             typeof(StrictAdminStatusProvider).Assembly
                 .GetName().Version?.ToString() ?? "1.0.0",
             PipeProtocol.Version,
             CipherVaultServiceConfiguration.StrictModeValue,
-            brokerAvailable,
+            _brokerAvailable(),
             HostDtoMapper.ToSessionStatus(snapshot));
     }
 }
@@ -208,6 +226,20 @@ public sealed class AdminPipeHostedService(
             throw Invalid("At least one Admin UI or CLI image is required.");
         }
         return result;
+    }
+
+    public static ProcessVerificationPolicy CreateBrokerPolicy(
+        CipherVaultServiceConfigFile configuration,
+        string ownerSid,
+        string installRoot)
+    {
+        return CreatePolicy(
+            configuration,
+            VerifiedProcessKind.AuthBroker,
+            ownerSid,
+            installRoot,
+            expectedSessionId: null,
+            required: true);
     }
 
     private static ProcessVerificationPolicy CreatePolicy(

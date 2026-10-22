@@ -148,6 +148,12 @@ public sealed class AdminPipeHostedServiceTests
             Assert.Equal("S-1-5-21-1", policy.ExpectedUserSid);
             Assert.True(policy.RequireSignature);
         });
+        var broker = AdminPipeHostedService.CreateBrokerPolicy(
+            configuration,
+            "S-1-5-21-1",
+            fixture.InstallRoot);
+        Assert.Equal(VerifiedProcessKind.AuthBroker, broker.ExpectedKind);
+        Assert.Single(broker.AllowedImages);
     }
 
     [Fact]
@@ -219,6 +225,7 @@ public sealed class AdminPipeHostedServiceTests
             HostPath = CreateImage("CipherVault.Host.exe");
             UiPath = CreateImage("CipherVault.Ui.Wpf.exe");
             CliPath = CreateImage("CipherVault.Cli.exe");
+            BrokerPath = CreateImage("CipherVault.Auth.Broker.exe");
         }
 
         public string Root { get; }
@@ -230,6 +237,7 @@ public sealed class AdminPipeHostedServiceTests
         public string UiPath { get; }
 
         public string CliPath { get; }
+        public string BrokerPath { get; }
 
         public CipherVaultServiceConfigFile CreateConfiguration(
             bool includeUi = true,
@@ -237,7 +245,8 @@ public sealed class AdminPipeHostedServiceTests
         {
             var images = new List<CipherVaultImagePolicyFile>
             {
-                Image("HostService", HostPath)
+                Image("HostService", HostPath),
+                Image("AuthBroker", BrokerPath)
             };
             if (includeUi)
             {

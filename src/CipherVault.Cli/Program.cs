@@ -577,7 +577,8 @@ static async Task<int> RunServiceInstallAsync(
             Path.Combine(paths.InstallRoot, "CipherVault.Ui.Wpf.exe"),
         GetOption(arguments, "--cli-exe") ??
             Path.Combine(paths.InstallRoot, "CipherVault.Cli.exe"),
-        GetOption(arguments, "--broker-exe"),
+        GetOption(arguments, "--broker-exe") ??
+            Path.Combine(paths.InstallRoot, "CipherVault.Auth.Broker.exe"),
         GetOption(arguments, "--mcp-exe"),
         StartService: !HasFlag(arguments, "--no-start"));
     using var cancellationTokenSource = new CancellationTokenSource();

@@ -9,6 +9,7 @@ $projects = @(
     @{ Name = "ui"; Project = "src\CipherVault.Ui.Wpf\CipherVault.Ui.Wpf.csproj" },
     @{ Name = "mcp"; Project = "src\CipherVault.Mcp\CipherVault.Mcp.csproj" },
     @{ Name = "cli"; Project = "src\CipherVault.Cli\CipherVault.Cli.csproj" },
+    @{ Name = "broker"; Project = "src\CipherVault.Auth.Broker\CipherVault.Auth.Broker.csproj" },
     @{ Name = "host"; Project = "src\CipherVault.Host\CipherVault.Host.csproj" }
 )
 

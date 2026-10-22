@@ -341,6 +341,12 @@ public sealed class HostServiceInstaller(
                 VaultErrorCode.InvalidInput,
                 "At least one signed Admin UI or CLI image is required.");
         }
+        if (string.IsNullOrWhiteSpace(options.BrokerExecutablePath))
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "A signed Auth Broker image is required.");
+        }
         var result = new List<ServiceImageEvidence>();
         foreach (var imagePath in EnumerateImagePaths(options))
         {

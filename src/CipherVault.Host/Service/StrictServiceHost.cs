@@ -103,8 +103,10 @@ public sealed class StrictServiceHost : IAsyncDisposable
             builder.Services.AddSingleton<IVaultService>(_ => new VaultService(
                 new ServiceSystemActivityProvider(),
                 sessionOptions: sessionOptions));
+            builder.Services.AddSingleton<BrokerConnectionRegistry>();
             builder.Services.AddSingleton<IHostCredentialPrompt>(
-                new BrokerUnavailableCredentialPrompt());
+                serviceProvider => new BrokerCredentialPrompt(
+                    serviceProvider.GetRequiredService<BrokerConnectionRegistry>()));
             builder.Services.AddSingleton<IHostAccessGrantPrompt>(
                 new BrokerUnavailableAccessGrantPrompt());
             builder.Services.AddSingleton<ISecurityEventLog>(
@@ -118,7 +120,10 @@ public sealed class StrictServiceHost : IAsyncDisposable
                 new StrictAdminStatusProvider(
                     serviceProvider
                         .GetRequiredService<HostSessionCoordinator>()
-                        .GetSnapshotAsync));
+                        .GetSnapshotAsync,
+                    () => serviceProvider
+                        .GetRequiredService<BrokerConnectionRegistry>()
+                        .IsAvailable));
             builder.Services.AddSingleton(serviceProvider =>
                 new StrictAdminLockProvider(
                     serviceProvider
@@ -135,6 +140,7 @@ public sealed class StrictServiceHost : IAsyncDisposable
                         .GetRequiredService<HostSessionCoordinator>()
                         .InitializeAsync));
             builder.Services.AddHostedService<AdminPipeHostedService>();
+            builder.Services.AddHostedService<BrokerPipeHostedService>();
             host = builder.Build();
             return new StrictServiceHost(
                 host,
@@ -271,19 +277,6 @@ public sealed class StrictServiceHost : IAsyncDisposable
             return new SystemActivitySnapshot(
                 TimeSpan.Zero,
                 IsWorkstationLocked: false);
-        }
-    }
-
-    private sealed class BrokerUnavailableCredentialPrompt : IHostCredentialPrompt
-    {
-        public Task<HostCredentialPromptResult> RequestAsync(
-            HostCredentialPreference preference,
-            string? message = null,
-            CancellationToken cancellationToken = default)
-        {
-            throw new AdminPipeRpcException(
-                "approval_broker_unavailable",
-                "The interactive Auth Broker is not available.");
         }
     }
 
