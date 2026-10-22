@@ -1,4 +1,5 @@
 using System.IO;
+using CipherVault.Auth.Win;
 using CipherVault.Core;
 using CipherVault.Core.Configuration;
 using CipherVault.Core.Errors;
@@ -295,9 +296,10 @@ public sealed class StrictServiceHost : IAsyncDisposable
     {
         public SystemActivitySnapshot GetSnapshot()
         {
-            return new SystemActivitySnapshot(
-                TimeSpan.Zero,
-                IsWorkstationLocked: false);
+            var sessionId = WindowsSystemActivityProvider.GetConsoleSessionId();
+            return sessionId == 0
+                ? new SystemActivitySnapshot(TimeSpan.FromDays(1), true)
+                : WindowsSystemActivityProvider.GetSnapshot(sessionId);
         }
     }
 

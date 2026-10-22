@@ -8,8 +8,29 @@ public sealed class WindowsSystemActivityProvider : ISystemActivityProvider
     private const uint DesktopReadObjects = 0x0001;
     private const int WtsCurrentSession = -1;
     private const int WtsSessionInfoEx = 25;
+    private const uint NoConsoleSession = 0xFFFFFFFF;
 
     public SystemActivitySnapshot GetSnapshot()
+    {
+        return GetSnapshot(
+            unchecked((uint)WtsCurrentSession));
+    }
+
+    public static SystemActivitySnapshot GetSnapshot(uint sessionId)
+    {
+        var idleTime = GetIdleTime();
+        return new SystemActivitySnapshot(
+            idleTime,
+            IsWorkstationLocked(sessionId));
+    }
+
+    public static uint GetConsoleSessionId()
+    {
+        var sessionId = WTSGetActiveConsoleSessionId();
+        return sessionId == NoConsoleSession ? 0 : sessionId;
+    }
+
+    private static TimeSpan GetIdleTime()
     {
         var input = new LastInputInfo
         {
@@ -17,29 +38,32 @@ public sealed class WindowsSystemActivityProvider : ISystemActivityProvider
         };
         if (!GetLastInputInfo(ref input))
         {
-            return new SystemActivitySnapshot(TimeSpan.FromDays(1), true);
+            return TimeSpan.FromDays(1);
         }
 
         var elapsedTicks = unchecked(GetTickCount() - input.dwTime);
-        var idleTime = TimeSpan.FromMilliseconds(elapsedTicks);
-        return new SystemActivitySnapshot(idleTime, IsWorkstationLocked());
+        return TimeSpan.FromMilliseconds(elapsedTicks);
     }
 
-    private static bool IsWorkstationLocked()
+    private static bool IsWorkstationLocked(uint sessionId)
     {
-        if (TryGetSessionLockState(out var locked))
+        if (TryGetSessionLockState(sessionId, out var locked))
         {
             return locked;
         }
-        return !CanOpenInputDesktop();
+
+        return sessionId != unchecked((uint)WtsCurrentSession) ||
+            !CanOpenInputDesktop();
     }
 
-    private static bool TryGetSessionLockState(out bool locked)
+    private static bool TryGetSessionLockState(
+        uint sessionId,
+        out bool locked)
     {
         locked = false;
         if (!WTSQuerySessionInformation(
                 IntPtr.Zero,
-                WtsCurrentSession,
+                unchecked((int)sessionId),
                 WtsSessionInfoEx,
                 out var buffer,
                 out var bytesReturned))
@@ -96,6 +120,9 @@ public sealed class WindowsSystemActivityProvider : ISystemActivityProvider
     [DllImport("kernel32.dll")]
     private static extern uint GetTickCount();
 
+    [DllImport("kernel32.dll")]
+    private static extern uint WTSGetActiveConsoleSessionId();
+
     [DllImport("user32.dll", SetLastError = true)]
     private static extern IntPtr OpenInputDesktop(
         uint flags,
@@ -103,7 +130,6 @@ public sealed class WindowsSystemActivityProvider : ISystemActivityProvider
         uint desiredAccess);
 
     [DllImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CloseDesktop(IntPtr desktop);
 
     [DllImport("wtsapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
