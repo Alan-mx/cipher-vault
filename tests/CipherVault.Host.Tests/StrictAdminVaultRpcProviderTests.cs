@@ -142,5 +142,19 @@ public sealed class StrictAdminVaultRpcProviderTests
         var trash = Assert.IsType<VaultTrashPage>(trashResult);
         var trashed = Assert.Single(trash.Items);
         Assert.Equal(updated.DocumentId, trashed.DocumentId);
+        var restoreResult = await provider.HandleAsync(
+            session,
+            "admin.trash.restore",
+            JsonSerializer.SerializeToElement(
+                new AdminRestoreTrashRequest(
+                    trashed.DocumentId,
+                    new HostRestoreTrashRequest(
+                        trashed.Revision,
+                        RenamePath: null)),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            CancellationToken.None);
+        var restored = Assert.IsType<VaultRestoreResult>(restoreResult);
+        Assert.Equal(trashed.DocumentId, restored.DocumentId);
+        Assert.EndsWith(".md", restored.VirtualPath, StringComparison.Ordinal);
     }
 }

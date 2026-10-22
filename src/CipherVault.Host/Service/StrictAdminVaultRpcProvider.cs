@@ -185,6 +185,29 @@ public sealed class StrictAdminVaultRpcProvider(HostVaultGateway vault)
                         trashRequest.Limit,
                         token),
                     cancellationToken).ConfigureAwait(false);
+            case "admin.trash.restore":
+                var restoreRequest =
+                    PipeRpcCodec.ReadPayload<AdminRestoreTrashRequest>(
+                        new PipeRpcRequest(
+                            PipeProtocol.Version,
+                            Guid.Empty,
+                            method,
+                            payload));
+                if (restoreRequest.DocumentId == Guid.Empty ||
+                    restoreRequest.Request.ExpectedRevision < 1)
+                {
+                    throw new AdminPipeRpcException(
+                        "invalid_input",
+                        "Restore request is invalid.");
+                }
+                return await vault.ExecuteAsync(
+                    (service, token) => service.RestoreTrashAsync(
+                        restoreRequest.DocumentId,
+                        restoreRequest.Request.ExpectedRevision,
+                        restoreRequest.Request.RenamePath,
+                        Actor(session),
+                        token),
+                    cancellationToken).ConfigureAwait(false);
             default:
                 throw new AdminPipeRpcException(
                     "unsupported_method",

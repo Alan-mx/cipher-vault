@@ -35,3 +35,7 @@ public sealed record AdminTrashNoteRequest(
 public sealed record AdminTrashListRequest(
     string? Cursor,
     int Limit);
+
+public sealed record AdminRestoreTrashRequest(
+    Guid DocumentId,
+    HostRestoreTrashRequest Request);

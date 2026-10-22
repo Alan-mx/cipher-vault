@@ -209,11 +209,9 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
     {
         return CallAsync<VaultRestoreResult>(
             "admin.trash.restore",
-            new
-            {
+            new AdminRestoreTrashRequest(
                 documentId,
-                request = new HostRestoreTrashRequest(expectedRevision, renamePath)
-            },
+                new HostRestoreTrashRequest(expectedRevision, renamePath)),
             cancellationToken);
     }
 
