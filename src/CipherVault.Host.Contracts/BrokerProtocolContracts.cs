@@ -33,13 +33,21 @@ public sealed record BrokerApprovalRequest(
     string DisplayTitle,
     string DisplayDetails,
     string ParametersHash,
-    DateTimeOffset ExpiresAt);
+    DateTimeOffset ExpiresAt,
+    IReadOnlyList<string>? RequestedScopes = null,
+    IReadOnlyList<string>? AllowedScopes = null,
+    string? ClientId = null,
+    Guid? ClientInstanceId = null,
+    string? TokenAccessMode = null,
+    string? IdleLifetime = null,
+    string? HardLifetime = null);
 
 public sealed record BrokerApprovalDecision(
     Guid ApprovalId,
     string NonceB64Url,
     bool Approved,
-    string? DenialReason);
+    string? DenialReason,
+    IReadOnlyList<string>? ApprovedScopes = null);
 
 public sealed record BrokerTransferRequest(
     Guid TransferId,

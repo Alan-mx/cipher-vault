@@ -7,6 +7,22 @@ namespace CipherVault.Auth.Win.Tests;
 public sealed class WindowsAccessGrantPromptTests
 {
     [Fact]
+    public void ScopeNamesRequireReadAndPairDeleteWithWrite()
+    {
+        Assert.Equal(
+            new[] { "read" },
+            new AccessGrantPromptResult(true, false, false, true).ToScopeNames());
+        Assert.Equal(
+            new[] { "read", "write" },
+            new AccessGrantPromptResult(true, true, true, false).ToScopeNames());
+        Assert.Equal(
+            new[] { "read", "write", "delete" },
+            new AccessGrantPromptResult(true, true, true, true).ToScopeNames());
+        Assert.Empty(
+            new AccessGrantPromptResult(false, false, false, false).ToScopeNames());
+    }
+
+    [Fact]
     public async Task ApproveReadByDefault()
     {
         if (!ShouldRunInteractiveUiTests())

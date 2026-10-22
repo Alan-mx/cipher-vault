@@ -288,6 +288,9 @@ public sealed class BrokerAccessGrantPrompt(BrokerConnectionRegistry registry)
             ",",
             AccessGrantScopes.ToNames(request.RequestedScopes)
                 .OrderBy(value => value, StringComparer.Ordinal));
+        var allowed = AccessGrantScopes.ToNames(request.AllowedScopes)
+            .OrderBy(value => value, StringComparer.Ordinal)
+            .ToArray();
         var result = await broker.CallAsync<
                 BrokerApprovalRequest,
                 BrokerApprovalDecision>(
@@ -305,7 +308,16 @@ public sealed class BrokerAccessGrantPrompt(BrokerConnectionRegistry registry)
                             request.ClientInstanceId,
                             request.RequestedScopes
                         })),
-                    expiresAt),
+                    expiresAt,
+                    AccessGrantScopes.ToNames(request.RequestedScopes)
+                        .OrderBy(value => value, StringComparer.Ordinal)
+                        .ToArray(),
+                    allowed,
+                    request.ClientId,
+                    request.ClientInstanceId,
+                    request.TokenAccessMode.ToString(),
+                    request.IdleLifetime.ToString(),
+                    request.HardLifetime.ToString()),
                 expiresAt,
                 cancellationToken)
             .ConfigureAwait(false);
@@ -316,10 +328,69 @@ public sealed class BrokerAccessGrantPrompt(BrokerConnectionRegistry registry)
                 "approval_response_mismatch",
                 "Broker Access Grant response did not match.");
         }
+        if (!result.Approved)
+        {
+            return new HostAccessGrantPromptResult(
+                Approved: false,
+                AccessGrantScope.None);
+        }
         return new HostAccessGrantPromptResult(
-            result.Approved,
-            result.Approved
-                ? request.RequestedScopes & request.AllowedScopes
-                : AccessGrantScope.None);
+            Approved: true,
+            ResolveApprovedScopes(
+                request.RequestedScopes,
+                request.AllowedScopes,
+                result.ApprovedScopes));
+    }
+
+    public static AccessGrantScope ResolveApprovedScopes(
+        AccessGrantScope requested,
+        AccessGrantScope allowed,
+        IReadOnlyList<string>? approvedScopes)
+    {
+        if (approvedScopes is null)
+        {
+            throw InvalidApproval("Broker returned no approved scopes.");
+        }
+        var approved = AccessGrantScope.None;
+        foreach (var raw in approvedScopes)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                throw InvalidApproval("Broker returned an empty scope.");
+            }
+            approved |= raw.Trim().ToLowerInvariant() switch
+            {
+                "read" => AccessGrantScope.Read,
+                "write" => AccessGrantScope.Write,
+                "delete" => AccessGrantScope.Delete,
+                _ => throw InvalidApproval("Broker returned an unknown scope.")
+            };
+        }
+        var ceiling = requested & allowed;
+        if ((approved & ~ceiling) != 0)
+        {
+            throw InvalidApproval(
+                "Broker approved scopes outside the requested set.");
+        }
+        if ((ceiling & AccessGrantScope.Read) != 0 &&
+            (approved & AccessGrantScope.Read) == 0)
+        {
+            throw InvalidApproval(
+                "Broker approval removed the required read scope.");
+        }
+        if ((approved & AccessGrantScope.Delete) != 0 &&
+            (approved & AccessGrantScope.Write) == 0)
+        {
+            throw InvalidApproval(
+                "Broker approval granted delete without write.");
+        }
+        return AccessGrantScopes.Normalize(approved);
+    }
+
+    private static AdminPipeRpcException InvalidApproval(string message)
+    {
+        return new AdminPipeRpcException(
+            "approval_response_invalid",
+            message);
     }
 }

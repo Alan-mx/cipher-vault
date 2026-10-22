@@ -14,6 +14,7 @@ public static class Program
     {
         var manifestPath = GetOption(args, "--manifest") ??
             CipherVaultServicePaths.Default.PublicManifestPath;
+        var log = new BrokerLog();
         CipherVaultInstallPublicManifest manifest;
         try
         {
@@ -22,6 +23,7 @@ public static class Program
         }
         catch (Exception exception)
         {
+            log.Write("startup", "error", message: exception.Message);
             Trace.TraceError(exception.Message);
             return 1;
         }
@@ -32,6 +34,7 @@ public static class Program
                 manifest.OwnerSid,
                 StringComparison.OrdinalIgnoreCase))
         {
+            log.Write("startup", "owner_mismatch");
             return 1;
         }
         using var instanceMutex = new Mutex(
@@ -65,6 +68,7 @@ public static class Program
         }
         catch (Exception exception)
         {
+            log.Write("startup", "error", message: exception.Message);
             Trace.TraceError(exception.Message);
             return 1;
         }
@@ -77,9 +81,12 @@ public static class Program
                         options,
                         cancellationTokenSource.Token);
                 await connection.RunAsync(
-                    PromptForCredentialAsync,
-                    PromptForApprovalAsync,
-                    PromptForTransferAsync,
+                    (request, token) =>
+                        PromptForCredentialAsync(request, log, token),
+                    (request, token) =>
+                        PromptForApprovalAsync(request, log, token),
+                    (request, token) =>
+                        PromptForTransferAsync(request, log, token),
                     cancellationTokenSource.Token);
             }
             catch (OperationCanceledException) when (
@@ -89,6 +96,7 @@ public static class Program
             }
             catch (Exception exception)
             {
+                log.Write("connection", "failed", message: exception.Message);
                 Trace.TraceWarning(exception.Message);
                 try
                 {
@@ -107,6 +115,7 @@ public static class Program
 
     private static async Task<BrokerCredentialPromptResult> PromptForCredentialAsync(
         BrokerCredentialPromptRequest request,
+        BrokerLog log,
         CancellationToken cancellationToken)
     {
         var preferredType = request.Preference.ToLowerInvariant() switch
@@ -120,6 +129,12 @@ public static class Program
             request.Message,
             preferredType,
             cancellationToken);
+        log.Write(
+            "credential",
+            result.Confirmed ? "approved" : "denied",
+            request.RequestId,
+            "credential",
+            result.Confirmed ? null : "user-denied");
         return new BrokerCredentialPromptResult(
             request.RequestId,
             request.NonceB64Url,
@@ -133,12 +148,54 @@ public static class Program
 
     private static async Task<BrokerApprovalDecision> PromptForApprovalAsync(
         BrokerApprovalRequest request,
+        BrokerLog log,
         CancellationToken cancellationToken)
     {
+        if (string.Equals(
+                request.OperationKind,
+                "AccessGrant",
+                StringComparison.Ordinal) &&
+            request.RequestedScopes is not null &&
+            request.AllowedScopes is not null)
+        {
+            var scopeResult = await WindowsAccessGrantPrompt.RequestAsync(
+                request.DisplayTitle,
+                new AccessGrantPromptRequest(
+                    request.ClientId ?? "unknown-agent",
+                    request.ClientInstanceId ?? Guid.Empty,
+                    request.TokenAccessMode ?? string.Empty,
+                    request.AllowedScopes.ToHashSet(StringComparer.Ordinal),
+                    request.RequestedScopes.ToHashSet(StringComparer.Ordinal),
+                    request.IdleLifetime ?? "默认",
+                    request.HardLifetime ?? "默认"),
+                cancellationToken);
+            var approvedScopes = scopeResult.Confirmed
+                ? scopeResult.ToScopeNames()
+                : null;
+            log.Write(
+                "approval",
+                scopeResult.Confirmed ? "approved" : "denied",
+                request.ApprovalId,
+                request.OperationKind,
+                scopeResult.Confirmed ? null : "user-denied");
+            return new BrokerApprovalDecision(
+                request.ApprovalId,
+                request.NonceB64Url,
+                scopeResult.Confirmed,
+                scopeResult.Confirmed ? null : "user-denied",
+                approvedScopes);
+        }
+
         var result = await WindowsOperationApprovalPrompt.RequestAsync(
             request.DisplayTitle,
             request.DisplayDetails,
             cancellationToken);
+        log.Write(
+            "approval",
+            result.Approved ? "approved" : "denied",
+            request.ApprovalId,
+            request.OperationKind,
+            result.Approved ? null : "user-denied");
         return new BrokerApprovalDecision(
             request.ApprovalId,
             request.NonceB64Url,
@@ -148,6 +205,7 @@ public static class Program
 
     private static async Task<BrokerTransferResult> PromptForTransferAsync(
         BrokerTransferRequest request,
+        BrokerLog log,
         CancellationToken cancellationToken)
     {
         var result = await WindowsFileTransferPrompt.RequestAsync(
@@ -159,6 +217,12 @@ public static class Program
                 request.SuggestedPath,
                 request.ExpiresAt),
             cancellationToken);
+        log.Write(
+            "transfer",
+            result.Completed ? "completed" : "failed",
+            request.TransferId,
+            request.Direction,
+            result.ErrorCode);
         return new BrokerTransferResult(
             result.TransferId,
             result.Completed,

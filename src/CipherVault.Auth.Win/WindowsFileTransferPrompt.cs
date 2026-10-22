@@ -39,7 +39,7 @@ public static class WindowsFileTransferPrompt
         {
             try
             {
-                completion.TrySetResult(Execute(request));
+                completion.TrySetResult(Execute(request, cancellationToken));
             }
             catch (Exception exception)
             {
@@ -56,7 +56,8 @@ public static class WindowsFileTransferPrompt
     }
 
     private static FileTransferPromptResult Execute(
-        FileTransferPromptRequest request)
+        FileTransferPromptRequest request,
+        CancellationToken cancellationToken)
     {
         if (request.ExpiresAt <= DateTimeOffset.UtcNow)
         {
@@ -66,19 +67,23 @@ public static class WindowsFileTransferPrompt
                 null,
                 "transfer_expired");
         }
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Cancelled(request);
+        }
         var direction = request.Direction.ToLowerInvariant();
         var payloadKind = request.PayloadKind.ToLowerInvariant();
         if (direction == "export")
         {
             return payloadKind == "file"
-                ? ExportFile(request)
-                : ExportDirectory(request);
+                ? ExportFile(request, cancellationToken)
+                : ExportDirectory(request, cancellationToken);
         }
         if (direction == "import")
         {
             return payloadKind == "file"
-                ? ImportFile(request)
-                : ImportDirectory(request);
+                ? ImportFile(request, cancellationToken)
+                : ImportDirectory(request, cancellationToken);
         }
         return new FileTransferPromptResult(
             request.TransferId,
@@ -88,32 +93,40 @@ public static class WindowsFileTransferPrompt
     }
 
     private static FileTransferPromptResult ExportFile(
-        FileTransferPromptRequest request)
+        FileTransferPromptRequest request,
+        CancellationToken cancellationToken)
     {
         var dialog = new SaveFileDialog
         {
             Title = "保存 CipherVault 备份",
             FileName = Path.GetFileName(request.SuggestedPath),
             InitialDirectory = Path.GetDirectoryName(request.SuggestedPath),
-            OverwritePrompt = true
+            OverwritePrompt = false
         };
-        if (dialog.ShowDialog() != true)
+        if (dialog.ShowDialog() != true ||
+            cancellationToken.IsCancellationRequested)
         {
             return Cancelled(request);
+        }
+        if (File.Exists(dialog.FileName))
+        {
+            return TargetExists(request);
         }
         File.Copy(request.StagingPath, dialog.FileName, overwrite: false);
         return Completed(request, dialog.FileName);
     }
 
     private static FileTransferPromptResult ExportDirectory(
-        FileTransferPromptRequest request)
+        FileTransferPromptRequest request,
+        CancellationToken cancellationToken)
     {
         var dialog = new OpenFolderDialog
         {
             Title = "选择 CipherVault 导出位置",
             InitialDirectory = Path.GetDirectoryName(request.SuggestedPath)
         };
-        if (dialog.ShowDialog() != true)
+        if (dialog.ShowDialog() != true ||
+            cancellationToken.IsCancellationRequested)
         {
             return Cancelled(request);
         }
@@ -122,18 +135,15 @@ public static class WindowsFileTransferPrompt
             Path.GetFileName(request.SuggestedPath));
         if (Directory.Exists(destination) || File.Exists(destination))
         {
-            return new FileTransferPromptResult(
-                request.TransferId,
-                false,
-                null,
-                "transfer_target_exists");
+            return TargetExists(request);
         }
         CopyDirectory(request.StagingPath, destination);
         return Completed(request, destination);
     }
 
     private static FileTransferPromptResult ImportFile(
-        FileTransferPromptRequest request)
+        FileTransferPromptRequest request,
+        CancellationToken cancellationToken)
     {
         var dialog = new OpenFileDialog
         {
@@ -143,16 +153,22 @@ public static class WindowsFileTransferPrompt
                 : Path.GetDirectoryName(request.SuggestedPath),
             CheckFileExists = true
         };
-        if (dialog.ShowDialog() != true)
+        if (dialog.ShowDialog() != true ||
+            cancellationToken.IsCancellationRequested)
         {
             return Cancelled(request);
+        }
+        if (File.Exists(request.StagingPath))
+        {
+            return TargetExists(request);
         }
         File.Copy(dialog.FileName, request.StagingPath, overwrite: false);
         return Completed(request, request.StagingPath);
     }
 
     private static FileTransferPromptResult ImportDirectory(
-        FileTransferPromptRequest request)
+        FileTransferPromptRequest request,
+        CancellationToken cancellationToken)
     {
         var dialog = new OpenFolderDialog
         {
@@ -161,7 +177,8 @@ public static class WindowsFileTransferPrompt
                 ? request.SuggestedPath
                 : null
         };
-        if (dialog.ShowDialog() != true)
+        if (dialog.ShowDialog() != true ||
+            cancellationToken.IsCancellationRequested)
         {
             return Cancelled(request);
         }
@@ -220,6 +237,16 @@ public static class WindowsFileTransferPrompt
         {
             throw new IOException("Source is a reparse point.");
         }
+    }
+
+    private static FileTransferPromptResult TargetExists(
+        FileTransferPromptRequest request)
+    {
+        return new FileTransferPromptResult(
+            request.TransferId,
+            false,
+            null,
+            "transfer_target_exists");
     }
 
     private static FileTransferPromptResult Cancelled(

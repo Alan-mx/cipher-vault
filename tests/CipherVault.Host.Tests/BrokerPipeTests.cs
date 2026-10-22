@@ -218,6 +218,60 @@ public sealed class BrokerPipeTests
             activityProvider.GetSnapshot().SystemIdleTime);
     }
 
+    [Theory]
+    [InlineData(
+        AccessGrantScope.Read | AccessGrantScope.Write | AccessGrantScope.Delete,
+        AccessGrantScope.Read | AccessGrantScope.Write | AccessGrantScope.Delete,
+        new[] { "read", "write" },
+        AccessGrantScope.Read | AccessGrantScope.Write)]
+    [InlineData(
+        AccessGrantScope.Read,
+        AccessGrantScope.Read | AccessGrantScope.Write,
+        new[] { "read" },
+        AccessGrantScope.Read)]
+    [InlineData(
+        AccessGrantScope.Read | AccessGrantScope.Write | AccessGrantScope.Delete,
+        AccessGrantScope.Read | AccessGrantScope.Write | AccessGrantScope.Delete,
+        new[] { "read", "write", "delete" },
+        AccessGrantScope.Read | AccessGrantScope.Write | AccessGrantScope.Delete)]
+    public void ApprovedGrantScopesCanOnlyReduceRequestedScopes(
+        AccessGrantScope requested,
+        AccessGrantScope allowed,
+        string[] approvedScopes,
+        AccessGrantScope expected)
+    {
+        var result = BrokerAccessGrantPrompt.ResolveApprovedScopes(
+            requested,
+            allowed,
+            approvedScopes);
+
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void ApprovedGrantScopesRejectEscalationAndInvalidCombinations()
+    {
+        AssertInvalidGrantScopes(["write"]);
+        AssertInvalidGrantScopes(["read", "delete"]);
+        AssertInvalidGrantScopes(
+            ["read", "write"],
+            requested: AccessGrantScope.Read);
+        AssertInvalidGrantScopes(null);
+    }
+
+    private static void AssertInvalidGrantScopes(
+        IReadOnlyList<string>? approvedScopes,
+        AccessGrantScope requested =
+            AccessGrantScope.Read | AccessGrantScope.Write | AccessGrantScope.Delete)
+    {
+        var exception = Assert.Throws<AdminPipeRpcException>(
+            () => BrokerAccessGrantPrompt.ResolveApprovedScopes(
+                requested,
+                requested,
+                approvedScopes));
+        Assert.Equal("approval_response_invalid", exception.Code);
+    }
+
     [Fact]
     public void RegistryReportsBrokerUnavailable()
     {

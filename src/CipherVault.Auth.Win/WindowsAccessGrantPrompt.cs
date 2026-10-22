@@ -16,7 +16,26 @@ public sealed record AccessGrantPromptResult(
     bool Confirmed,
     bool Read,
     bool Write,
-    bool Delete);
+    bool Delete)
+{
+    public IReadOnlyList<string> ToScopeNames()
+    {
+        var scopes = new List<string>(3);
+        if (Read || Write || Delete)
+        {
+            scopes.Add("read");
+        }
+        if (Write)
+        {
+            scopes.Add("write");
+        }
+        if (Write && Delete)
+        {
+            scopes.Add("delete");
+        }
+        return scopes;
+    }
+}
 
 public static class WindowsAccessGrantPrompt
 {
@@ -57,6 +76,7 @@ public static class WindowsAccessGrantPrompt
         private readonly CheckBox _readBox;
         private readonly CheckBox _writeBox;
         private readonly CheckBox _deleteBox;
+        private readonly bool _deleteAllowed;
         private bool _confirmed;
 
         public AccessGrantPromptWindow(
@@ -79,17 +99,25 @@ public static class WindowsAccessGrantPrompt
             var requestDelete = request.RequestedScopes.Contains("delete");
 
             _readBox = CreateScopeCheckBox(
-                "读取（read）",
-                allowRead,
+                "读取（read，必需）",
+                enabled: false,
                 allowRead && requestRead);
             _writeBox = CreateScopeCheckBox(
                 "写入（write）",
-                allowWrite,
+                allowWrite && requestWrite,
                 allowWrite && requestWrite);
+            _deleteAllowed = allowDelete && requestDelete;
             _deleteBox = CreateScopeCheckBox(
-                "删除（delete）",
-                allowDelete,
-                false);
+                "删除（delete，需写入）",
+                enabled: false,
+                isChecked: false);
+            _writeBox.Checked += (_, _) => UpdateDeleteAvailability();
+            _writeBox.Unchecked += (_, _) =>
+            {
+                _deleteBox.IsChecked = false;
+                UpdateDeleteAvailability();
+            };
+            UpdateDeleteAvailability();
 
             var approveButton = new Button
             {
@@ -172,6 +200,16 @@ public static class WindowsAccessGrantPrompt
                 IsEnabled = enabled,
                 IsChecked = isChecked
             };
+        }
+
+        private void UpdateDeleteAvailability()
+        {
+            var canDelete = _deleteAllowed && _writeBox.IsChecked == true;
+            _deleteBox.IsEnabled = canDelete;
+            if (!canDelete)
+            {
+                _deleteBox.IsChecked = false;
+            }
         }
 
         private void Confirm()
