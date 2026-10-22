@@ -7,6 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\CipherVault.Core\CipherVault.Core.csproj" />
     <ProjectReference Include="..\CipherVault.Host.Contracts\CipherVault.Host.Contracts.csproj" />
   </ItemGroup>
 
