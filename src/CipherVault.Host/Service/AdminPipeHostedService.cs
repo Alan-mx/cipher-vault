@@ -101,7 +101,8 @@ public sealed class AdminPipeHostedService(
     StrictAdminUnlockProvider unlockProvider,
     StrictAdminInitializeProvider initializeProvider,
     StrictAdminVaultRpcProvider vaultRpcProvider,
-    AdminSessionStore adminSessions) : BackgroundService
+    AdminSessionStore adminSessions,
+    HostSessionCoordinator sessions) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -182,6 +183,7 @@ public sealed class AdminPipeHostedService(
             await using var server = new AdminPipeServer(serverOptions);
             try
             {
+                using var clientConnection = sessions.EnterClient();
                 _ = await server.AcceptOnceAsync(stoppingToken)
                     .ConfigureAwait(false);
             }
@@ -189,6 +191,19 @@ public sealed class AdminPipeHostedService(
                 stoppingToken.IsCancellationRequested)
             {
                 return;
+            }
+            catch (Exception)
+            {
+                try
+                {
+                    await Task.Delay(
+                        TimeSpan.FromMilliseconds(100),
+                        stoppingToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
             }
         }
     }

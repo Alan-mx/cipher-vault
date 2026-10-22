@@ -90,6 +90,19 @@ public sealed class BrokerPipeHostedService(
             {
                 return;
             }
+            catch (Exception)
+            {
+                try
+                {
+                    await Task.Delay(
+                        TimeSpan.FromMilliseconds(100),
+                        stoppingToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+            }
         }
     }
 
