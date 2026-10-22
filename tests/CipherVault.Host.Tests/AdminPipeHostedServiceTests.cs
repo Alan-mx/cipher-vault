@@ -1,8 +1,10 @@
 using System.IO;
 using CipherVault.Core.Configuration;
 using CipherVault.Core.Errors;
+using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Service;
+using CipherVault.Host.Session;
 
 namespace CipherVault.Host.Tests;
 
@@ -12,6 +14,31 @@ public sealed class AdminPipeHostedServiceTests
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     private const string Thumbprint =
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    [Fact]
+    public async Task StatusProviderReturnsCurrentVaultSession()
+    {
+        var provider = new StrictAdminStatusProvider(
+            _ => Task.FromResult(new HostSessionSnapshot(
+                VaultSessionState.Unlocked,
+                Guid.NewGuid(),
+                DateTimeOffset.UtcNow,
+                DateTimeOffset.UtcNow,
+                DateTimeOffset.UtcNow.AddMinutes(10),
+                DateTimeOffset.UtcNow.AddHours(4),
+                LockReason: null,
+                ActiveLeases: 2,
+                ConnectedClients: 1,
+                RecoveryVerified: true)));
+
+        var status = await provider.GetStatusAsync(CancellationToken.None);
+
+        Assert.Equal("strict", status.SecurityMode);
+        Assert.False(status.BrokerAvailable);
+        Assert.Equal("unlocked", status.Session.State);
+        Assert.Equal(2, status.Session.ActiveLeases);
+        Assert.True(status.Session.RecoveryVerified);
+    }
 
     [Fact]
     public void PoliciesIncludeServiceAndBothAdminClientKinds()

@@ -4,6 +4,7 @@ using CipherVault.Core.Configuration;
 using CipherVault.Core.Errors;
 using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
+using CipherVault.Host.Http;
 using CipherVault.Host.Security;
 using CipherVault.Host.Session;
 using CipherVault.Ipc;
@@ -14,10 +15,29 @@ namespace CipherVault.Host.Service;
 
 public sealed record StrictServiceHostOptions(bool EnableAdminPipe = true);
 
+public sealed class StrictAdminStatusProvider(
+    Func<CancellationToken, Task<HostSessionSnapshot>> getSnapshot,
+    bool brokerAvailable = false)
+{
+    public async Task<AdminPipeStatusData> GetStatusAsync(
+        CancellationToken cancellationToken)
+    {
+        var snapshot = await getSnapshot(cancellationToken).ConfigureAwait(false);
+        return new AdminPipeStatusData(
+            typeof(StrictAdminStatusProvider).Assembly
+                .GetName().Version?.ToString() ?? "1.0.0",
+            PipeProtocol.Version,
+            CipherVaultServiceConfiguration.StrictModeValue,
+            brokerAvailable,
+            HostDtoMapper.ToSessionStatus(snapshot));
+    }
+}
+
 public sealed class AdminPipeHostedService(
     CipherVaultServiceConfigFile configuration,
     CipherVaultServicePaths paths,
-    StrictServiceHostOptions options) : BackgroundService
+    StrictServiceHostOptions options,
+    StrictAdminStatusProvider statusProvider) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -74,7 +94,9 @@ public sealed class AdminPipeHostedService(
             ownerSid,
             serviceSid,
             sessionOptions.IdleTimeout,
-            sessionOptions.HardLifetime);
+            sessionOptions.HardLifetime,
+            (_, cancellationToken) =>
+                statusProvider.GetStatusAsync(cancellationToken));
 
         while (!stoppingToken.IsCancellationRequested)
         {

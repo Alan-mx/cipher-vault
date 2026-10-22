@@ -1,7 +1,11 @@
 using System.IO;
+using CipherVault.Core;
 using CipherVault.Core.Configuration;
 using CipherVault.Core.Errors;
 using CipherVault.Core.Security;
+using CipherVault.Core.Session;
+using CipherVault.Host.Security;
+using CipherVault.Host.Session;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using HostApplicationBuilderFactory = Microsoft.Extensions.Hosting.Host;
@@ -73,6 +77,48 @@ public sealed class StrictServiceHost : IAsyncDisposable
             builder.Services.AddSingleton(paths);
             builder.Services.AddSingleton(
                 runtimeOptions ?? new StrictServiceHostOptions());
+            var vaultPath = configuration.VaultPath
+                ?? throw Invalid("Service Vault path is required.");
+            var sessionOptions = VaultSessionOptions.FromMinutes(
+                configuration.Session?.IdleMinutes ?? 15,
+                configuration.Session?.HardHours ?? 4);
+            var runtimeConfiguration = new ResolvedCipherVaultHostConfig(
+                vaultPath,
+                sessionOptions,
+                new HostEndpointOptions(
+                    "127.0.0.1",
+                    43127,
+                    configuration.Host?.McpPath ?? "/mcp",
+                    "/admin/v1",
+                    configuration.Host?.MaxRequestBodyBytes ??
+                        4 * 1024 * 1024,
+                    new HashSet<string>(
+                        configuration.Host?.AllowedOrigins ?? [],
+                        StringComparer.OrdinalIgnoreCase)),
+                [],
+                paths.ServiceConfigPath);
+            builder.Services.AddSingleton(runtimeConfiguration);
+            builder.Services.AddSingleton<ISystemActivityProvider>(
+                new ServiceSystemActivityProvider());
+            builder.Services.AddSingleton<IVaultService>(_ => new VaultService(
+                new ServiceSystemActivityProvider(),
+                sessionOptions: sessionOptions));
+            builder.Services.AddSingleton<IHostCredentialPrompt>(
+                new BrokerUnavailableCredentialPrompt());
+            builder.Services.AddSingleton<IHostAccessGrantPrompt>(
+                new BrokerUnavailableAccessGrantPrompt());
+            builder.Services.AddSingleton<ISecurityEventLog>(
+                new JsonlSecurityEventLog(paths.LogsPath));
+            builder.Services.AddSingleton(serviceProvider =>
+                new AccessGrantService(
+                    securityLog:
+                        serviceProvider.GetRequiredService<ISecurityEventLog>()));
+            builder.Services.AddSingleton<HostSessionCoordinator>();
+            builder.Services.AddSingleton(serviceProvider =>
+                new StrictAdminStatusProvider(
+                    serviceProvider
+                        .GetRequiredService<HostSessionCoordinator>()
+                        .GetSnapshotAsync));
             builder.Services.AddHostedService<AdminPipeHostedService>();
             host = builder.Build();
             return new StrictServiceHost(
@@ -201,5 +247,41 @@ public sealed class StrictServiceHost : IAsyncDisposable
     private void ThrowIfDisposed()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+    }
+
+    private sealed class ServiceSystemActivityProvider : ISystemActivityProvider
+    {
+        public SystemActivitySnapshot GetSnapshot()
+        {
+            return new SystemActivitySnapshot(
+                TimeSpan.Zero,
+                IsWorkstationLocked: false);
+        }
+    }
+
+    private sealed class BrokerUnavailableCredentialPrompt : IHostCredentialPrompt
+    {
+        public Task<HostCredentialPromptResult> RequestAsync(
+            HostCredentialPreference preference,
+            string? message = null,
+            CancellationToken cancellationToken = default)
+        {
+            throw new VaultException(
+                VaultErrorCode.StorageError,
+                "The interactive Auth Broker is not available.");
+        }
+    }
+
+    private sealed class BrokerUnavailableAccessGrantPrompt
+        : IHostAccessGrantPrompt
+    {
+        public Task<HostAccessGrantPromptResult> RequestAsync(
+            HostAccessGrantPromptRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            throw new VaultException(
+                VaultErrorCode.StorageError,
+                "The interactive Auth Broker is not available.");
+        }
     }
 }
