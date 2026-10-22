@@ -233,7 +233,7 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
     {
         return CallAsync<VaultRevisionPage>(
             "admin.revisions.list",
-            new { documentId, cursor, limit },
+            new AdminRevisionListRequest(documentId, cursor, limit),
             cancellationToken);
     }
 

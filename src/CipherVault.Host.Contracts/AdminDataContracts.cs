@@ -39,3 +39,8 @@ public sealed record AdminTrashListRequest(
 public sealed record AdminRestoreTrashRequest(
     Guid DocumentId,
     HostRestoreTrashRequest Request);
+
+public sealed record AdminRevisionListRequest(
+    Guid DocumentId,
+    string? Cursor,
+    int Limit);

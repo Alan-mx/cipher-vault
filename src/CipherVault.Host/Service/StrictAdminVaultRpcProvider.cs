@@ -208,6 +208,27 @@ public sealed class StrictAdminVaultRpcProvider(HostVaultGateway vault)
                         Actor(session),
                         token),
                     cancellationToken).ConfigureAwait(false);
+            case "admin.revisions.list":
+                var revisionRequest =
+                    PipeRpcCodec.ReadPayload<AdminRevisionListRequest>(
+                        new PipeRpcRequest(
+                            PipeProtocol.Version,
+                            Guid.Empty,
+                            method,
+                            payload));
+                if (revisionRequest.DocumentId == Guid.Empty)
+                {
+                    throw new AdminPipeRpcException(
+                        "invalid_input",
+                        "Revision list request is invalid.");
+                }
+                return await vault.ExecuteAsync(
+                    (service, token) => service.ListRevisionsAsync(
+                        revisionRequest.DocumentId,
+                        revisionRequest.Cursor,
+                        revisionRequest.Limit,
+                        token),
+                    cancellationToken).ConfigureAwait(false);
             default:
                 throw new AdminPipeRpcException(
                     "unsupported_method",
