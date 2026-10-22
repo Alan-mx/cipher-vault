@@ -411,6 +411,132 @@ public sealed class AccessGrantServiceTests
                 .OrderBy(value => value, StringComparer.Ordinal));
     }
 
+    [Fact]
+    public async Task RevokeByIdUsesCustomReason()
+    {
+        var now = DateTimeOffset.Parse("2026-10-21T10:00:00Z");
+        var securityLog = new RecordingSecurityLog();
+        var service = new AccessGrantService(
+            timeProvider: new MutableTimeProvider(now),
+            securityLog: securityLog);
+        var generation = Generation(now, TimeSpan.FromHours(1));
+        var issued = await ApproveBridgeAsync(
+            service,
+            now,
+            AccessGrantScope.Read,
+            generation,
+            Guid.NewGuid());
+
+        Assert.Equal(
+            AccessGrantRevokeStatus.Revoked,
+            await service.RevokeByIdAsync(
+                issued.Record.GrantId,
+                "bridge-disconnected"));
+
+        var revoked = Assert.Single(
+            securityLog.Events,
+            item => string.Equals(item.EventType, "grant_revoked"));
+        Assert.Equal("bridge-disconnected", revoked.ReasonCode);
+        Assert.Equal("bridge", revoked.ClientId);
+        Assert.Equal(issued.Record.GrantId, revoked.GrantId);
+    }
+
+    [Fact]
+    public async Task UseBridgeGrantRejectsProcessAndReportsExpired()
+    {
+        var now = DateTimeOffset.Parse("2026-10-21T10:00:00Z");
+        var time = new MutableTimeProvider(now);
+        var service = new AccessGrantService(
+            timeProvider: time,
+            idleLifetime: TimeSpan.FromSeconds(10));
+        var generation = Generation(now, TimeSpan.FromHours(1));
+        var issued = await ApproveBridgeAsync(
+            service,
+            now,
+            AccessGrantScope.Read,
+            generation,
+            Guid.NewGuid());
+        var context = Context(issued.Record);
+
+        Assert.Equal(
+            AccessGrantValidationStatus.Revoked,
+            service.UseBridgeGrant(context with
+            {
+                VerifiedProcessSessionId = Guid.NewGuid()
+            }).Status);
+        Assert.Equal(
+            AccessGrantValidationStatus.Valid,
+            service.UseBridgeGrant(context).Status);
+
+        time.Advance(TimeSpan.FromSeconds(10));
+        var expired = service.UseBridgeGrant(context);
+        Assert.Equal(AccessGrantValidationStatus.Expired, expired.Status);
+        Assert.Equal("access_grant_expired", expired.ReasonCode);
+        Assert.Empty(service.List());
+    }
+
+    [Fact]
+    public async Task RevokeByProcessSessionCancelsOnlyThatBridge()
+    {
+        var now = DateTimeOffset.Parse("2026-10-21T10:00:00Z");
+        var service = new AccessGrantService(
+            timeProvider: new MutableTimeProvider(now));
+        var generation = Generation(now, TimeSpan.FromHours(1));
+        var processA = Guid.NewGuid();
+        var processB = Guid.NewGuid();
+        var activeA = await ApproveBridgeAsync(
+            service,
+            now,
+            AccessGrantScope.Read,
+            generation,
+            processA,
+            "bridge-a");
+        var activeB = await ApproveBridgeAsync(
+            service,
+            now,
+            AccessGrantScope.Read,
+            generation,
+            processB,
+            "bridge-b");
+        var handlerStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var pendingRequest = service.RequestAsync(
+            "bridge-a",
+            Guid.NewGuid(),
+            McpAccessMode.ReadOnly,
+            AccessGrantScope.Read,
+            generation,
+            async (_, token) =>
+            {
+                handlerStarted.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                return new AccessGrantApprovalResult(
+                    true,
+                    AccessGrantScope.Read);
+            },
+            AgentClientIdentityKind.VerifiedBridgeProcess,
+            processA);
+        await handlerStarted.Task;
+
+        Assert.Equal(
+            2,
+            await service.RevokeByProcessSessionAsync(
+                processA,
+                "bridge-disconnected"));
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            pendingRequest.WaitAsync(TimeSpan.FromSeconds(5)));
+
+        Assert.Equal(
+            AccessGrantValidationStatus.Revoked,
+            service.UseBridgeGrant(Context(activeA.Record)).Status);
+        Assert.Equal(
+            AccessGrantValidationStatus.Valid,
+            service.UseBridgeGrant(Context(activeB.Record)).Status);
+        Assert.DoesNotContain(
+            service.List(),
+            item => item.ClientId == "bridge-a");
+    }
+
     private static async Task<IssuedAccessGrant> ApproveAsync(
         AccessGrantService service,
         DateTimeOffset now,
@@ -439,6 +565,55 @@ public sealed class AccessGrantServiceTests
         return new AccessGrantVaultGeneration(
             Guid.NewGuid(),
             now + hardLifetime);
+    }
+
+    private static async Task<IssuedAccessGrant> ApproveBridgeAsync(
+        AccessGrantService service,
+        DateTimeOffset now,
+        AccessGrantScope scopes,
+        AccessGrantVaultGeneration generation,
+        Guid processSessionId,
+        string clientId = "bridge")
+    {
+        var outcome = await service.RequestAsync(
+            clientId,
+            Guid.NewGuid(),
+            McpAccessMode.ReadOnly,
+            scopes,
+            generation,
+            (_, _) => Task.FromResult(new AccessGrantApprovalResult(
+                true,
+                scopes)),
+            AgentClientIdentityKind.VerifiedBridgeProcess,
+            processSessionId);
+        Assert.Equal(AccessGrantRequestStatus.Approved, outcome.Status);
+        return Assert.IsType<IssuedAccessGrant>(outcome.IssuedGrant);
+    }
+
+    private static AccessGrantContext Context(AccessGrantRecord record)
+    {
+        return new AccessGrantContext(
+            record.GrantId,
+            record.ClientId,
+            record.ClientInstanceId,
+            record.Scopes,
+            record.VaultSessionId!.Value,
+            record.IdentityKind,
+            record.VerifiedProcessSessionId);
+    }
+
+    private sealed class RecordingSecurityLog : ISecurityEventLog
+    {
+        public IReadOnlyList<HostSecurityLogEvent> Events => _events;
+        private readonly List<HostSecurityLogEvent> _events = [];
+
+        public Task WriteAsync(
+            HostSecurityLogEvent securityEvent,
+            CancellationToken cancellationToken = default)
+        {
+            _events.Add(securityEvent);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class MutableTimeProvider(DateTimeOffset now) : TimeProvider

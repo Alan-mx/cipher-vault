@@ -210,10 +210,32 @@ public sealed class AccessGrantService : IDisposable
             pending.Record,
             "pending",
             ReasonCode: null).ConfigureAwait(false);
-        AccessGrantRequestOutcome outcome;
+        AccessGrantRequestOutcome outcome =
+            DeniedWithoutCooldown("approval-cancelled");
         var propagateCancellation = false;
+        CancellationTokenSource? pendingCancellation = null;
         try
         {
+            lock (_sync)
+            {
+                if (pending.Canceled)
+                {
+                    outcome = DeniedWithoutCooldown("approval-cancelled");
+                }
+                else
+                {
+                    pendingCancellation =
+                        CancellationTokenSource.CreateLinkedTokenSource(
+                            cancellationToken);
+                    pending.Cancellation = pendingCancellation;
+                }
+            }
+
+            if (pendingCancellation is null)
+            {
+                return outcome;
+            }
+
             var approval = await approvalHandler(
                 new AccessGrantApprovalRequest(
                     pending.Record.GrantId,
@@ -222,7 +244,7 @@ public sealed class AccessGrantService : IDisposable
                     tokenAccessMode,
                     effectiveRequest,
                     allowed),
-                cancellationToken).ConfigureAwait(false);
+                pendingCancellation.Token).ConfigureAwait(false);
             if (!approval.Approved)
             {
                 var reason = approval.DenialReason ?? "user-denied";
@@ -240,7 +262,9 @@ public sealed class AccessGrantService : IDisposable
                     approval.Scopes & effectiveRequest);
             }
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (
+            cancellationToken.IsCancellationRequested ||
+            (pending.Cancellation?.IsCancellationRequested ?? false))
         {
             outcome = DeniedWithoutCooldown("cancelled");
             propagateCancellation = true;
@@ -258,7 +282,9 @@ public sealed class AccessGrantService : IDisposable
                 {
                     _pendingSlots.Remove(slot);
                 }
+                pending.Cancellation = null;
             }
+            pendingCancellation?.Dispose();
         }
 
         pending.Completion.TrySetResult(outcome);
@@ -431,6 +457,87 @@ public sealed class AccessGrantService : IDisposable
         }
     }
 
+    public AccessGrantValidationResult UseBridgeGrant(
+        AccessGrantContext grant)
+    {
+        ArgumentNullException.ThrowIfNull(grant);
+        lock (_sync)
+        {
+            if (!_grants.TryGetValue(grant.GrantId, out var record) ||
+                record.IdentityKind != AgentClientIdentityKind.VerifiedBridgeProcess ||
+                grant.IdentityKind != AgentClientIdentityKind.VerifiedBridgeProcess ||
+                !string.Equals(
+                    record.ClientId,
+                    grant.ClientId,
+                    StringComparison.OrdinalIgnoreCase) ||
+                record.ClientInstanceId != grant.ClientInstanceId ||
+                record.VerifiedProcessSessionId !=
+                    grant.VerifiedProcessSessionId)
+            {
+                return new AccessGrantValidationResult(
+                    AccessGrantValidationStatus.Revoked,
+                    Grant: null,
+                    ReasonCode: "access_grant_revoked");
+            }
+
+            if (record.State != AccessGrantState.Active)
+            {
+                return new AccessGrantValidationResult(
+                    AccessGrantValidationStatus.Revoked,
+                    Grant: null,
+                    ReasonCode: "access_grant_revoked",
+                    Record: record);
+            }
+
+            if (record.VaultSessionId != grant.VaultSessionId)
+            {
+                RemoveGrant(record, AccessGrantState.Revoked);
+                return new AccessGrantValidationResult(
+                    AccessGrantValidationStatus.Revoked,
+                    Grant: null,
+                    ReasonCode: "access_grant_revoked",
+                    Record: record with { State = AccessGrantState.Revoked });
+            }
+
+            var now = _timeProvider.GetUtcNow();
+            if (record.HardExpiresAt is null ||
+                record.IdleExpiresAt is null ||
+                now >= record.HardExpiresAt ||
+                now >= record.IdleExpiresAt)
+            {
+                RemoveGrant(record, AccessGrantState.Expired);
+                return new AccessGrantValidationResult(
+                    AccessGrantValidationStatus.Expired,
+                    Grant: null,
+                    ReasonCode: "access_grant_expired",
+                    Record: record with { State = AccessGrantState.Expired });
+            }
+
+            var idleExpiry = now + _idleLifetime;
+            if (idleExpiry > record.HardExpiresAt)
+            {
+                idleExpiry = record.HardExpiresAt.Value;
+            }
+            var updated = record with
+            {
+                LastUsedAt = now,
+                IdleExpiresAt = idleExpiry
+            };
+            _grants[record.GrantId] = updated;
+            _activeSlots[new AccessGrantSlotKey(
+                record.ClientId,
+                record.ClientInstanceId)] = updated;
+            return new AccessGrantValidationResult(
+                AccessGrantValidationStatus.Valid,
+                grant with
+                {
+                    Scopes = updated.Scopes
+                },
+                ReasonCode: null,
+                Record: updated);
+        }
+    }
+
     public async Task<AccessGrantRevokeStatus> RevokeAsync(
         string clientId,
         Guid grantId,
@@ -475,7 +582,9 @@ public sealed class AccessGrantService : IDisposable
         return status;
     }
 
-    public async Task<AccessGrantRevokeStatus> RevokeByIdAsync(Guid grantId)
+    public async Task<AccessGrantRevokeStatus> RevokeByIdAsync(
+        Guid grantId,
+        string reasonCode = "admin-requested")
     {
         AccessGrantRecord? revoked = null;
         lock (_sync)
@@ -497,9 +606,56 @@ public sealed class AccessGrantService : IDisposable
                 RemoveGrant(record, AccessGrantState.Revoked);
             }
         }
-        await LogGrantAsync("grant_revoked", revoked!, "success", "admin-requested")
+        await LogGrantAsync("grant_revoked", revoked!, "success", reasonCode)
             .ConfigureAwait(false);
         return AccessGrantRevokeStatus.Revoked;
+    }
+
+    public async Task<int> RevokeByProcessSessionAsync(
+        Guid verifiedProcessSessionId,
+        string reasonCode)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reasonCode);
+        var revoked = new List<AccessGrantRecord>();
+        lock (_sync)
+        {
+            foreach (var pending in _pendingSlots.Values
+                         .Where(item =>
+                             item.Record.IdentityKind ==
+                                 AgentClientIdentityKind.VerifiedBridgeProcess &&
+                             item.Record.VerifiedProcessSessionId ==
+                                 verifiedProcessSessionId)
+                         .ToArray())
+            {
+                revoked.Add(pending.Record with
+                {
+                    State = AccessGrantState.Revoked
+                });
+                CancelPending(pending, reasonCode);
+            }
+
+            foreach (var record in _grants.Values
+                         .Where(item =>
+                             item.IdentityKind ==
+                                 AgentClientIdentityKind.VerifiedBridgeProcess &&
+                             item.VerifiedProcessSessionId ==
+                                 verifiedProcessSessionId)
+                         .ToArray())
+            {
+                revoked.Add(record with { State = AccessGrantState.Revoked });
+                RemoveGrant(record, AccessGrantState.Revoked);
+            }
+        }
+
+        foreach (var record in revoked)
+        {
+            await LogGrantAsync(
+                "grant_revoked",
+                record,
+                "success",
+                reasonCode).ConfigureAwait(false);
+        }
+        return revoked.Count;
     }
 
     public IReadOnlyList<AccessGrantRecord> List()
@@ -692,6 +848,7 @@ public sealed class AccessGrantService : IDisposable
             pending.Record.ClientInstanceId));
         pending.Completion.TrySetResult(
             DeniedWithoutCooldown(reasonCode));
+        pending.Cancellation?.Cancel();
     }
 
     private void RemoveGrant(
@@ -902,6 +1059,7 @@ public sealed class AccessGrantService : IDisposable
         public TaskCompletionSource<AccessGrantRequestOutcome> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool Canceled { get; set; }
+        public CancellationTokenSource? Cancellation { get; set; }
     }
 
     private static void ValidateIdentity(
