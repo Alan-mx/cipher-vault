@@ -7,7 +7,9 @@ using CipherVault.Ipc;
 
 namespace CipherVault.Host.Service;
 
-public sealed class StrictAdminVaultRpcProvider(HostVaultGateway vault)
+public sealed class StrictAdminVaultRpcProvider(
+    HostVaultGateway vault,
+    HostSessionCoordinator sessions)
 {
     public async Task<object> HandleAsync(
         AdminSession session,
@@ -284,6 +286,11 @@ public sealed class StrictAdminVaultRpcProvider(HostVaultGateway vault)
                 throw new AdminPipeRpcException(
                     "compatibility_only",
                     "Agent Token management is unavailable in strict mode.");
+            case "admin.maintenance.change_password":
+                await sessions.ChangePasswordAsync(
+                    Actor(session),
+                    cancellationToken).ConfigureAwait(false);
+                return true;
             default:
                 throw new AdminPipeRpcException(
                     "unsupported_method",

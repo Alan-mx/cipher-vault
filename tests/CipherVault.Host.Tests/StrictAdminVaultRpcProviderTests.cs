@@ -2,6 +2,7 @@ using System.Security.Principal;
 using System.Text.Json;
 using CipherVault.Core.Backup;
 using CipherVault.Core.Documents;
+using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Security;
 using CipherVault.Host.Service;
@@ -20,7 +21,8 @@ public sealed class StrictAdminVaultRpcProviderTests
             HostSessionCoordinator>();
         await sessions.UnlockAsync(HostCredentialPreference.Password);
         var provider = new StrictAdminVaultRpcProvider(
-            fixture.App.Services.GetRequiredService<HostVaultGateway>());
+            fixture.App.Services.GetRequiredService<HostVaultGateway>(),
+            sessions);
         var now = DateTimeOffset.UtcNow;
         var session = new AdminSession(
             Guid.NewGuid(),
@@ -220,5 +222,36 @@ public sealed class StrictAdminVaultRpcProviderTests
                 JsonSerializer.SerializeToElement(new { }),
                 CancellationToken.None));
         Assert.Equal("compatibility_only", compatibilityOnly.Code);
+        const string newPassword = "changed strict password";
+        fixture.CredentialPrompt.EnqueueResult(
+            new HostCredentialPromptResult(
+                true,
+                HostTestFixture.VaultPassword,
+                VaultCredentialType.Password));
+        fixture.CredentialPrompt.EnqueueResult(
+            new HostCredentialPromptResult(
+                true,
+                newPassword,
+                VaultCredentialType.Password));
+        fixture.CredentialPrompt.EnqueueResult(
+            new HostCredentialPromptResult(
+                true,
+                newPassword,
+                VaultCredentialType.Password));
+        var passwordChanged = await provider.HandleAsync(
+            session,
+            "admin.maintenance.change_password",
+            JsonSerializer.SerializeToElement(new { }),
+            CancellationToken.None);
+        Assert.Equal(true, passwordChanged);
+        await sessions.LockAsync("test-password-change");
+        fixture.CredentialPrompt.EnqueueResult(
+            new HostCredentialPromptResult(
+                true,
+                newPassword,
+                VaultCredentialType.Password));
+        var unlocked = await sessions.UnlockAsync(
+            HostCredentialPreference.Password);
+        Assert.Equal(VaultSessionState.Unlocked, unlocked.State);
     }
 }
