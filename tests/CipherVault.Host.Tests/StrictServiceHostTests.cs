@@ -20,7 +20,8 @@ public sealed class StrictServiceHostTests
         CreateInstallState(fixture.Paths, configuration);
         await using var service = StrictServiceHost.Create(
             configuration,
-            fixture.Paths);
+            fixture.Paths,
+            new StrictServiceHostOptions(EnableAdminPipe: false));
         var lifetime = service.Services.GetRequiredService<IHostApplicationLifetime>();
         var started = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -40,7 +41,10 @@ public sealed class StrictServiceHostTests
         using var fixture = new ServiceHostFixture();
         var configuration = CreateConfiguration(fixture.Paths);
         CreateInstallState(fixture.Paths, configuration);
-        var first = StrictServiceHost.Create(configuration, fixture.Paths);
+        var first = StrictServiceHost.Create(
+            configuration,
+            fixture.Paths,
+            new StrictServiceHostOptions(EnableAdminPipe: false));
 
         var exception = Assert.Throws<VaultException>(
             () => StrictServiceHost.Create(configuration, fixture.Paths));
@@ -50,7 +54,8 @@ public sealed class StrictServiceHostTests
         await first.DisposeAsync();
         await using var second = StrictServiceHost.Create(
             configuration,
-            fixture.Paths);
+            fixture.Paths,
+            new StrictServiceHostOptions(EnableAdminPipe: false));
     }
 
     [Theory]

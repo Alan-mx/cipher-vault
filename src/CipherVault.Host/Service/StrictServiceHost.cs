@@ -31,7 +31,8 @@ public sealed class StrictServiceHost : IAsyncDisposable
 
     public static StrictServiceHost Create(
         CipherVaultServiceConfigFile configuration,
-        CipherVaultServicePaths paths)
+        CipherVaultServicePaths paths,
+        StrictServiceHostOptions? runtimeOptions = null)
     {
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentNullException.ThrowIfNull(paths);
@@ -70,6 +71,9 @@ public sealed class StrictServiceHost : IAsyncDisposable
                 options.ServiceName = ServiceName);
             builder.Services.AddSingleton(configuration);
             builder.Services.AddSingleton(paths);
+            builder.Services.AddSingleton(
+                runtimeOptions ?? new StrictServiceHostOptions());
+            builder.Services.AddHostedService<AdminPipeHostedService>();
             host = builder.Build();
             return new StrictServiceHost(
                 host,

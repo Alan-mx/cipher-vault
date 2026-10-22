@@ -334,6 +334,13 @@ public sealed class HostServiceInstaller(
         HostServiceInstallOptions options,
         CipherVaultServicePaths paths)
     {
+        if (string.IsNullOrWhiteSpace(options.UiExecutablePath) &&
+            string.IsNullOrWhiteSpace(options.CliExecutablePath))
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "At least one signed Admin UI or CLI image is required.");
+        }
         var result = new List<ServiceImageEvidence>();
         foreach (var imagePath in EnumerateImagePaths(options))
         {

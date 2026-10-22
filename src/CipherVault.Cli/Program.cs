@@ -573,8 +573,10 @@ static async Task<int> RunServiceInstallAsync(
         GetOption(arguments, "--signer-thumbprint"),
         GetOption(arguments, "--host-exe") ??
             Path.Combine(paths.InstallRoot, "CipherVault.Host.exe"),
-        GetOption(arguments, "--ui-exe"),
-        GetOption(arguments, "--cli-exe"),
+        GetOption(arguments, "--ui-exe") ??
+            Path.Combine(paths.InstallRoot, "CipherVault.Ui.Wpf.exe"),
+        GetOption(arguments, "--cli-exe") ??
+            Path.Combine(paths.InstallRoot, "CipherVault.Cli.exe"),
         GetOption(arguments, "--broker-exe"),
         GetOption(arguments, "--mcp-exe"),
         StartService: !HasFlag(arguments, "--no-start"));

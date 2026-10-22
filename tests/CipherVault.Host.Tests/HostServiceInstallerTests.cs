@@ -33,7 +33,11 @@ public sealed class HostServiceInstallerTests
         Assert.Equal("strict", configuration.SecurityMode);
         Assert.Equal(
             "HostService",
-            Assert.Single(configuration.ProcessPolicy!.AllowedImages!).Kind);
+            configuration.ProcessPolicy!.AllowedImages![0].Kind);
+        Assert.Equal(
+            ["HostService", "AdminUi", "AdminCli"],
+            configuration.ProcessPolicy.AllowedImages
+                .Select(image => image.Kind));
         Assert.Equal(result.InstallId, publicManifest.InstallId);
         Assert.Equal(result.InstallId, mode.InstallId);
         Assert.Equal(
@@ -138,8 +142,8 @@ public sealed class HostServiceInstallerTests
             "S-1-5-21-1",
             SignerThumbprint,
             Path.Combine(paths.InstallRoot, "CipherVault.Host.exe"),
-            UiExecutablePath: null,
-            CliExecutablePath: null,
+            Path.Combine(paths.InstallRoot, "CipherVault.Ui.Wpf.exe"),
+            Path.Combine(paths.InstallRoot, "CipherVault.Cli.exe"),
             BrokerExecutablePath: null,
             McpExecutablePath: null,
             StartService: startService);
@@ -159,6 +163,12 @@ public sealed class HostServiceInstallerTests
             Directory.CreateDirectory(Paths.InstallRoot);
             File.WriteAllBytes(
                 Path.Combine(Paths.InstallRoot, "CipherVault.Host.exe"),
+                [1, 2, 3, 4]);
+            File.WriteAllBytes(
+                Path.Combine(Paths.InstallRoot, "CipherVault.Ui.Wpf.exe"),
+                [1, 2, 3, 4]);
+            File.WriteAllBytes(
+                Path.Combine(Paths.InstallRoot, "CipherVault.Cli.exe"),
                 [1, 2, 3, 4]);
         }
 
