@@ -23,3 +23,7 @@ public sealed record AdminScanNotesRequest(
 public sealed record AdminAppendNoteRequest(
     Guid DocumentId,
     HostAppendNoteRequest Request);
+
+public sealed record AdminUpdateNoteRequest(
+    Guid DocumentId,
+    HostUpdateNoteRequest Request);

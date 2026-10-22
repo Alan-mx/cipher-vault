@@ -76,5 +76,35 @@ public sealed class StrictAdminVaultRpcProviderTests
         var appended = Assert.IsType<VaultWriteResult>(appendResult);
         Assert.Equal(write.DocumentId, appended.DocumentId);
         Assert.Equal(2, appended.Revision);
+        var updateResult = await provider.HandleAsync(
+            session,
+            "admin.notes.update",
+            JsonSerializer.SerializeToElement(
+                new AdminUpdateNoteRequest(
+                    appended.DocumentId,
+                    new HostUpdateNoteRequest(
+                        appended.Revision,
+                        Title: "Updated strict pipe note",
+                        Folder: null,
+                        Content: "Updated through strict pipe.",
+                        Tags: ["strict", "updated"])),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            CancellationToken.None);
+        var updated = Assert.IsType<VaultWriteResult>(updateResult);
+        Assert.Equal(appended.DocumentId, updated.DocumentId);
+        Assert.Equal(3, updated.Revision);
+        var readResult = await provider.HandleAsync(
+            session,
+            "admin.notes.read",
+            JsonSerializer.SerializeToElement(
+                new AdminReadNoteRequest(
+                    updated.DocumentId,
+                    Offset: 0,
+                    MaxChars: 1000),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            CancellationToken.None);
+        var read = Assert.IsType<VaultReadResult>(readResult);
+        Assert.Equal("Updated strict pipe note", read.Title);
+        Assert.Equal("Updated through strict pipe.", read.Content);
     }
 }
