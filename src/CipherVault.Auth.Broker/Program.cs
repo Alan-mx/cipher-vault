@@ -79,6 +79,7 @@ public static class Program
                 await connection.RunAsync(
                     PromptForCredentialAsync,
                     PromptForApprovalAsync,
+                    PromptForTransferAsync,
                     cancellationTokenSource.Token);
             }
             catch (OperationCanceledException) when (
@@ -143,6 +144,26 @@ public static class Program
             request.NonceB64Url,
             result.Approved,
             result.Approved ? null : "user-denied");
+    }
+
+    private static async Task<BrokerTransferResult> PromptForTransferAsync(
+        BrokerTransferRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await WindowsFileTransferPrompt.RequestAsync(
+            new FileTransferPromptRequest(
+                request.TransferId,
+                request.Direction,
+                request.PayloadKind,
+                request.StagingPath,
+                request.SuggestedPath,
+                request.ExpiresAt),
+            cancellationToken);
+        return new BrokerTransferResult(
+            result.TransferId,
+            result.Completed,
+            result.FinalPath,
+            result.ErrorCode);
     }
 
     private static string? GetOption(string[] args, string option)

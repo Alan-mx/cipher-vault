@@ -159,6 +159,7 @@ public sealed class BrokerPipeClientConnection : IAsyncDisposable
         await RunAsync(
             credentialPrompt,
             approvalPrompt: null,
+            transferPrompt: null,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -171,6 +172,28 @@ public sealed class BrokerPipeClientConnection : IAsyncDisposable
             BrokerApprovalRequest,
             CancellationToken,
             Task<BrokerApprovalDecision>>? approvalPrompt,
+        CancellationToken cancellationToken = default)
+    {
+        await RunAsync(
+            credentialPrompt,
+            approvalPrompt,
+            transferPrompt: null,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task RunAsync(
+        Func<
+            BrokerCredentialPromptRequest,
+            CancellationToken,
+            Task<BrokerCredentialPromptResult>> credentialPrompt,
+        Func<
+            BrokerApprovalRequest,
+            CancellationToken,
+            Task<BrokerApprovalDecision>>? approvalPrompt,
+        Func<
+            BrokerTransferRequest,
+            CancellationToken,
+            Task<BrokerTransferResult>>? transferPrompt,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(credentialPrompt);
@@ -243,6 +266,45 @@ public sealed class BrokerPipeClientConnection : IAsyncDisposable
                         request.RequestId,
                         "credential_prompt_failed",
                         exception.Message);
+                }
+            }
+            else if (string.Equals(
+                         request.Method,
+                         "broker.transfer",
+                         StringComparison.Ordinal))
+            {
+                if (transferPrompt is null)
+                {
+                    response = PipeRpcCodec.Failure(
+                        request.RequestId,
+                        "transfer_unavailable",
+                        "Broker file transfer is unavailable.");
+                }
+                else
+                {
+                    try
+                    {
+                        var transferRequest = PipeRpcCodec
+                            .ReadPayload<BrokerTransferRequest>(request);
+                        var transferResult = await transferPrompt(
+                                transferRequest,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                        response = PipeRpcCodec.Success(
+                            request.RequestId,
+                            transferResult);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception exception)
+                    {
+                        response = PipeRpcCodec.Failure(
+                            request.RequestId,
+                            "transfer_failed",
+                            exception.Message);
+                    }
                 }
             }
             else if (string.Equals(

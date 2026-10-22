@@ -1,6 +1,8 @@
+using System.IO;
 using System.Security.Principal;
 using System.Text.Json;
 using CipherVault.Core.Backup;
+using CipherVault.Core.Configuration;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
@@ -22,11 +24,18 @@ public sealed class StrictAdminVaultRpcProviderTests
         await sessions.UnlockAsync(HostCredentialPreference.Password);
         var approvals = new ApprovalStore();
         var approvalPrompt = new TestApprovalPrompt(approvals);
+        var paths = CipherVaultServicePaths.Create(
+            Path.Combine(fixture.Root, "ProgramFiles"),
+            Path.Combine(fixture.Root, "ProgramData"),
+            Path.Combine(fixture.Root, "LocalAppData"));
+        var transferPrompt = new TestTransferPrompt();
         var provider = new StrictAdminVaultRpcProvider(
             fixture.App.Services.GetRequiredService<HostVaultGateway>(),
             sessions,
             approvals,
-            approvalPrompt);
+            approvalPrompt,
+            new TransferCoordinator(paths),
+            transferPrompt);
         var now = DateTimeOffset.UtcNow;
         var session = new AdminSession(
             Guid.NewGuid(),
@@ -301,6 +310,22 @@ public sealed class StrictAdminVaultRpcProviderTests
         var purged = Assert.IsType<VaultPurgeResult>(purgeResult);
         Assert.True(purged.Purged);
         Assert.Equal(1, approvalPrompt.RequestCount);
+        var backupPath = Path.Combine(
+            fixture.Root,
+            "exports",
+            "vault.cvbackup");
+        Directory.CreateDirectory(Path.GetDirectoryName(backupPath)!);
+        var backupResult = await provider.HandleAsync(
+            session,
+            "admin.maintenance.backup",
+            JsonSerializer.SerializeToElement(
+                new HostBackupRequest(backupPath),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            CancellationToken.None);
+        var backup = Assert.IsType<VaultBackupResult>(backupResult);
+        Assert.Equal(Path.GetFullPath(backupPath), backup.BackupPath);
+        Assert.True(File.Exists(backupPath));
+        Assert.Equal(2, approvalPrompt.RequestCount);
     }
 
     private sealed class TestApprovalPrompt(ApprovalStore store)
@@ -317,6 +342,35 @@ public sealed class StrictAdminVaultRpcProviderTests
                 request,
                 approved: true,
                 brokerProcessSessionId: Guid.NewGuid()));
+        }
+    }
+
+    private sealed class TestTransferPrompt : ITransferPrompt
+    {
+        public Task<HostTransferResult> TransferAsync(
+            HostTransferRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            if (request.Direction != HostTransferDirection.Export ||
+                !File.Exists(request.StagingPath))
+            {
+                return Task.FromResult(new HostTransferResult(
+                    request.TransferId,
+                    false,
+                    null,
+                    "transfer_invalid"));
+            }
+            Directory.CreateDirectory(
+                Path.GetDirectoryName(request.SuggestedPath)!);
+            File.Copy(
+                request.StagingPath,
+                request.SuggestedPath,
+                overwrite: false);
+            return Task.FromResult(new HostTransferResult(
+                request.TransferId,
+                true,
+                Path.GetFullPath(request.SuggestedPath),
+                null));
         }
     }
 }

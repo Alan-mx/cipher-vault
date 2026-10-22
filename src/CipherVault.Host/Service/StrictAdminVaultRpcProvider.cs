@@ -1,4 +1,5 @@
 using System.Text.Json;
+using CipherVault.Core.Backup;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
@@ -12,7 +13,9 @@ public sealed class StrictAdminVaultRpcProvider(
     HostVaultGateway vault,
     HostSessionCoordinator sessions,
     ApprovalStore approvals,
-    IApprovalPrompt approvalPrompt)
+    IApprovalPrompt approvalPrompt,
+    TransferCoordinator transfers,
+    ITransferPrompt transferPrompt)
 {
     public async Task<object> HandleAsync(
         AdminSession session,
@@ -366,6 +369,90 @@ public sealed class StrictAdminVaultRpcProvider(
                         Actor(session),
                         token),
                     cancellationToken).ConfigureAwait(false);
+            case "admin.maintenance.backup":
+                {
+                    var backupRequest = PipeRpcCodec.ReadPayload<HostBackupRequest>(
+                        new PipeRpcRequest(
+                            PipeProtocol.Version,
+                            Guid.Empty,
+                            method,
+                            payload));
+                    if (string.IsNullOrWhiteSpace(backupRequest.DestinationPath))
+                    {
+                        throw new AdminPipeRpcException(
+                            "invalid_input",
+                            "Backup destination hint is required.");
+                    }
+                    var backupSnapshot = await sessions
+                        .GetSnapshotAsync(cancellationToken)
+                        .ConfigureAwait(false);
+                    if (backupSnapshot.SessionId is null)
+                    {
+                        throw new AdminPipeRpcException(
+                            "session_locked",
+                            "Vault must be unlocked for backup.");
+                    }
+                    var backupParameters = JsonSerializer.SerializeToElement(
+                        backupRequest);
+                    var backupOperation = approvals.Prepare(
+                        ApprovalOperationKind.CreateBackup,
+                        session.ProcessSessionId,
+                        backupSnapshot.SessionId,
+                        backupParameters);
+                    var backupApproval = approvals.CreateRequest(
+                        backupOperation,
+                        "创建加密备份",
+                        $"创建 Vault 加密备份，建议保存到 {backupRequest.DestinationPath}。");
+                    var backupDecision = await approvalPrompt.RequestAsync(
+                        backupApproval,
+                        cancellationToken).ConfigureAwait(false);
+                    if (!backupDecision.Approved)
+                    {
+                        throw new AdminPipeRpcException(
+                            "approval_denied",
+                            backupDecision.DenialReason ?? "User denied backup.");
+                    }
+                    ConsumeApproval(
+                        approvals,
+                        backupOperation,
+                        session,
+                        backupSnapshot.SessionId.Value,
+                        ApprovalOperationKind.CreateBackup);
+                    using var backupWorkspace = transfers.CreateWorkspace(
+                        HostTransferDirection.Export,
+                        HostTransferPayloadKind.File,
+                        session.Client.UserSid,
+                        session.Client.LogonSid,
+                        "vault.cvbackup");
+                    var stagingBackup = await vault.ExecuteAsync(
+                        (service, token) => service.CreateBackupAsync(
+                            backupWorkspace.PayloadPath,
+                            Actor(session),
+                            token),
+                        cancellationToken).ConfigureAwait(false);
+                    var backupTransfer = await transferPrompt.TransferAsync(
+                        new HostTransferRequest(
+                            backupWorkspace.TransferId,
+                            HostTransferDirection.Export,
+                            HostTransferPayloadKind.File,
+                            backupWorkspace.PayloadPath,
+                            backupRequest.DestinationPath,
+                            backupOperation.ExpiresAt),
+                        cancellationToken).ConfigureAwait(false);
+                    if (!backupTransfer.Completed ||
+                        string.IsNullOrWhiteSpace(backupTransfer.FinalPath))
+                    {
+                        throw new AdminPipeRpcException(
+                            backupTransfer.ErrorCode ?? "transfer_failed",
+                            "Backup file transfer did not complete.");
+                    }
+                    return new VaultBackupResult(
+                        backupTransfer.FinalPath,
+                        stagingBackup.VaultId,
+                        stagingBackup.CreatedAt,
+                        stagingBackup.BackupBytes,
+                        stagingBackup.AuditRecorded);
+                }
             default:
                 throw new AdminPipeRpcException(
                     "unsupported_method",
@@ -378,5 +465,26 @@ public sealed class StrictAdminVaultRpcProvider(
         return session.Client.Kind == VerifiedProcessKind.AdminUi
             ? VaultActorKind.UserUi
             : VaultActorKind.UserCli;
+    }
+
+    private static void ConsumeApproval(
+        ApprovalStore approvals,
+        PreparedOperation operation,
+        AdminSession session,
+        Guid vaultSessionId,
+        ApprovalOperationKind kind)
+    {
+        var consumed = approvals.Consume(
+            operation.OperationId,
+            kind,
+            session.ProcessSessionId,
+            vaultSessionId,
+            operation.ParametersHash);
+        if (consumed.Status != ApprovalConsumeStatus.Consumed)
+        {
+            throw new AdminPipeRpcException(
+                consumed.ReasonCode ?? "approval_invalid",
+                "Operation approval could not be consumed.");
+        }
     }
 }
