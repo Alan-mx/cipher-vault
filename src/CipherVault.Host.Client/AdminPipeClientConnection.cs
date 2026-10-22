@@ -175,6 +175,24 @@ public sealed class AdminPipeClientConnection : IAsyncDisposable
             cancellationToken);
     }
 
+    public Task<AdminSecurityDiagnosticsData> GetSecurityDiagnosticsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        return CallAsync<object, AdminSecurityDiagnosticsData>(
+            "admin.security.diagnostics",
+            new { },
+            cancellationToken);
+    }
+
+    public Task<IReadOnlyList<AdminStrictBridgeData>> ListBridgesAsync(
+        CancellationToken cancellationToken = default)
+    {
+        return CallAsync<object, IReadOnlyList<AdminStrictBridgeData>>(
+            "admin.agent.bridges.list",
+            new { },
+            cancellationToken);
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_disposed)

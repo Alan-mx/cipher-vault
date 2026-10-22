@@ -55,3 +55,32 @@ public sealed record AdminPipeStatusData(
     string SecurityMode,
     bool BrokerAvailable,
     HostSessionStatusData Session);
+
+public sealed record AdminSecurityDiagnosticsData(
+    string ServiceVersion,
+    string ProtocolVersion,
+    string SecurityMode,
+    string OwnerSid,
+    string? ServiceSid,
+    uint OwnerSessionId,
+    bool BrokerAvailable,
+    string VaultState,
+    Guid? VaultSessionId,
+    AdminInstallConsistencyData Install);
+
+public sealed record AdminInstallConsistencyData(
+    bool ManifestLoaded,
+    string? ErrorCode,
+    Guid? InstallId,
+    bool OwnerSidMatches,
+    bool ServiceAccountMatches,
+    bool PipesMatch);
+
+public sealed record AdminStrictBridgeData(
+    string Id,
+    string AccessMode,
+    bool Enabled,
+    string? ImagePath,
+    string? ImageSha256,
+    string? SignerThumbprint,
+    string? SignerSubject);

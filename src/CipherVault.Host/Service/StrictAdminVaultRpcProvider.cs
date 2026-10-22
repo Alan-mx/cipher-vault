@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.Json;
 using CipherVault.Core.Backup;
+using CipherVault.Core.Configuration;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
 using CipherVault.Core.ImportExport;
@@ -20,7 +21,10 @@ public sealed class StrictAdminVaultRpcProvider(
     IApprovalPrompt approvalPrompt,
     TransferCoordinator transfers,
     ITransferPrompt transferPrompt,
-    ImportWorkspaceRegistry? importWorkspaces = null) : IDisposable
+    ImportWorkspaceRegistry? importWorkspaces = null,
+    CipherVaultServiceConfigFile? configuration = null,
+    CipherVaultServicePaths? paths = null,
+    BrokerConnectionRegistry? brokerConnections = null) : IDisposable
 {
     private readonly ImportWorkspaceRegistry _importWorkspaces =
         importWorkspaces ?? new ImportWorkspaceRegistry();
@@ -805,6 +809,42 @@ public sealed class StrictAdminVaultRpcProvider(
                         restored.VaultId,
                         restored.AuditRecorded);
                 }
+            case "admin.security.diagnostics":
+                {
+                    var diagnosticSnapshot = await sessions
+                        .GetSnapshotAsync(cancellationToken)
+                        .ConfigureAwait(false);
+                    var install = ReadInstallConsistency(cancellationToken);
+                    return new AdminSecurityDiagnosticsData(
+                        typeof(StrictAdminVaultRpcProvider).Assembly
+                            .GetName().Version?.ToString() ?? "1.0.0",
+                        PipeProtocol.Version,
+                        configuration?.SecurityMode
+                            ?? CipherVaultServiceConfiguration.StrictModeValue,
+                        configuration?.OwnerSid ?? session.OwnerSid,
+                        install.Manifest?.ServiceSid,
+                        session.Client.SessionId,
+                        brokerConnections?.IsAvailable ?? false,
+                        diagnosticSnapshot.State.ToString(),
+                        diagnosticSnapshot.SessionId,
+                        install.Consistency);
+                }
+            case "admin.agent.bridges.list":
+                return (configuration?.Agent?.Bridges ?? [])
+                    .Select(bridge => new AdminStrictBridgeData(
+                        bridge.Id ?? string.Empty,
+                        string.Equals(
+                            bridge.AccessMode,
+                            "readWrite",
+                            StringComparison.OrdinalIgnoreCase)
+                            ? "readWrite"
+                            : "readOnly",
+                        bridge.Enabled != false,
+                        bridge.Image?.Path,
+                        bridge.Image?.Sha256,
+                        bridge.Image?.SignerThumbprint,
+                        bridge.Image?.SignerSubject))
+                    .ToArray();
             case "admin.service.stop":
                 {
                     var stopRequest = PipeRpcCodec.ReadPayload<HostStopRequest>(
@@ -838,6 +878,74 @@ public sealed class StrictAdminVaultRpcProvider(
                     "unsupported_method",
                     $"Unsupported Admin method: {method}");
         }
+    }
+
+    private (CipherVaultInstallPublicManifest? Manifest,
+        AdminInstallConsistencyData Consistency) ReadInstallConsistency(
+        CancellationToken cancellationToken)
+    {
+        if (configuration is null || paths is null)
+        {
+            return (
+                null,
+                new AdminInstallConsistencyData(
+                    ManifestLoaded: false,
+                    ErrorCode: "not_configured",
+                    InstallId: null,
+                    OwnerSidMatches: false,
+                    ServiceAccountMatches: false,
+                    PipesMatch: false));
+        }
+        try
+        {
+            var manifest = CipherVaultServiceConfiguration.LoadInstallManifest(
+                paths.PublicManifestPath,
+                cancellationToken);
+            return (
+                manifest,
+                new AdminInstallConsistencyData(
+                    ManifestLoaded: true,
+                    ErrorCode: null,
+                    InstallId: manifest.InstallId,
+                    OwnerSidMatches: string.Equals(
+                        manifest.OwnerSid,
+                        configuration.OwnerSid,
+                        StringComparison.OrdinalIgnoreCase),
+                    ServiceAccountMatches: string.Equals(
+                        manifest.ServiceAccount,
+                        configuration.ServiceAccount,
+                        StringComparison.Ordinal),
+                    PipesMatch: PipesMatch(manifest.Pipes, configuration.Pipes)));
+        }
+        catch (VaultException exception)
+        {
+            return (
+                null,
+                new AdminInstallConsistencyData(
+                    ManifestLoaded: false,
+                    ErrorCode: exception.Code switch
+                    {
+                        VaultErrorCode.NotFound => "not_found",
+                        VaultErrorCode.InvalidInput => "invalid_manifest",
+                        _ => "manifest_unavailable"
+                    },
+                    InstallId: null,
+                    OwnerSidMatches: false,
+                    ServiceAccountMatches: false,
+                    PipesMatch: false));
+        }
+    }
+
+    private static bool PipesMatch(
+        CipherVaultPipeConfigFile? left,
+        CipherVaultPipeConfigFile? right)
+    {
+        return left is not null &&
+            right is not null &&
+            string.Equals(left.Admin, right.Admin, StringComparison.Ordinal) &&
+            string.Equals(left.Broker, right.Broker, StringComparison.Ordinal) &&
+            string.Equals(left.Bridge, right.Bridge, StringComparison.Ordinal) &&
+            left.RejectRemoteClients == right.RejectRemoteClients;
     }
 
     private static VaultActorKind Actor(AdminSession session)

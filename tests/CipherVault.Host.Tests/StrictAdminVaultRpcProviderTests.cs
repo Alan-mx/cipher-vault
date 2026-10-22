@@ -474,6 +474,260 @@ public sealed class StrictAdminVaultRpcProviderTests
         Assert.Equal(0, registry.Count);
     }
 
+    [Fact]
+    public async Task SecurityDiagnosticsReportsInstallConsistency()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var sessions = fixture.App.Services.GetRequiredService<
+            HostSessionCoordinator>();
+        await sessions.UnlockAsync(HostCredentialPreference.Password);
+        var paths = CipherVaultServicePaths.Create(
+            Path.Combine(fixture.Root, "ProgramFiles"),
+            Path.Combine(fixture.Root, "ProgramData"),
+            Path.Combine(fixture.Root, "LocalAppData"));
+        var configuration = CreateServiceConfiguration(
+            paths,
+            WindowsIdentity.GetCurrent().User!.Value);
+        var installId = Guid.NewGuid();
+        WriteInstallManifest(paths, configuration, installId);
+        using var transfers = new TransferCoordinator(paths);
+        using var provider = CreateProvider(
+            fixture,
+            sessions,
+            transfers,
+            configuration,
+            paths);
+        var session = CreateAdminSession();
+
+        var result = await provider.HandleAsync(
+            session,
+            "admin.security.diagnostics",
+            JsonSerializer.SerializeToElement(new { }),
+            CancellationToken.None);
+
+        var diagnostics = Assert.IsType<AdminSecurityDiagnosticsData>(result);
+        Assert.Equal("strict", diagnostics.SecurityMode);
+        Assert.Equal(configuration.OwnerSid, diagnostics.OwnerSid);
+        Assert.Equal("S-1-5-80-1", diagnostics.ServiceSid);
+        Assert.Equal(1u, diagnostics.OwnerSessionId);
+        Assert.False(diagnostics.BrokerAvailable);
+        Assert.Equal(VaultSessionState.Unlocked.ToString(), diagnostics.VaultState);
+        Assert.NotNull(diagnostics.VaultSessionId);
+        Assert.True(diagnostics.Install.ManifestLoaded);
+        Assert.Null(diagnostics.Install.ErrorCode);
+        Assert.Equal(installId, diagnostics.Install.InstallId);
+        Assert.True(diagnostics.Install.OwnerSidMatches);
+        Assert.True(diagnostics.Install.ServiceAccountMatches);
+        Assert.True(diagnostics.Install.PipesMatch);
+        var json = JsonSerializer.Serialize(
+            diagnostics,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.DoesNotContain("password", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("recovery", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("token", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("secret", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("grant", json, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SecurityDiagnosticsReportsMissingManifest()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var sessions = fixture.App.Services.GetRequiredService<
+            HostSessionCoordinator>();
+        var paths = CipherVaultServicePaths.Create(
+            Path.Combine(fixture.Root, "ProgramFiles"),
+            Path.Combine(fixture.Root, "ProgramData"),
+            Path.Combine(fixture.Root, "LocalAppData"));
+        var configuration = CreateServiceConfiguration(
+            paths,
+            WindowsIdentity.GetCurrent().User!.Value);
+        using var transfers = new TransferCoordinator(paths);
+        using var provider = CreateProvider(
+            fixture,
+            sessions,
+            transfers,
+            configuration,
+            paths);
+
+        var result = await provider.HandleAsync(
+            CreateAdminSession(),
+            "admin.security.diagnostics",
+            JsonSerializer.SerializeToElement(new { }),
+            CancellationToken.None);
+
+        var diagnostics = Assert.IsType<AdminSecurityDiagnosticsData>(result);
+        Assert.Null(diagnostics.ServiceSid);
+        Assert.False(diagnostics.Install.ManifestLoaded);
+        Assert.Equal("not_found", diagnostics.Install.ErrorCode);
+        Assert.Null(diagnostics.Install.InstallId);
+        Assert.False(diagnostics.Install.OwnerSidMatches);
+        Assert.False(diagnostics.Install.ServiceAccountMatches);
+        Assert.False(diagnostics.Install.PipesMatch);
+    }
+
+    [Fact]
+    public async Task BridgesListReturnsConfiguredPolicyWithoutSecrets()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var sessions = fixture.App.Services.GetRequiredService<
+            HostSessionCoordinator>();
+        var paths = CipherVaultServicePaths.Create(
+            Path.Combine(fixture.Root, "ProgramFiles"),
+            Path.Combine(fixture.Root, "ProgramData"),
+            Path.Combine(fixture.Root, "LocalAppData"));
+        var configuration = CreateServiceConfiguration(
+            paths,
+            WindowsIdentity.GetCurrent().User!.Value) with
+        {
+            Agent = new CipherVaultAgentRuntimeConfigFile
+            {
+                StrictTransport = "stdio-bridge",
+                Bridges =
+                [
+                    new CipherVaultStrictBridgeConfigFile
+                    {
+                        Id = "mcp",
+                        AccessMode = "readWrite",
+                        Enabled = true,
+                        Image = CreateImage(paths, "mcp")
+                    },
+                    new CipherVaultStrictBridgeConfigFile
+                    {
+                        Id = "disabled",
+                        AccessMode = "readOnly",
+                        Enabled = false,
+                        Image = CreateImage(paths, "disabled")
+                    }
+                ]
+            }
+        };
+        using var transfers = new TransferCoordinator(paths);
+        using var provider = CreateProvider(
+            fixture,
+            sessions,
+            transfers,
+            configuration,
+            paths);
+
+        var result = await provider.HandleAsync(
+            CreateAdminSession(),
+            "admin.agent.bridges.list",
+            JsonSerializer.SerializeToElement(new { }),
+            CancellationToken.None);
+
+        var bridges = Assert.IsAssignableFrom<IReadOnlyList<AdminStrictBridgeData>>(
+            result);
+        Assert.Equal(2, bridges.Count);
+        Assert.Equal("mcp", bridges[0].Id);
+        Assert.Equal("readWrite", bridges[0].AccessMode);
+        Assert.True(bridges[0].Enabled);
+        Assert.Equal("disabled", bridges[1].Id);
+        Assert.Equal("readOnly", bridges[1].AccessMode);
+        Assert.False(bridges[1].Enabled);
+        var json = JsonSerializer.Serialize(
+            bridges,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.DoesNotContain("token", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("secret", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("grant", json, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static StrictAdminVaultRpcProvider CreateProvider(
+        HostTestFixture fixture,
+        HostSessionCoordinator sessions,
+        TransferCoordinator transfers,
+        CipherVaultServiceConfigFile configuration,
+        CipherVaultServicePaths paths)
+    {
+        return new StrictAdminVaultRpcProvider(
+            fixture.App.Services.GetRequiredService<HostVaultGateway>(),
+            sessions,
+            new ApprovalStore(),
+            new TestApprovalPrompt(new ApprovalStore()),
+            transfers,
+            new TestTransferPrompt(),
+            importWorkspaces: null,
+            configuration,
+            paths,
+            new BrokerConnectionRegistry());
+    }
+
+    private static CipherVaultServiceConfigFile CreateServiceConfiguration(
+        CipherVaultServicePaths paths,
+        string ownerSid)
+    {
+        return new CipherVaultServiceConfigFile
+        {
+            ConfigVersion = CipherVaultServiceConfiguration.CurrentConfigVersion,
+            SecurityMode = CipherVaultServiceConfiguration.StrictModeValue,
+            OwnerSid = ownerSid,
+            ServiceAccount = "NT SERVICE\\CipherVaultHost",
+            DataRoot = paths.DataRoot,
+            VaultPath = paths.VaultPath,
+            Pipes = new CipherVaultPipeConfigFile
+            {
+                Admin = "CipherVault.Admin.v1",
+                Broker = "CipherVault.Broker.v1",
+                Bridge = "CipherVault.Bridge.v1",
+                RejectRemoteClients = true
+            }
+        };
+    }
+
+    private static CipherVaultImagePolicyFile CreateImage(
+        CipherVaultServicePaths paths,
+        string name)
+    {
+        return new CipherVaultImagePolicyFile
+        {
+            Kind = "mcpBridge",
+            Path = Path.Combine(paths.InstallRoot, $"{name}.exe"),
+            Sha256 = new string('b', 64),
+            SignerThumbprint = new string('c', 64),
+            SignerSubject = "CN=CipherVault Test"
+        };
+    }
+
+    private static void WriteInstallManifest(
+        CipherVaultServicePaths paths,
+        CipherVaultServiceConfigFile configuration,
+        Guid installId)
+    {
+        Directory.CreateDirectory(paths.DataRoot);
+        var manifest = new CipherVaultInstallPublicManifest
+        {
+            Format = CipherVaultServiceConfiguration.InstallManifestFormat,
+            FormatVersion =
+                CipherVaultServiceConfiguration.InstallManifestFormatVersion,
+            InstallId = installId,
+            ProductVersion = "1.0.0",
+            ServiceName = "CipherVaultHost",
+            ServiceAccount = configuration.ServiceAccount,
+            ServiceSid = "S-1-5-80-1",
+            OwnerSid = configuration.OwnerSid,
+            Pipes = configuration.Pipes,
+            AllowedServerImages =
+            [
+                new CipherVaultImagePolicyFile
+                {
+                    Kind = "host",
+                    Path = Path.Combine(
+                        paths.InstallRoot,
+                        "CipherVault.Host.exe"),
+                    Sha256 = new string('a', 64),
+                    SignerThumbprint = new string('a', 64),
+                    SignerSubject = "CN=CipherVault Test"
+                }
+            ]
+        };
+        File.WriteAllText(
+            paths.PublicManifestPath,
+            JsonSerializer.Serialize(
+                manifest,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+    }
+
     private sealed class MutableTimeProvider(DateTimeOffset now) : TimeProvider
     {
         private DateTimeOffset _now = now;
