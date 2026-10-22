@@ -3,6 +3,7 @@ using CipherVault.Core.Configuration;
 using CipherVault.Core.Errors;
 using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
+using CipherVault.Host.Security;
 using CipherVault.Host.Service;
 using CipherVault.Host.Session;
 
@@ -68,6 +69,53 @@ public sealed class AdminPipeHostedServiceTests
         Assert.Equal("test-lock", receivedReason);
         Assert.Equal("locked", status.State);
         Assert.Equal("test-lock", status.LockReason);
+    }
+
+    [Fact]
+    public async Task UnlockAndInitializeProvidersDelegateToSessionCoordinator()
+    {
+        var preference = HostCredentialPreference.Any;
+        var initializePath = string.Empty;
+        var unlockProvider = new StrictAdminUnlockProvider(
+            (requestedPreference, _) =>
+            {
+                preference = requestedPreference;
+                return Task.FromResult(new HostSessionSnapshot(
+                    VaultSessionState.Unlocked,
+                    Guid.NewGuid(),
+                    DateTimeOffset.UtcNow,
+                    DateTimeOffset.UtcNow,
+                    DateTimeOffset.UtcNow.AddMinutes(10),
+                    DateTimeOffset.UtcNow.AddHours(4),
+                    LockReason: null,
+                    ActiveLeases: 0,
+                    ConnectedClients: 1,
+                    RecoveryVerified: true));
+            });
+        var initializeProvider = new StrictAdminInitializeProvider(
+            (path, _) =>
+            {
+                initializePath = path;
+                return Task.FromResult(new HostInitializeData(
+                    Guid.NewGuid(),
+                    path,
+                    "RECOVERY-KEY",
+                    DateTimeOffset.UtcNow));
+            });
+
+        var status = await unlockProvider.UnlockAsync(
+            HostCredentialPreference.RecoveryKey,
+            CancellationToken.None);
+        var initialized = await initializeProvider.InitializeAsync(
+            @"C:\ProgramData\CipherVault\Vault",
+            CancellationToken.None);
+
+        Assert.Equal(HostCredentialPreference.RecoveryKey, preference);
+        Assert.Equal("unlocked", status.State);
+        Assert.Equal(
+            @"C:\ProgramData\CipherVault\Vault",
+            initializePath);
+        Assert.Equal(initializePath, initialized.VaultPath);
     }
 
     [Fact]

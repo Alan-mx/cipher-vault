@@ -21,4 +21,14 @@ public sealed record AdminPipeServerOptions(
         AdminSession,
         string,
         CancellationToken,
-        Task<HostSessionStatusData>>? LockProvider = null);
+        Task<HostSessionStatusData>>? LockProvider = null,
+    Func<
+        AdminSession,
+        HostCredentialPreference,
+        CancellationToken,
+        Task<HostSessionStatusData>>? UnlockProvider = null,
+    Func<
+        AdminSession,
+        string,
+        CancellationToken,
+        Task<HostInitializeData>>? InitializeProvider = null);

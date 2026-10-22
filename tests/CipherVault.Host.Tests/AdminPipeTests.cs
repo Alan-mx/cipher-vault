@@ -71,7 +71,15 @@ public sealed class AdminPipeTests
                         BrokerAvailable: true,
                         expectedSession)),
                 (_, reason, _) => Task.FromResult(
-                    expectedSession with { LockReason = reason })));
+                    expectedSession with { LockReason = reason }),
+                (_, _, _) => Task.FromException<HostSessionStatusData>(
+                    new AdminPipeRpcException(
+                        "approval_broker_unavailable",
+                        "Broker unavailable.")),
+                (_, _, _) => Task.FromException<HostInitializeData>(
+                    new AdminPipeRpcException(
+                        "approval_broker_unavailable",
+                        "Broker unavailable."))));
         var acceptTask = server.AcceptOnceAsync();
 
         await using var client = await NamedPipeHostVaultClient.CreateAsync(
@@ -87,6 +95,14 @@ public sealed class AdminPipeTests
         Assert.True(status.RecoveryVerified);
         var locked = await client.LockAsync("test-lock");
         Assert.Equal("test-lock", locked.LockReason);
+        var unlockException = await Assert.ThrowsAsync<PipeRpcException>(
+            () => client.UnlockAsync(
+                vaultPath: @"C:\Vault",
+                credential: string.Empty,
+                credentialType: VaultCredentialType.Password));
+        Assert.Equal(
+            "approval_broker_unavailable",
+            unlockException.Code);
 
         await client.DisposeAsync();
         var session = await acceptTask.WaitAsync(TimeSpan.FromSeconds(5));

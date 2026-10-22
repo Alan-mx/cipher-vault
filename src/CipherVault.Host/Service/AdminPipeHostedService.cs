@@ -46,12 +46,41 @@ public sealed class StrictAdminLockProvider(
     }
 }
 
+public sealed class StrictAdminUnlockProvider(
+    Func<
+        HostCredentialPreference,
+        CancellationToken,
+        Task<HostSessionSnapshot>> unlockSession)
+{
+    public async Task<HostSessionStatusData> UnlockAsync(
+        HostCredentialPreference preference,
+        CancellationToken cancellationToken)
+    {
+        var snapshot = await unlockSession(preference, cancellationToken)
+            .ConfigureAwait(false);
+        return HostDtoMapper.ToSessionStatus(snapshot);
+    }
+}
+
+public sealed class StrictAdminInitializeProvider(
+    Func<string, CancellationToken, Task<HostInitializeData>> initializeVault)
+{
+    public Task<HostInitializeData> InitializeAsync(
+        string vaultPath,
+        CancellationToken cancellationToken)
+    {
+        return initializeVault(vaultPath, cancellationToken);
+    }
+}
+
 public sealed class AdminPipeHostedService(
     CipherVaultServiceConfigFile configuration,
     CipherVaultServicePaths paths,
     StrictServiceHostOptions options,
     StrictAdminStatusProvider statusProvider,
-    StrictAdminLockProvider lockProvider) : BackgroundService
+    StrictAdminLockProvider lockProvider,
+    StrictAdminUnlockProvider unlockProvider,
+    StrictAdminInitializeProvider initializeProvider) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -112,7 +141,13 @@ public sealed class AdminPipeHostedService(
             (_, cancellationToken) =>
                 statusProvider.GetStatusAsync(cancellationToken),
             (_, reason, cancellationToken) =>
-                lockProvider.LockAsync(reason, cancellationToken));
+                lockProvider.LockAsync(reason, cancellationToken),
+            (_, preference, cancellationToken) =>
+                unlockProvider.UnlockAsync(preference, cancellationToken),
+            (_, vaultPath, cancellationToken) =>
+                initializeProvider.InitializeAsync(
+                    vaultPath,
+                    cancellationToken));
 
         while (!stoppingToken.IsCancellationRequested)
         {

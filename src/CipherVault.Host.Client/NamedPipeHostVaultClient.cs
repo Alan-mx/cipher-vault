@@ -54,7 +54,7 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
     {
         var data = await CallAsync<HostSessionStatusData>(
             "admin.session.unlock",
-            new HostUnlockRequest("any"),
+            new HostUnlockRequest(ToCredentialPreference(credentialType)),
             cancellationToken).ConfigureAwait(false);
         return ToSessionStatus(data);
     }
@@ -488,6 +488,16 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
             status.HardExpiresAt,
             status.LockReason,
             status.RecoveryVerified);
+    }
+
+    private static string ToCredentialPreference(VaultCredentialType credentialType)
+    {
+        return credentialType switch
+        {
+            VaultCredentialType.Password => "password",
+            VaultCredentialType.RecoveryKey => "recoveryKey",
+            _ => "any"
+        };
     }
 
     private void ThrowIfDisposed()

@@ -260,6 +260,71 @@ public sealed class AdminPipeServer : IAsyncDisposable
                 })
                 .ConfigureAwait(false);
         }
+        if (string.Equals(
+                request.Method,
+                "admin.session.unlock",
+                StringCompare.Ordinal))
+        {
+            return await ExecuteAsync(
+                request,
+                async () =>
+                {
+                    if (_options.UnlockProvider is null)
+                    {
+                        throw new AdminPipeRpcException(
+                            "unsupported_method",
+                            "Admin session unlock is not configured.");
+                    }
+                    var unlockRequest = request.Payload.Deserialize<HostUnlockRequest>(
+                        JsonOptions)
+                        ?? throw new InvalidDataException(
+                            "Admin unlock request was empty.");
+                    if (!TryParseCredentialPreference(
+                            unlockRequest.CredentialType,
+                            out var preference))
+                    {
+                        throw new InvalidDataException(
+                            "credentialType must be any, password or recoveryKey.");
+                    }
+                    return await _options.UnlockProvider(
+                        session,
+                        preference,
+                        cancellationToken).ConfigureAwait(false);
+                })
+                .ConfigureAwait(false);
+        }
+        if (string.Equals(
+                request.Method,
+                "admin.vault.initialize",
+                StringCompare.Ordinal))
+        {
+            return await ExecuteAsync(
+                request,
+                async () =>
+                {
+                    if (_options.InitializeProvider is null)
+                    {
+                        throw new AdminPipeRpcException(
+                            "unsupported_method",
+                            "Admin Vault initialization is not configured.");
+                    }
+                    var initializeRequest =
+                        request.Payload.Deserialize<HostInitializeRequest>(
+                            JsonOptions)
+                        ?? throw new InvalidDataException(
+                            "Admin initialize request was empty.");
+                    if (string.IsNullOrWhiteSpace(initializeRequest.VaultPath))
+                    {
+                        throw new InvalidDataException(
+                            "vaultPath is required.");
+                    }
+                    return await _options.InitializeProvider(
+                        session,
+                        initializeRequest.VaultPath,
+                        cancellationToken).ConfigureAwait(false);
+                })
+                .ConfigureAwait(false);
+        }
 
         return PipeRpcCodec.Failure(
             request.RequestId,
@@ -281,12 +346,38 @@ public sealed class AdminPipeServer : IAsyncDisposable
         {
             return PipeRpcCodec.Failure(
                 request.RequestId,
-                exception is InvalidDataException or
+                exception is AdminPipeRpcException rpcException
+                    ? rpcException.Code
+                    : exception is InvalidDataException or
                 HostException { Code: HostErrorCode.InvalidInput } or
                 VaultException { Code: VaultErrorCode.InvalidInput }
                     ? "invalid_input"
                     : "storage_error",
                 exception.Message);
+        }
+    }
+
+    private static bool TryParseCredentialPreference(
+        string? value,
+        out HostCredentialPreference preference)
+    {
+        switch (value?.Trim().ToLowerInvariant())
+        {
+            case null:
+            case "":
+            case "any":
+                preference = HostCredentialPreference.Any;
+                return true;
+            case "password":
+                preference = HostCredentialPreference.Password;
+                return true;
+            case "recoverykey":
+            case "recovery-key":
+                preference = HostCredentialPreference.RecoveryKey;
+                return true;
+            default:
+                preference = HostCredentialPreference.Any;
+                return false;
         }
     }
 
@@ -334,4 +425,10 @@ public sealed class AdminPipeServer : IAsyncDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
     }
+}
+
+public sealed class AdminPipeRpcException(string code, string message)
+    : Exception(message)
+{
+    public string Code { get; } = code;
 }

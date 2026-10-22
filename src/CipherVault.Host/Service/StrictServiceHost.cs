@@ -124,6 +124,16 @@ public sealed class StrictServiceHost : IAsyncDisposable
                     serviceProvider
                         .GetRequiredService<HostSessionCoordinator>()
                         .LockAsync));
+            builder.Services.AddSingleton(serviceProvider =>
+                new StrictAdminUnlockProvider(
+                    serviceProvider
+                        .GetRequiredService<HostSessionCoordinator>()
+                        .UnlockAsync));
+            builder.Services.AddSingleton(serviceProvider =>
+                new StrictAdminInitializeProvider(
+                    serviceProvider
+                        .GetRequiredService<HostSessionCoordinator>()
+                        .InitializeAsync));
             builder.Services.AddHostedService<AdminPipeHostedService>();
             host = builder.Build();
             return new StrictServiceHost(
@@ -271,8 +281,8 @@ public sealed class StrictServiceHost : IAsyncDisposable
             string? message = null,
             CancellationToken cancellationToken = default)
         {
-            throw new VaultException(
-                VaultErrorCode.StorageError,
+            throw new AdminPipeRpcException(
+                "approval_broker_unavailable",
                 "The interactive Auth Broker is not available.");
         }
     }
@@ -284,8 +294,8 @@ public sealed class StrictServiceHost : IAsyncDisposable
             HostAccessGrantPromptRequest request,
             CancellationToken cancellationToken = default)
         {
-            throw new VaultException(
-                VaultErrorCode.StorageError,
+            throw new AdminPipeRpcException(
+                "approval_broker_unavailable",
                 "The interactive Auth Broker is not available.");
         }
     }
