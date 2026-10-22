@@ -10,6 +10,8 @@ using CipherVault.Core.Security;
 using CipherVault.Core.Session;
 using CipherVault.Host.Client;
 using CipherVault.Host.Contracts;
+using CipherVault.Host.Service;
+using CipherVault.Host.ServiceManagement;
 
 var jsonOptions = new JsonSerializerOptions
 {
@@ -25,6 +27,11 @@ if (args.Length == 0 || args[0] is "help" or "--help" or "-h")
 }
 
 var command = args[0].ToLowerInvariant();
+if (command == "service")
+{
+    return RunServiceCommand(args, jsonOptions);
+}
+
 var standalone = HasFlag(args, "--standalone");
 CliHostSession session;
 try
@@ -486,6 +493,40 @@ static int UnknownCommand(string command)
     return 2;
 }
 
+static int RunServiceCommand(
+    string[] arguments,
+    JsonSerializerOptions options)
+{
+    if (arguments.Length < 2)
+    {
+        Console.Error.WriteLine("Missing service command.");
+        return 2;
+    }
+
+    var action = arguments[1].ToLowerInvariant();
+    try
+    {
+        switch (action)
+        {
+            case "status":
+                var status = HostServiceStatusReader.Read(
+                    StrictServiceHost.ServiceName,
+                    CipherVaultServicePaths.Default.PublicManifestPath,
+                    new WindowsServiceQuery());
+                PrintJson(status, options);
+                return status.Installed ? 0 : 1;
+            default:
+                Console.Error.WriteLine($"Unknown service command: {action}");
+                return 2;
+        }
+    }
+    catch (VaultException exception)
+    {
+        Console.Error.WriteLine($"{exception.Code}: {exception.Message}");
+        return 1;
+    }
+}
+
 static async Task<CliHostSession> CreateHostSessionAsync(
     string[] arguments,
     bool standalone)
@@ -690,6 +731,7 @@ static void PrintHelp()
         CipherVault CLI
 
         Commands:
+          service status      Inspect the Windows service and install manifest
           init                --vault <directory>
           status              --vault <directory>
           backup              --vault <directory> --to <file.cvbackup>

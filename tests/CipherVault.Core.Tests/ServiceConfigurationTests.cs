@@ -154,6 +154,31 @@ public sealed class ServiceConfigurationTests
     }
 
     [Fact]
+    public void InstallManifestCanBeLoadedAndRejectsSensitiveFields()
+    {
+        using var fixture = new ConfigFixture();
+        var manifestPath = Path.Combine(fixture.Root, "install-public.json");
+        var json = BuildInstallManifest(fixture.Root);
+        File.WriteAllText(manifestPath, json);
+
+        var manifest = CipherVaultServiceConfiguration.LoadInstallManifest(
+            manifestPath);
+
+        Assert.Equal("CipherVaultHost", manifest.ServiceName);
+        Assert.Equal("1.0.0", manifest.ProductVersion);
+
+        File.WriteAllText(
+            manifestPath,
+            json.Replace(
+                "\"serviceName\": \"CipherVaultHost\",",
+                "\"serviceName\": \"CipherVaultHost\", \"token\": \"forbidden\",",
+                StringComparison.Ordinal));
+        var exception = Assert.Throws<VaultException>(
+            () => CipherVaultServiceConfiguration.LoadInstallManifest(manifestPath));
+        Assert.Equal(VaultErrorCode.InvalidInput, exception.Code);
+    }
+
+    [Fact]
     public void ValidVaultModeManifestIsAccepted()
     {
         CipherVaultServiceConfiguration.Validate(
@@ -188,6 +213,33 @@ public sealed class ServiceConfigurationTests
               "pipes": { "admin": "CipherVault.Admin.v1", "broker": "CipherVault.Broker.v1", "bridge": "CipherVault.Bridge.v1", "rejectRemoteClients": true },
               "processPolicy": { "allowedSignerThumbprints": ["{{Thumbprint}}"], "requireSha256": true },
               "agent": { "strictTransport": "stdio-bridge", "compatibilityHttpEnabled": false }
+            }
+            """;
+    }
+
+    private static string BuildInstallManifest(string root)
+    {
+        var installPath = Path.Combine(root, "ProgramFiles", "CipherVault.Host.exe")
+            .Replace("\\", "\\\\", StringComparison.Ordinal);
+        return $$"""
+            {
+              "format": "cipher-vault-install",
+              "formatVersion": 1,
+              "installId": "5e9784db-3fe8-4e2d-84ca-fd281e6d2685",
+              "productVersion": "1.0.0",
+              "serviceName": "CipherVaultHost",
+              "serviceAccount": "NT SERVICE\\CipherVaultHost",
+              "serviceSid": "S-1-5-80-1",
+              "ownerSid": "S-1-5-21-1",
+              "pipes": { "admin": "CipherVault.Admin.v1", "broker": "CipherVault.Broker.v1", "bridge": "CipherVault.Bridge.v1", "rejectRemoteClients": true },
+              "allowedServerImages": [
+                {
+                  "kind": "host",
+                  "path": "{{installPath}}",
+                  "sha256": "{{Sha256}}",
+                  "signerThumbprint": "{{Thumbprint}}"
+                }
+              ]
             }
             """;
     }

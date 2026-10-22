@@ -193,6 +193,38 @@ public static class CipherVaultServiceConfiguration
         }
     }
 
+    public static CipherVaultInstallPublicManifest LoadInstallManifest(
+        string manifestPath,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var fullPath = Path.GetFullPath(manifestPath);
+            if (!File.Exists(fullPath))
+            {
+                throw new VaultException(
+                    VaultErrorCode.NotFound,
+                    $"Install manifest was not found: {fullPath}");
+            }
+            var json = CipherVaultConfiguration.ReadBoundedText(
+                fullPath,
+                cancellationToken);
+            return ParseInstallManifest(json);
+        }
+        catch (VaultException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException)
+        {
+            throw new VaultException(
+                VaultErrorCode.StorageError,
+                "Install manifest could not be read.",
+                exception);
+        }
+    }
+
     public static CipherVaultServiceConfigFile Parse(string json)
     {
         try
@@ -225,6 +257,38 @@ public static class CipherVaultServiceConfiguration
             throw new VaultException(
                 VaultErrorCode.InvalidInput,
                 $"Service configuration is invalid: {exception.Message}",
+                exception);
+        }
+    }
+
+    public static CipherVaultInstallPublicManifest ParseInstallManifest(string json)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                throw Invalid("Install manifest is empty.");
+            }
+            using (var document = JsonDocument.Parse(json))
+            {
+                CipherVaultConfiguration.ValidateNoSensitiveFields(document.RootElement);
+            }
+            var manifest = JsonSerializer.Deserialize<CipherVaultInstallPublicManifest>(
+                json,
+                JsonOptions) ?? throw Invalid("Install manifest is empty.");
+            Validate(manifest);
+            return manifest;
+        }
+        catch (VaultException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is JsonException or ArgumentException or NotSupportedException)
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                $"Install manifest is invalid: {exception.Message}",
                 exception);
         }
     }
