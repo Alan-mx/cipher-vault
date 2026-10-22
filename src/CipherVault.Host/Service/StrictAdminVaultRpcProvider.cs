@@ -98,6 +98,30 @@ public sealed class StrictAdminVaultRpcProvider(HostVaultGateway vault)
                         Actor(session),
                         token),
                     cancellationToken).ConfigureAwait(false);
+            case "admin.notes.append":
+                var appendRequest =
+                    PipeRpcCodec.ReadPayload<AdminAppendNoteRequest>(
+                        new PipeRpcRequest(
+                            PipeProtocol.Version,
+                            Guid.Empty,
+                            method,
+                            payload));
+                if (appendRequest.DocumentId == Guid.Empty ||
+                    appendRequest.Request.ExpectedRevision < 1 ||
+                    appendRequest.Request.Content is null)
+                {
+                    throw new AdminPipeRpcException(
+                        "invalid_input",
+                        "Append request is invalid.");
+                }
+                return await vault.ExecuteAsync(
+                    (service, token) => service.AppendNoteAsync(
+                        appendRequest.DocumentId,
+                        appendRequest.Request.ExpectedRevision,
+                        appendRequest.Request.Content,
+                        Actor(session),
+                        token),
+                    cancellationToken).ConfigureAwait(false);
             default:
                 throw new AdminPipeRpcException(
                     "unsupported_method",

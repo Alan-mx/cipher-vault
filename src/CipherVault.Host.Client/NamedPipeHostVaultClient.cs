@@ -152,11 +152,9 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
     {
         return CallAsync<VaultWriteResult>(
             "admin.notes.append",
-            new
-            {
+            new AdminAppendNoteRequest(
                 documentId,
-                request = new HostAppendNoteRequest(expectedRevision, content)
-            },
+                new HostAppendNoteRequest(expectedRevision, content)),
             cancellationToken);
     }
 

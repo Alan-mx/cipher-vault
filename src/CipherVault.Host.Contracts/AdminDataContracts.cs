@@ -19,3 +19,7 @@ public sealed record AdminReadNoteRequest(
 public sealed record AdminScanNotesRequest(
     string? Cursor,
     int Limit);
+
+public sealed record AdminAppendNoteRequest(
+    Guid DocumentId,
+    HostAppendNoteRequest Request);
