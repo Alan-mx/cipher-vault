@@ -115,6 +115,12 @@ public sealed record CipherVaultServicePaths(
     string TransferRoot,
     string ClientConfigPath)
 {
+    public string HostInstanceLockPath =>
+        Path.Combine(LocksPath, "host.instance.lock");
+
+    public string VaultOwnerLockPath =>
+        Path.Combine(LocksPath, "vault.owner.lock");
+
     public static CipherVaultServicePaths Default => Create(
         Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
