@@ -247,9 +247,58 @@ public sealed class StrictBridgePipeTests
         Assert.Empty(environment.Grants.List());
     }
 
+    [Fact]
+    public async Task AcceptLoopContinuesAfterFailedConnection()
+    {
+        var handler = new FailingCloseBridgeHandler();
+        var pipeName = "CipherVault.Bridge.Test." + Guid.NewGuid().ToString("N");
+        var options = CreateBridgeOptions(pipeName, handler);
+        using var stopping = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var loopTask = new BridgePipeAcceptLoop(options).RunAsync(stopping.Token);
+
+        await using var first = await BridgePipeClientConnection.ConnectAsync(
+            new BridgePipeClientOptions(
+                pipeName,
+                options.ClientId,
+                options.AccessMode,
+                new HashSet<string>(StringComparer.Ordinal) { "read" },
+                options.AllowedClientPolicy,
+                CurrentProcessServicePolicy(options.OwnerSid)));
+        await first.DisposeAsync();
+        await WaitUntilAsync(
+            () => handler.CloseAttempts >= 1,
+            TimeSpan.FromSeconds(5));
+        await Task.Delay(250);
+
+        await using var second = await BridgePipeClientConnection.ConnectAsync(
+            new BridgePipeClientOptions(
+                pipeName,
+                options.ClientId,
+                options.AccessMode,
+                new HashSet<string>(StringComparer.Ordinal) { "read" },
+                options.AllowedClientPolicy,
+                CurrentProcessServicePolicy(options.OwnerSid)));
+        await second.DisposeAsync();
+        await WaitUntilAsync(
+            () => handler.CloseAttempts >= 2,
+            TimeSpan.FromSeconds(5));
+
+        stopping.Cancel();
+        await loopTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     private static (
         BridgePipeServer Server,
         BridgePipeServerOptions Options) CreateServer(
+        string pipeName,
+        IBridgeSessionHandler handler,
+        McpAccessMode accessMode = McpAccessMode.ReadOnly)
+    {
+        var options = CreateBridgeOptions(pipeName, handler, accessMode);
+        return (new BridgePipeServer(options), options);
+    }
+
+    private static BridgePipeServerOptions CreateBridgeOptions(
         string pipeName,
         IBridgeSessionHandler handler,
         McpAccessMode accessMode = McpAccessMode.ReadOnly)
@@ -264,7 +313,7 @@ public sealed class StrictBridgePipeTests
             [currentUser],
             includeAdministrators: false,
             includeSystem: false);
-        var options = new BridgePipeServerOptions
+        return new BridgePipeServerOptions
         {
             PipeName = pipeName,
             Security = security,
@@ -279,7 +328,21 @@ public sealed class StrictBridgePipeTests
             BridgeSessionLifetime = TimeSpan.FromHours(12),
             Handler = handler
         };
-        return (new BridgePipeServer(options), options);
+    }
+
+    private static async Task WaitUntilAsync(
+        Func<bool> condition,
+        TimeSpan timeout)
+    {
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        while (!condition())
+        {
+            if (DateTimeOffset.UtcNow >= deadline)
+            {
+                throw new TimeoutException("Condition was not met before timeout.");
+            }
+            await Task.Delay(25);
+        }
     }
 
     private static ProcessVerificationPolicy CurrentProcessServicePolicy(
@@ -414,6 +477,41 @@ public sealed class StrictBridgePipeTests
             CancellationToken cancellationToken)
         {
             ClosedReasons.Add(reasonCode);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FailingCloseBridgeHandler : IBridgeSessionHandler
+    {
+        public int CloseAttempts { get; private set; }
+
+        public Task<BridgeIssuedGrant> RequestGrantAsync(
+            BridgeProcessSession session,
+            BridgeGrantRequest request,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<string> CallToolAsync(
+            BridgeProcessSession session,
+            AccessGrantContext? grant,
+            BridgeToolCallRequest request,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task CloseSessionAsync(
+            Guid processSessionId,
+            string reasonCode,
+            CancellationToken cancellationToken)
+        {
+            CloseAttempts++;
+            if (CloseAttempts == 1)
+            {
+                throw new InvalidOperationException("First close failed.");
+            }
             return Task.CompletedTask;
         }
     }
