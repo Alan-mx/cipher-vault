@@ -108,7 +108,7 @@ internal static class BackupService
                 session.VaultId,
                 createdAt,
                 new FileInfo(fullBackupPath).Length);
-            await AuditWriter.AppendAsync(
+            var auditRecorded = await AuditWriter.TryAppendAsync(
                 session.Connection,
                 actor,
                 session.SessionId,
@@ -122,7 +122,7 @@ internal static class BackupService
                     result.BackupBytes
                 }),
                 cancellationToken).ConfigureAwait(false);
-            return result;
+            return result with { AuditRecorded = auditRecorded };
         }
         finally
         {
@@ -206,12 +206,13 @@ internal static class BackupService
                     cancellationToken).ConfigureAwait(false);
                 Directory.Move(temporaryDirectory, fullTargetPath);
                 VaultFileSecurity.ProtectDirectory(fullTargetPath);
+                bool auditRecorded;
                 await using (var restoredConnection = await SqlCipherVaultStore.OpenAsync(
                     fullTargetPath,
                     material,
                     cancellationToken).ConfigureAwait(false))
                 {
-                    await AuditWriter.AppendAsync(
+                    auditRecorded = await AuditWriter.TryAppendAsync(
                         restoredConnection,
                         actor,
                         null,
@@ -226,7 +227,10 @@ internal static class BackupService
                         }),
                         cancellationToken).ConfigureAwait(false);
                 }
-                return new VaultRestoreBackupResult(fullTargetPath, manifest.VaultId);
+                return new VaultRestoreBackupResult(
+                    fullTargetPath,
+                    manifest.VaultId,
+                    auditRecorded);
             }
             finally
             {

@@ -37,6 +37,7 @@ public sealed class ExportEndpointTests
         Assert.NotNull(payload);
         Assert.Equal(1, payload.Data.ExportedDocuments);
         Assert.True(File.Exists(payload.Data.ManifestPath));
+        Assert.True(payload.Data.AuditRecorded);
         var document = Assert.Single(
             Directory.GetFiles(destination, "*.md", SearchOption.AllDirectories));
         Assert.Contains("export marker 9f98", await File.ReadAllTextAsync(document));

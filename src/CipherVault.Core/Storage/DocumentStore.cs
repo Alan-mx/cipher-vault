@@ -28,24 +28,43 @@ internal static partial class DocumentStore
     {
         var effectiveLimit = Math.Clamp(limit, 1, 100);
         var normalizedFolder = NormalizeFolder(folder);
-        var offset = CursorCodec.Decode(
+        var fingerprint = CursorCodec.Fingerprint(normalizedFolder);
+        var hasCursor = CursorCodec.TryDecode(
             cursor,
             sessionId,
             "catalog",
-            CursorCodec.Fingerprint(normalizedFolder));
+            fingerprint,
+            out CatalogCursor position);
+        var snapshotAtMs = hasCursor
+            ? position.SnapshotAtMs
+            : await GetMaxUpdatedAtAsync(
+                connection,
+                normalizedFolder,
+                cancellationToken).ConfigureAwait(false);
 
         var sql = new StringBuilder(
             """
             SELECT document_id, title, source_path, format, revision,
-                   headings_json, tags_json, updated_at_ms
+                   headings_json, tags_json, updated_at_ms, source_path_norm
             FROM documents
             WHERE deleted_at_ms IS NULL
+              AND updated_at_ms <= $snapshotAt
             """);
         if (normalizedFolder.Length > 0)
         {
             sql.Append(" AND source_path_norm LIKE $folderPrefix ESCAPE '\\'");
         }
-        sql.Append(" ORDER BY source_path_norm, document_id LIMIT $limit OFFSET $offset;");
+        if (hasCursor)
+        {
+            sql.Append(
+                """
+                 AND (
+                    source_path_norm > $afterPath
+                    OR (source_path_norm = $afterPath AND document_id > $afterDocumentId)
+                 )
+                """);
+        }
+        sql.Append(" ORDER BY source_path_norm, document_id LIMIT $limit;");
 
         using var command = connection.CreateCommand();
         command.CommandText = sql.ToString();
@@ -53,15 +72,25 @@ internal static partial class DocumentStore
         {
             command.Parameters.AddWithValue("$folderPrefix", EscapeLike(normalizedFolder) + "/%");
         }
+        command.Parameters.AddWithValue("$snapshotAt", snapshotAtMs);
         command.Parameters.AddWithValue("$limit", effectiveLimit + 1);
-        command.Parameters.AddWithValue("$offset", offset);
+        if (hasCursor)
+        {
+            command.Parameters.AddWithValue("$afterPath", position.SourcePathNorm);
+            command.Parameters.AddWithValue("$afterDocumentId", position.DocumentId);
+        }
 
-        var rows = new List<VaultCatalogItem>();
+        var rows = new List<(VaultCatalogItem Item, CatalogCursor Cursor)>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken)
             .ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            rows.Add(ReadCatalogItem(reader));
+            rows.Add((
+                ReadCatalogItem(reader),
+                new CatalogCursor(
+                    reader.GetString(8),
+                    reader.GetString(0),
+                    snapshotAtMs)));
         }
 
         var hasMore = rows.Count > effectiveLimit;
@@ -73,10 +102,12 @@ internal static partial class DocumentStore
             ? CursorCodec.Encode(
                 sessionId,
                 "catalog",
-                offset + rows.Count,
-                CursorCodec.Fingerprint(normalizedFolder))
+                fingerprint,
+                rows[^1].Cursor)
             : null;
-        return new VaultCatalogPage(rows, nextCursor);
+        return new VaultCatalogPage(
+            rows.Select(row => row.Item).ToArray(),
+            nextCursor);
     }
 
     public static async Task<VaultScanPage> ScanAsync(
@@ -87,31 +118,61 @@ internal static partial class DocumentStore
         CancellationToken cancellationToken)
     {
         var effectiveLimit = Math.Clamp(limit, 1, 50);
-        var offset = CursorCodec.Decode(
+        var fingerprint = CursorCodec.Fingerprint(string.Empty);
+        var hasCursor = CursorCodec.TryDecode(
             cursor,
             sessionId,
             "scan",
-            CursorCodec.Fingerprint(string.Empty));
+            fingerprint,
+            out CatalogCursor position);
+        var snapshotAtMs = hasCursor
+            ? position.SnapshotAtMs
+            : await GetMaxUpdatedAtAsync(
+                connection,
+                string.Empty,
+                cancellationToken).ConfigureAwait(false);
 
-        using var command = connection.CreateCommand();
-        command.CommandText =
+        var sql = new StringBuilder(
             """
             SELECT document_id, title, source_path, format, revision,
-                   headings_json, tags_json, updated_at_ms
+                   headings_json, tags_json, updated_at_ms, source_path_norm
             FROM documents
             WHERE deleted_at_ms IS NULL
-            ORDER BY source_path_norm, document_id
-            LIMIT $limit OFFSET $offset;
-            """;
-        command.Parameters.AddWithValue("$limit", effectiveLimit + 1);
-        command.Parameters.AddWithValue("$offset", offset);
+              AND updated_at_ms <= $snapshotAt
+            """);
+        if (hasCursor)
+        {
+            sql.Append(
+                """
+                 AND (
+                    source_path_norm > $afterPath
+                    OR (source_path_norm = $afterPath AND document_id > $afterDocumentId)
+                 )
+                """);
+        }
+        sql.Append(" ORDER BY source_path_norm, document_id LIMIT $limit;");
 
-        var rows = new List<VaultCatalogItem>();
+        using var command = connection.CreateCommand();
+        command.CommandText = sql.ToString();
+        command.Parameters.AddWithValue("$snapshotAt", snapshotAtMs);
+        command.Parameters.AddWithValue("$limit", effectiveLimit + 1);
+        if (hasCursor)
+        {
+            command.Parameters.AddWithValue("$afterPath", position.SourcePathNorm);
+            command.Parameters.AddWithValue("$afterDocumentId", position.DocumentId);
+        }
+
+        var rows = new List<(VaultCatalogItem Item, CatalogCursor Cursor)>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken)
             .ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            rows.Add(ReadCatalogItem(reader));
+            rows.Add((
+                ReadCatalogItem(reader),
+                new CatalogCursor(
+                    reader.GetString(8),
+                    reader.GetString(0),
+                    snapshotAtMs)));
         }
 
         var hasMore = rows.Count > effectiveLimit;
@@ -123,10 +184,13 @@ internal static partial class DocumentStore
             ? CursorCodec.Encode(
                 sessionId,
                 "scan",
-                offset + rows.Count,
-                CursorCodec.Fingerprint(string.Empty))
+                fingerprint,
+                rows[^1].Cursor)
             : null;
-        return new VaultScanPage(rows, nextCursor, !hasMore);
+        return new VaultScanPage(
+            rows.Select(row => row.Item).ToArray(),
+            nextCursor,
+            !hasMore);
     }
 
     public static async Task<VaultTrashPage> ListTrashAsync(
@@ -137,35 +201,54 @@ internal static partial class DocumentStore
         CancellationToken cancellationToken)
     {
         var effectiveLimit = Math.Clamp(limit, 1, 100);
-        var offset = CursorCodec.Decode(
+        var fingerprint = CursorCodec.Fingerprint(string.Empty);
+        var hasCursor = CursorCodec.TryDecode(
             cursor,
             sessionId,
             "trash",
-            CursorCodec.Fingerprint(string.Empty));
-        using var command = connection.CreateCommand();
-        command.CommandText =
+            fingerprint,
+            out TrashCursor position);
+        var sql = new StringBuilder(
             """
             SELECT document_id, title, source_path, revision, deleted_at_ms, purge_after_ms
             FROM documents
             WHERE deleted_at_ms IS NOT NULL
-            ORDER BY deleted_at_ms DESC, document_id
-            LIMIT $limit OFFSET $offset;
-            """;
-        command.Parameters.AddWithValue("$limit", effectiveLimit + 1);
-        command.Parameters.AddWithValue("$offset", offset);
+            """);
+        if (hasCursor)
+        {
+            sql.Append(
+                """
+                 AND (
+                    deleted_at_ms < $afterDeletedAt
+                    OR (deleted_at_ms = $afterDeletedAt AND document_id > $afterDocumentId)
+                 )
+                """);
+        }
+        sql.Append(" ORDER BY deleted_at_ms DESC, document_id LIMIT $limit;");
 
-        var items = new List<VaultTrashItem>();
+        using var command = connection.CreateCommand();
+        command.CommandText = sql.ToString();
+        command.Parameters.AddWithValue("$limit", effectiveLimit + 1);
+        if (hasCursor)
+        {
+            command.Parameters.AddWithValue("$afterDeletedAt", position.DeletedAtMs);
+            command.Parameters.AddWithValue("$afterDocumentId", position.DocumentId);
+        }
+
+        var items = new List<(VaultTrashItem Item, TrashCursor Cursor)>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken)
             .ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            items.Add(new VaultTrashItem(
-                Guid.Parse(reader.GetString(0)),
-                reader.GetString(1),
-                reader.GetString(2),
-                reader.GetInt32(3),
-                DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(4)),
-                DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(5))));
+            items.Add((
+                new VaultTrashItem(
+                    Guid.Parse(reader.GetString(0)),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.GetInt32(3),
+                    DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(4)),
+                    DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(5))),
+                new TrashCursor(reader.GetInt64(4), reader.GetString(0))));
         }
 
         var hasMore = items.Count > effectiveLimit;
@@ -177,10 +260,12 @@ internal static partial class DocumentStore
             ? CursorCodec.Encode(
                 sessionId,
                 "trash",
-                offset + items.Count,
-                CursorCodec.Fingerprint(string.Empty))
+                fingerprint,
+                items[^1].Cursor)
             : null;
-        return new VaultTrashPage(items, nextCursor);
+        return new VaultTrashPage(
+            items.Select(item => item.Item).ToArray(),
+            nextCursor);
     }
 
     public static async Task<VaultRevisionPage> ListRevisionsAsync(
@@ -202,34 +287,49 @@ internal static partial class DocumentStore
 
         var effectiveLimit = Math.Clamp(limit, 1, 100);
         var fingerprint = CursorCodec.Fingerprint(documentIdValue);
-        var offset = CursorCodec.Decode(cursor, sessionId, "revisions", fingerprint);
-        using var command = connection.CreateCommand();
-        command.CommandText =
+        var hasCursor = CursorCodec.TryDecode(
+            cursor,
+            sessionId,
+            "revisions",
+            fingerprint,
+            out RevisionCursor position);
+        var sql = new StringBuilder(
             """
             SELECT revision_id, document_id, revision, title, source_path,
                    created_at_ms, retain_until_ms
             FROM document_revisions
             WHERE document_id = $id
-            ORDER BY revision DESC
-            LIMIT $limit OFFSET $offset;
-            """;
+            """);
+        if (hasCursor)
+        {
+            sql.Append(" AND revision < $afterRevision");
+        }
+        sql.Append(" ORDER BY revision DESC LIMIT $limit;");
+
+        using var command = connection.CreateCommand();
+        command.CommandText = sql.ToString();
         command.Parameters.AddWithValue("$id", documentIdValue);
         command.Parameters.AddWithValue("$limit", effectiveLimit + 1);
-        command.Parameters.AddWithValue("$offset", offset);
+        if (hasCursor)
+        {
+            command.Parameters.AddWithValue("$afterRevision", position.Revision);
+        }
 
-        var items = new List<VaultRevisionItem>();
+        var items = new List<(VaultRevisionItem Item, RevisionCursor Cursor)>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken)
             .ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            items.Add(new VaultRevisionItem(
-                Guid.Parse(reader.GetString(0)),
-                Guid.Parse(reader.GetString(1)),
-                reader.GetInt32(2),
-                reader.GetString(3),
-                reader.GetString(4),
-                DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(5)),
-                DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(6))));
+            items.Add((
+                new VaultRevisionItem(
+                    Guid.Parse(reader.GetString(0)),
+                    Guid.Parse(reader.GetString(1)),
+                    reader.GetInt32(2),
+                    reader.GetString(3),
+                    reader.GetString(4),
+                    DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(5)),
+                    DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(6))),
+                new RevisionCursor(reader.GetInt32(2))));
         }
 
         var hasMore = items.Count > effectiveLimit;
@@ -241,10 +341,12 @@ internal static partial class DocumentStore
             ? CursorCodec.Encode(
                 sessionId,
                 "revisions",
-                offset + items.Count,
-                fingerprint)
+                fingerprint,
+                items[^1].Cursor)
             : null;
-        return new VaultRevisionPage(items, nextCursor);
+        return new VaultRevisionPage(
+            items.Select(item => item.Item).ToArray(),
+            nextCursor);
     }
 
     public static async Task<VaultAuditPage> ListAuditAsync(
@@ -255,37 +357,56 @@ internal static partial class DocumentStore
         CancellationToken cancellationToken)
     {
         var effectiveLimit = Math.Clamp(limit, 1, 200);
-        var offset = CursorCodec.Decode(
+        var fingerprint = CursorCodec.Fingerprint(string.Empty);
+        var hasCursor = CursorCodec.TryDecode(
             cursor,
             sessionId,
             "audit",
-            CursorCodec.Fingerprint(string.Empty));
-        using var command = connection.CreateCommand();
-        command.CommandText =
+            fingerprint,
+            out AuditCursor position);
+        var sql = new StringBuilder(
             """
             SELECT event_id, occurred_at_ms, actor_kind, client_name, action,
                    document_id, result, bytes_returned, details_json
             FROM audit_events
-            ORDER BY occurred_at_ms DESC, event_id
-            LIMIT $limit OFFSET $offset;
-            """;
+            """);
+        if (hasCursor)
+        {
+            sql.Append(
+                """
+                 WHERE (
+                    occurred_at_ms < $afterOccurredAt
+                    OR (occurred_at_ms = $afterOccurredAt AND event_id > $afterEventId)
+                 )
+                """);
+        }
+        sql.Append(" ORDER BY occurred_at_ms DESC, event_id LIMIT $limit;");
+
+        using var command = connection.CreateCommand();
+        command.CommandText = sql.ToString();
         command.Parameters.AddWithValue("$limit", effectiveLimit + 1);
-        command.Parameters.AddWithValue("$offset", offset);
-        var items = new List<VaultAuditItem>();
+        if (hasCursor)
+        {
+            command.Parameters.AddWithValue("$afterOccurredAt", position.OccurredAtMs);
+            command.Parameters.AddWithValue("$afterEventId", position.EventId);
+        }
+        var items = new List<(VaultAuditItem Item, AuditCursor Cursor)>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken)
             .ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            items.Add(new VaultAuditItem(
-                Guid.Parse(reader.GetString(0)),
-                DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(1)),
-                reader.GetString(2),
-                reader.IsDBNull(3) ? null : reader.GetString(3),
-                reader.GetString(4),
-                reader.IsDBNull(5) ? null : Guid.Parse(reader.GetString(5)),
-                reader.GetString(6),
-                reader.IsDBNull(7) ? null : reader.GetInt32(7),
-                reader.GetString(8)));
+            items.Add((
+                new VaultAuditItem(
+                    Guid.Parse(reader.GetString(0)),
+                    DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(1)),
+                    reader.GetString(2),
+                    reader.IsDBNull(3) ? null : reader.GetString(3),
+                    reader.GetString(4),
+                    reader.IsDBNull(5) ? null : Guid.Parse(reader.GetString(5)),
+                    reader.GetString(6),
+                    reader.IsDBNull(7) ? null : reader.GetInt32(7),
+                    reader.GetString(8)),
+                new AuditCursor(reader.GetInt64(1), reader.GetString(0))));
         }
         var hasMore = items.Count > effectiveLimit;
         if (hasMore)
@@ -296,10 +417,12 @@ internal static partial class DocumentStore
             ? CursorCodec.Encode(
                 sessionId,
                 "audit",
-                offset + items.Count,
-                CursorCodec.Fingerprint(string.Empty))
+                fingerprint,
+                items[^1].Cursor)
             : null;
-        return new VaultAuditPage(items, nextCursor);
+        return new VaultAuditPage(
+            items.Select(item => item.Item).ToArray(),
+            nextCursor);
     }
 
     public static async Task<VaultIntegrityReport> VerifyAsync(
@@ -628,7 +751,6 @@ internal static partial class DocumentStore
         var normalizedFolder = NormalizeFolder(folder);
         var fingerprint = CursorCodec.Fingerprint(
             $"{normalizedQuery}\u001F{normalizedFolder}");
-        var offset = CursorCodec.Decode(cursor, sessionId, "search", fingerprint);
         var totalActive = await CountActiveDocumentsAsync(
             connection,
             normalizedFolder,
@@ -642,7 +764,7 @@ internal static partial class DocumentStore
                 normalizedFolder,
                 fingerprint,
                 effectiveLimit,
-                offset,
+                cursor,
                 totalActive,
                 cancellationToken).ConfigureAwait(false)
             : await SearchShortAsync(
@@ -652,7 +774,7 @@ internal static partial class DocumentStore
                 normalizedFolder,
                 fingerprint,
                 effectiveLimit,
-                offset,
+                cursor,
                 totalActive,
                 cancellationToken).ConfigureAwait(false);
     }
@@ -664,44 +786,74 @@ internal static partial class DocumentStore
         string folder,
         string fingerprint,
         int limit,
-        int offset,
+        string? cursor,
         int totalActive,
         CancellationToken cancellationToken)
     {
+        var hasCursor = CursorCodec.TryDecode(
+            cursor,
+            sessionId,
+            "search",
+            fingerprint,
+            out FtsSearchCursor position);
         var folderClause = folder.Length == 0
             ? string.Empty
             : " AND d.source_path_norm LIKE $folderPrefix ESCAPE '\\'";
         var match = $"\"{query.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
+        var cursorClause = hasCursor
+            ? """
+               WHERE (
+                  ranked.updated_at_ms < $afterUpdatedAt
+                  OR (
+                     ranked.updated_at_ms = $afterUpdatedAt
+                     AND ranked.document_id > $afterDocumentId
+                  )
+               )
+              """
+            : string.Empty;
 
         using var command = connection.CreateCommand();
         command.CommandText =
             $"""
-            SELECT d.document_id, d.title, d.source_path, d.revision,
-                   snippet(documents_fts, -1, '[', ']', '...', 32) AS snippet,
-                   bm25(documents_fts) AS rank
-            FROM documents_fts
-            JOIN documents d ON d.document_id = documents_fts.document_id
-            WHERE documents_fts MATCH $match
-              AND d.deleted_at_ms IS NULL
-              {folderClause}
-            ORDER BY rank, d.updated_at_ms DESC, d.document_id
-            LIMIT $limit OFFSET $offset;
+            SELECT document_id, title, source_path, revision, snippet, score, updated_at_ms
+            FROM (
+                SELECT d.document_id, d.title, d.source_path, d.revision,
+                       snippet(documents_fts, -1, '[', ']', '...', 32) AS snippet,
+                       bm25(documents_fts) AS score,
+                       d.updated_at_ms AS updated_at_ms
+                FROM documents_fts
+                JOIN documents d ON d.document_id = documents_fts.document_id
+                WHERE documents_fts MATCH $match
+                  AND d.deleted_at_ms IS NULL
+                  {folderClause}
+            ) ranked
+            {cursorClause}
+            ORDER BY updated_at_ms DESC, document_id
+            LIMIT $limit;
             """;
         command.Parameters.AddWithValue("$match", match);
         command.Parameters.AddWithValue("$limit", limit + 1);
-        command.Parameters.AddWithValue("$offset", offset);
         if (folder.Length > 0)
         {
             command.Parameters.AddWithValue("$folderPrefix", EscapeLike(folder) + "/%");
         }
+        if (hasCursor)
+        {
+            command.Parameters.AddWithValue("$afterUpdatedAt", position.UpdatedAtMs);
+            command.Parameters.AddWithValue("$afterDocumentId", position.DocumentId);
+        }
 
         var hits = new List<VaultSearchHit>();
+        var cursors = new List<FtsSearchCursor>();
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken)
             .ConfigureAwait(false))
         {
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
                 hits.Add(ReadSearchHit(reader));
+                cursors.Add(new FtsSearchCursor(
+                    reader.GetInt64(6),
+                    reader.GetString(0)));
             }
         }
 
@@ -712,10 +864,10 @@ internal static partial class DocumentStore
             cancellationToken).ConfigureAwait(false);
         return BuildSearchPage(
             hits,
+            cursors,
             sessionId,
             fingerprint,
             limit,
-            offset,
             totalActive,
             matched);
     }
@@ -727,67 +879,107 @@ internal static partial class DocumentStore
         string folder,
         string fingerprint,
         int limit,
-        int offset,
+        string? cursor,
         int totalActive,
         CancellationToken cancellationToken)
     {
+        var hasCursor = CursorCodec.TryDecode(
+            cursor,
+            sessionId,
+            "search",
+            fingerprint,
+            out ShortSearchCursor position);
         var like = "%" + EscapeLike(query) + "%";
         var folderClause = folder.Length == 0
             ? string.Empty
             : " AND source_path_norm LIKE $folderPrefix ESCAPE '\\'";
+        var scanWindowSql =
+            $"""
+             SELECT document_id, title, source_path, revision, content,
+                    headings_json, tags_json, updated_at_ms
+             FROM documents
+             WHERE deleted_at_ms IS NULL
+               {folderClause}
+             ORDER BY updated_at_ms DESC, document_id
+             LIMIT $scanLimit
+             """;
+        var cursorClause = hasCursor
+            ? """
+               AND (
+                  updated_at_ms < $afterUpdatedAt
+                  OR (updated_at_ms = $afterUpdatedAt AND document_id > $afterDocumentId)
+               )
+              """
+            : string.Empty;
         using var command = connection.CreateCommand();
         command.CommandText =
             $"""
-            SELECT document_id, title, source_path, revision, content
-            FROM documents
-            WHERE deleted_at_ms IS NULL
-              AND (
+            WITH scan_window AS (
+                {scanWindowSql}
+            )
+            SELECT document_id, title, source_path, revision, content, updated_at_ms
+            FROM scan_window
+            WHERE (
                 title LIKE $like ESCAPE '\'
                 OR source_path LIKE $like ESCAPE '\'
                 OR headings_json LIKE $like ESCAPE '\'
                 OR tags_json LIKE $like ESCAPE '\'
                 OR content LIKE $like ESCAPE '\'
               )
-              {folderClause}
+              {cursorClause}
             ORDER BY updated_at_ms DESC, document_id
-            LIMIT $limit OFFSET $offset;
+            LIMIT $limit;
             """;
         command.Parameters.AddWithValue("$like", like);
         command.Parameters.AddWithValue("$limit", limit + 1);
-        command.Parameters.AddWithValue("$offset", offset);
+        command.Parameters.AddWithValue("$scanLimit", MaxScanDocuments);
         if (folder.Length > 0)
         {
             command.Parameters.AddWithValue("$folderPrefix", EscapeLike(folder) + "/%");
         }
+        if (hasCursor)
+        {
+            command.Parameters.AddWithValue("$afterUpdatedAt", position.UpdatedAtMs);
+            command.Parameters.AddWithValue("$afterDocumentId", position.DocumentId);
+        }
 
         var hits = new List<VaultSearchHit>();
+        var cursors = new List<ShortSearchCursor>();
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken)
             .ConfigureAwait(false))
         {
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
                 hits.Add(ReadShortSearchHit(reader, query));
+                cursors.Add(new ShortSearchCursor(
+                    reader.GetInt64(5),
+                    reader.GetString(0)));
             }
         }
 
         var scanned = Math.Min(totalActive, MaxScanDocuments);
-        var matched = Math.Min(scanned, offset + hits.Count);
+        var matched = await CountShortMatchesAsync(
+            connection,
+            scanWindowSql,
+            like,
+            folder,
+            cancellationToken).ConfigureAwait(false);
         return BuildSearchPage(
             hits,
+            cursors,
             sessionId,
             fingerprint,
             limit,
-            offset,
             scanned,
             matched);
     }
 
-    private static VaultSearchPage BuildSearchPage(
+    private static VaultSearchPage BuildSearchPage<TCursor>(
         List<VaultSearchHit> hits,
+        List<TCursor> cursors,
         Guid sessionId,
         string fingerprint,
         int limit,
-        int offset,
         int scanned,
         int matched)
     {
@@ -795,13 +987,14 @@ internal static partial class DocumentStore
         if (hasMore)
         {
             hits.RemoveAt(hits.Count - 1);
+            cursors.RemoveAt(cursors.Count - 1);
         }
         var nextCursor = hasMore
             ? CursorCodec.Encode(
                 sessionId,
                 "search",
-                offset + hits.Count,
-                fingerprint)
+                fingerprint,
+                cursors[^1])
             : null;
         return new VaultSearchPage(
             hits,
@@ -868,6 +1061,27 @@ internal static partial class DocumentStore
         }
         var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         return Convert.ToInt32(value);
+    }
+
+    private static async Task<long> GetMaxUpdatedAtAsync(
+        SqliteConnection connection,
+        string folder,
+        CancellationToken cancellationToken)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT COALESCE(MAX(updated_at_ms), 0) " +
+            "FROM documents WHERE deleted_at_ms IS NULL";
+        if (folder.Length > 0)
+        {
+            command.CommandText +=
+                " AND source_path_norm LIKE $folderPrefix ESCAPE '\\'";
+            command.Parameters.AddWithValue(
+                "$folderPrefix",
+                EscapeLike(folder) + "/%");
+        }
+        var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        return Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private static async Task<int> CountAsync(
@@ -1002,6 +1216,41 @@ internal static partial class DocumentStore
         return Convert.ToInt32(value);
     }
 
+    private static async Task<int> CountShortMatchesAsync(
+        SqliteConnection connection,
+        string scanWindowSql,
+        string like,
+        string folder,
+        CancellationToken cancellationToken)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            $"""
+            WITH scan_window AS (
+                {scanWindowSql}
+            )
+            SELECT count(*)
+            FROM scan_window
+            WHERE (
+                title LIKE $like ESCAPE '\'
+                OR source_path LIKE $like ESCAPE '\'
+                OR headings_json LIKE $like ESCAPE '\'
+                OR tags_json LIKE $like ESCAPE '\'
+                OR content LIKE $like ESCAPE '\'
+            );
+            """;
+        command.Parameters.AddWithValue("$like", like);
+        command.Parameters.AddWithValue("$scanLimit", MaxScanDocuments);
+        if (folder.Length > 0)
+        {
+            command.Parameters.AddWithValue(
+                "$folderPrefix",
+                EscapeLike(folder) + "/%");
+        }
+        var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        return Convert.ToInt32(value);
+    }
+
     private static IReadOnlyList<string> ParseStringArray(string json)
     {
         try
@@ -1084,4 +1333,28 @@ internal static partial class DocumentStore
     private static partial Regex WhitespaceRegex();
 
     private sealed record HeadingItem(int Level, string Text);
+
+    private readonly record struct CatalogCursor(
+        string SourcePathNorm,
+        string DocumentId,
+        long SnapshotAtMs);
+
+    private readonly record struct TrashCursor(
+        long DeletedAtMs,
+        string DocumentId);
+
+    private readonly record struct RevisionCursor(
+        int Revision);
+
+    private readonly record struct AuditCursor(
+        long OccurredAtMs,
+        string EventId);
+
+    private readonly record struct FtsSearchCursor(
+        long UpdatedAtMs,
+        string DocumentId);
+
+    private readonly record struct ShortSearchCursor(
+        long UpdatedAtMs,
+        string DocumentId);
 }

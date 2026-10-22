@@ -433,7 +433,7 @@ internal static class ImportExportService
                 exported.Select(item => $"{item.Sha256}  {item.RelativePath}"),
                 cancellationToken).ConfigureAwait(false);
             Directory.Move(temporaryDirectory, fullDestination);
-            await AuditWriter.AppendAsync(
+            var auditRecorded = await AuditWriter.TryAppendAsync(
                 connection,
                 actor,
                 sessionId,
@@ -450,7 +450,8 @@ internal static class ImportExportService
             return new VaultExportResult(
                 fullDestination,
                 exported.Count,
-                Path.Combine(fullDestination, "vault-export-manifest.json"));
+                Path.Combine(fullDestination, "vault-export-manifest.json"),
+                auditRecorded);
         }
         catch
         {

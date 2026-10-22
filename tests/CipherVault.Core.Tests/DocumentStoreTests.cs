@@ -79,6 +79,28 @@ public sealed class DocumentStoreTests
     }
 
     [Fact]
+    public async Task ShortQueryDoesNotScanBeyondOneThousandDocuments()
+    {
+        await using var fixture = await DocumentFixture.CreateAsync();
+        await DocumentFixture.SeedShortQueryWindowAsync(fixture.VaultPath, 1_000);
+        await fixture.Service.UnlockAsync(
+            fixture.VaultPath,
+            Password,
+            VaultCredentialType.Password);
+
+        var page = await fixture.Service.SearchNotesAsync(
+            "针",
+            folder: null,
+            cursor: null,
+            limit: 10);
+
+        Assert.Empty(page.Hits);
+        Assert.Equal(1_000, page.Coverage.ScannedDocuments);
+        Assert.Equal(0, page.Coverage.MatchedDocuments);
+        Assert.Null(page.NextCursor);
+    }
+
+    [Fact]
     public async Task CursorCannotBeReusedAfterSessionChange()
     {
         await using var fixture = await DocumentFixture.CreateAsync();
@@ -168,6 +190,268 @@ public sealed class DocumentStoreTests
         Assert.False(first.Done);
         Assert.Equal(2, second.Items.Count);
         Assert.True(second.Done);
+    }
+
+    [Fact]
+    public async Task CatalogCursorDoesNotDuplicateAfterInsertionBeforeCursor()
+    {
+        await using var fixture = await DocumentFixture.CreateAsync();
+        await fixture.Service.UnlockAsync(
+            fixture.VaultPath,
+            Password,
+            VaultCredentialType.Password);
+        var first = await fixture.Service.ListCatalogAsync(null, null, 2);
+        Assert.NotNull(first.NextCursor);
+
+        await fixture.Service.CreateNoteAsync(
+            "000-new",
+            null,
+            "md",
+            "inserted before the cursor",
+            [],
+            VaultActorKind.Mcp);
+        var second = await fixture.Service.ListCatalogAsync(
+            null,
+            first.NextCursor,
+            2);
+
+        var firstIds = first.Items.Select(item => item.DocumentId).ToHashSet();
+        Assert.DoesNotContain(second.Items, item => firstIds.Contains(item.DocumentId));
+        Assert.Equal(
+            4,
+            first.Items.Concat(second.Items)
+                .Select(item => item.DocumentId)
+                .Distinct()
+                .Count());
+    }
+
+    [Fact]
+    public async Task CatalogCursorDoesNotDuplicateAfterRenamePastCursor()
+    {
+        await using var fixture = await DocumentFixture.CreateAsync();
+        await fixture.Service.UnlockAsync(
+            fixture.VaultPath,
+            Password,
+            VaultCredentialType.Password);
+        var first = await fixture.Service.ListCatalogAsync(null, null, 2);
+        Assert.NotNull(first.NextCursor);
+        var moved = first.Items[1];
+
+        await fixture.Service.UpdateNoteAsync(
+            moved.DocumentId,
+            moved.Revision,
+            new VaultNotePatch(
+                "zzzz-renamed",
+                string.Empty,
+                null,
+                null),
+            VaultActorKind.Mcp);
+        var second = await fixture.Service.ListCatalogAsync(
+            null,
+            first.NextCursor,
+            2);
+
+        Assert.DoesNotContain(
+            second.Items,
+            item => item.DocumentId == moved.DocumentId);
+    }
+
+    [Fact]
+    public async Task ScanCursorDoesNotDuplicateAfterInsertionBeforeCursor()
+    {
+        await using var fixture = await DocumentFixture.CreateAsync();
+        await fixture.Service.UnlockAsync(
+            fixture.VaultPath,
+            Password,
+            VaultCredentialType.Password);
+        var first = await fixture.Service.ScanNotesAsync(cursor: null, limit: 2);
+        Assert.NotNull(first.NextCursor);
+
+        await fixture.Service.CreateNoteAsync(
+            "000-new",
+            null,
+            "md",
+            "inserted before the cursor",
+            [],
+            VaultActorKind.Mcp);
+        var second = await fixture.Service.ScanNotesAsync(first.NextCursor, limit: 2);
+
+        var firstIds = first.Items.Select(item => item.DocumentId).ToHashSet();
+        Assert.DoesNotContain(second.Items, item => firstIds.Contains(item.DocumentId));
+    }
+
+    [Fact]
+    public async Task FtsSearchCursorDoesNotDuplicateAfterInsertion()
+    {
+        await using var fixture = await DocumentFixture.CreateAsync();
+        await fixture.Service.UnlockAsync(
+            fixture.VaultPath,
+            Password,
+            VaultCredentialType.Password);
+        var first = await fixture.Service.SearchNotesAsync(
+            "sleep",
+            folder: null,
+            cursor: null,
+            limit: 1);
+        Assert.Single(first.Hits);
+        Assert.NotNull(first.NextCursor);
+
+        await fixture.Service.CreateNoteAsync(
+            "New sleep",
+            null,
+            "md",
+            "new sleep result",
+            [],
+            VaultActorKind.Mcp);
+        var second = await fixture.Service.SearchNotesAsync(
+            "sleep",
+            folder: null,
+            cursor: first.NextCursor,
+            limit: 1);
+
+        Assert.DoesNotContain(
+            second.Hits,
+            hit => hit.DocumentId == first.Hits[0].DocumentId);
+    }
+
+    [Fact]
+    public async Task ShortSearchCursorDoesNotDuplicateAfterInsertion()
+    {
+        await using var fixture = await DocumentFixture.CreateAsync();
+        await fixture.Service.UnlockAsync(
+            fixture.VaultPath,
+            Password,
+            VaultCredentialType.Password);
+        await fixture.Service.CreateNoteAsync(
+            "第二个睡眠记录",
+            "健康",
+            "md",
+            "第二次睡眠记录",
+            [],
+            VaultActorKind.Mcp);
+        var first = await fixture.Service.SearchNotesAsync(
+            "睡眠",
+            folder: null,
+            cursor: null,
+            limit: 1);
+        Assert.Single(first.Hits);
+        Assert.NotNull(first.NextCursor);
+
+        await fixture.Service.CreateNoteAsync(
+            "第三个睡眠记录",
+            "健康",
+            "md",
+            "第三次睡眠记录",
+            [],
+            VaultActorKind.Mcp);
+        var second = await fixture.Service.SearchNotesAsync(
+            "睡眠",
+            folder: null,
+            cursor: first.NextCursor,
+            limit: 1);
+
+        Assert.DoesNotContain(
+            second.Hits,
+            hit => hit.DocumentId == first.Hits[0].DocumentId);
+    }
+
+    [Fact]
+    public async Task TrashCursorDoesNotDuplicateAfterNewDeletion()
+    {
+        await using var fixture = await DocumentFixture.CreateAsync();
+        await fixture.Service.UnlockAsync(
+            fixture.VaultPath,
+            Password,
+            VaultCredentialType.Password);
+        var catalog = await fixture.Service.ListCatalogAsync(null, null, 10);
+        await fixture.Service.DeleteNoteAsync(
+            catalog.Items[0].DocumentId,
+            catalog.Items[0].Revision);
+        await fixture.Service.DeleteNoteAsync(
+            catalog.Items[1].DocumentId,
+            catalog.Items[1].Revision);
+        var first = await fixture.Service.ListTrashAsync(null, 1);
+        Assert.Single(first.Items);
+        Assert.NotNull(first.NextCursor);
+
+        await fixture.Service.DeleteNoteAsync(
+            catalog.Items[2].DocumentId,
+            catalog.Items[2].Revision);
+        var second = await fixture.Service.ListTrashAsync(first.NextCursor, 1);
+
+        Assert.DoesNotContain(
+            second.Items,
+            item => item.DocumentId == first.Items[0].DocumentId);
+    }
+
+    [Fact]
+    public async Task RevisionCursorDoesNotDuplicateAfterNewRevision()
+    {
+        await using var fixture = await DocumentFixture.CreateAsync();
+        await fixture.Service.UnlockAsync(
+            fixture.VaultPath,
+            Password,
+            VaultCredentialType.Password);
+        var documentId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        await fixture.Service.AppendNoteAsync(documentId, 1, " revision 2");
+        await fixture.Service.AppendNoteAsync(documentId, 2, " revision 3");
+        var first = await fixture.Service.ListRevisionsAsync(
+            documentId,
+            cursor: null,
+            limit: 1);
+        Assert.Single(first.Items);
+        Assert.NotNull(first.NextCursor);
+
+        await fixture.Service.AppendNoteAsync(documentId, 3, " revision 4");
+        var second = await fixture.Service.ListRevisionsAsync(
+            documentId,
+            first.NextCursor,
+            1);
+
+        Assert.DoesNotContain(
+            second.Items,
+            item => item.RevisionId == first.Items[0].RevisionId);
+        Assert.Equal(2, second.Items[0].Revision);
+    }
+
+    [Fact]
+    public async Task AuditCursorDoesNotDuplicateAfterNewEvent()
+    {
+        await using var fixture = await DocumentFixture.CreateAsync();
+        await fixture.Service.UnlockAsync(
+            fixture.VaultPath,
+            Password,
+            VaultCredentialType.Password);
+        await fixture.Service.CreateNoteAsync(
+            "audit-one",
+            null,
+            "md",
+            "one",
+            [],
+            VaultActorKind.Mcp);
+        await fixture.Service.CreateNoteAsync(
+            "audit-two",
+            null,
+            "md",
+            "two",
+            [],
+            VaultActorKind.Mcp);
+        var first = await fixture.Service.GetAuditPageAsync(null, 1);
+        Assert.Single(first.Items);
+        Assert.NotNull(first.NextCursor);
+
+        await fixture.Service.CreateNoteAsync(
+            "audit-three",
+            null,
+            "md",
+            "three",
+            [],
+            VaultActorKind.Mcp);
+        var second = await fixture.Service.GetAuditPageAsync(first.NextCursor, 1);
+
+        Assert.DoesNotContain(
+            second.Items,
+            item => item.EventId == first.Items[0].EventId);
     }
 
     [Fact]
@@ -987,6 +1271,113 @@ public sealed class DocumentStoreTests
                 CryptographicOperations.ZeroMemory(material.MasterKey);
                 CryptographicOperations.ZeroMemory(material.DbKey);
             }
+        }
+
+        public static async Task SeedShortQueryWindowAsync(
+            string vaultPath,
+            int decoyCount)
+        {
+            var envelope = await VaultKeyring.LoadEnvelopeAsync(
+                Path.Combine(vaultPath, "vault.keys"));
+            var material = await VaultKeyring.UnwrapAsync(
+                envelope,
+                Password,
+                VaultCredentialType.Password);
+            try
+            {
+                var integrityKey = VaultKeyring.DeriveIntegrityKey(material.MasterKey);
+                await using var connection = await SqlCipherVaultStore.OpenAsync(
+                    vaultPath,
+                    material);
+                using var transaction = connection.BeginTransaction();
+                var baseTime = DateTimeOffset.UtcNow;
+                for (var index = 0; index < decoyCount; index++)
+                {
+                    var documentId =
+                        $"90000000-0000-0000-0000-{index + 1:D12}";
+                    await InsertSearchWindowDocumentAsync(
+                        connection,
+                        transaction,
+                        integrityKey,
+                        documentId,
+                        $"decoy-{index:D4}",
+                        $"decoy/{index:D4}.md",
+                        "decoy content",
+                        baseTime.AddDays(1).AddMilliseconds(index));
+                }
+
+                await InsertSearchWindowDocumentAsync(
+                    connection,
+                    transaction,
+                    integrityKey,
+                    "99999999-9999-9999-9999-999999999999",
+                    "outside-window",
+                    "zzzz-outside-window.md",
+                    "针",
+                    baseTime.AddDays(-1));
+                transaction.Commit();
+                CryptographicOperations.ZeroMemory(integrityKey);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(material.MasterKey);
+                CryptographicOperations.ZeroMemory(material.DbKey);
+            }
+        }
+
+        private static async Task InsertSearchWindowDocumentAsync(
+            SqliteConnection connection,
+            SqliteTransaction transaction,
+            byte[] integrityKey,
+            string documentId,
+            string title,
+            string sourcePath,
+            string content,
+            DateTimeOffset updatedAt)
+        {
+            const string headingsJson = "[]";
+            const string tagsJson = "[]";
+            var hmac = DocumentHmac.Compute(
+                integrityKey,
+                documentId,
+                1,
+                title,
+                sourcePath,
+                "md",
+                headingsJson,
+                tagsJson,
+                content);
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText =
+                """
+                INSERT INTO documents(
+                    document_id, title, source_path, source_path_norm, format,
+                    content, headings_json, tags_json, payload_hmac, revision,
+                    created_at_ms, updated_at_ms, deleted_at_ms, purge_after_ms)
+                VALUES(
+                    $id, $title, $path, $pathNorm, 'md',
+                    $content, $headings, $tags, $hmac, 1,
+                    $created, $updated, NULL, NULL);
+                INSERT INTO documents_fts(
+                    document_id, title, source_path, headings, tags, content)
+                VALUES($id, $title, $path, $headings, $tags, $content);
+                """;
+            command.Parameters.AddWithValue("$id", documentId);
+            command.Parameters.AddWithValue("$title", title);
+            command.Parameters.AddWithValue("$path", sourcePath);
+            command.Parameters.AddWithValue("$pathNorm", sourcePath.ToLowerInvariant());
+            command.Parameters.AddWithValue("$content", content);
+            command.Parameters.AddWithValue("$headings", headingsJson);
+            command.Parameters.AddWithValue("$tags", tagsJson);
+            command.Parameters.AddWithValue("$hmac", hmac);
+            command.Parameters.AddWithValue(
+                "$created",
+                updatedAt.ToUnixTimeMilliseconds());
+            command.Parameters.AddWithValue(
+                "$updated",
+                updatedAt.ToUnixTimeMilliseconds());
+            await command.ExecuteNonQueryAsync();
         }
 
         private static async Task SeedAsync(string vaultPath, DateTimeOffset now)

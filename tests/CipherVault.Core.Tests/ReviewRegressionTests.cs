@@ -319,6 +319,81 @@ public sealed class ReviewRegressionTests
     }
 
     [Fact]
+    public async Task PostCommitAuditFailureReturnsFalseWithoutThrowing()
+    {
+        using var connection = new Microsoft.Data.Sqlite.SqliteConnection(
+            "Data Source=:memory:");
+
+        var recorded = await AuditWriter.TryAppendAsync(
+            connection,
+            VaultActorKind.UserUi,
+            sessionId: null,
+            action: "backup_create",
+            documentId: null,
+            result: "success",
+            bytesReturned: null,
+            detailsJson: "{}",
+            CancellationToken.None);
+
+        Assert.False(recorded);
+    }
+
+    [Fact]
+    public async Task BackupSucceedsWhenPostCommitAuditFails()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Service.InitializeAsync(fixture.VaultPath, Password);
+        var envelope = await VaultKeyring.LoadEnvelopeAsync(
+            Path.Combine(fixture.VaultPath, "vault.keys"));
+        var material = await VaultKeyring.UnwrapAsync(
+            envelope,
+            Password,
+            VaultCredentialType.Password);
+        var connection = await SqlCipherVaultStore.OpenAsync(
+            fixture.VaultPath,
+            material);
+        var integrityKey = VaultKeyring.DeriveIntegrityKey(material.MasterKey);
+        using (var dropAudit = connection.CreateCommand())
+        {
+            dropAudit.CommandText = "DROP TABLE audit_events;";
+            await dropAudit.ExecuteNonQueryAsync();
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var session = new VaultSession
+        {
+            VaultPath = fixture.VaultPath,
+            VaultId = material.VaultId,
+            Connection = connection,
+            MasterKey = material.MasterKey,
+            DbKey = material.DbKey,
+            IntegrityKey = integrityKey,
+            StartedAt = now,
+            LastUserActivityAt = now,
+            HardExpiresAt = now.AddHours(4),
+            IdleTimeout = TimeSpan.FromMinutes(15),
+            ExpiringWindow = TimeSpan.FromMinutes(2),
+            RecoveryVerified = true
+        };
+        var backupPath = Path.Combine(fixture.RootPath, "audit-failure.cvbackup");
+        try
+        {
+            var result = await BackupService.CreateAsync(
+                session,
+                backupPath,
+                VaultActorKind.UserUi,
+                CancellationToken.None);
+
+            Assert.False(result.AuditRecorded);
+            Assert.True(File.Exists(backupPath));
+        }
+        finally
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task ImportPreviewMarksOversizedDocumentUnsupported()
     {
         await using var fixture = await Fixture.CreateAsync();

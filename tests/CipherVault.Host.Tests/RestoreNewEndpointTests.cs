@@ -37,6 +37,7 @@ public sealed class RestoreNewEndpointTests
             HostApiResponse<VaultRestoreBackupResult>>(JsonOptions);
         Assert.NotNull(payload);
         Assert.Equal(Path.GetFullPath(targetPath), payload.Data.VaultPath);
+        Assert.True(payload.Data.AuditRecorded);
         await using var restored = new VaultService(
             new AlwaysActiveActivityProvider());
         await restored.UnlockAsync(

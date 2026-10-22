@@ -35,6 +35,7 @@ public sealed class BackupEndpointTests
         Assert.Equal(Path.GetFullPath(backupPath), payload.Data.BackupPath);
         Assert.True(File.Exists(backupPath));
         Assert.True(new FileInfo(backupPath).Length > 0);
+        Assert.True(payload.Data.AuditRecorded);
     }
 
     [Fact]

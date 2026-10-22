@@ -26,4 +26,5 @@ public sealed record VaultImportResult(
 public sealed record VaultExportResult(
     string Destination,
     int ExportedDocuments,
-    string ManifestPath);
+    string ManifestPath,
+    bool AuditRecorded = true);

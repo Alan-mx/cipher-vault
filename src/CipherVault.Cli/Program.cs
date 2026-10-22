@@ -148,6 +148,7 @@ static async Task<int> BackupAsync(
     await EnsureUnlockedAsync(service, vaultPath);
     var result = await service.CreateBackupAsync(destination);
     Console.WriteLine(result.BackupPath);
+    WriteAuditWarning(result.AuditRecorded);
     return 0;
 }
 
@@ -167,6 +168,7 @@ static async Task<int> RestoreAsync(
         credential,
         credentialType);
     Console.WriteLine(result.VaultPath);
+    WriteAuditWarning(result.AuditRecorded);
     return 0;
 }
 
@@ -370,6 +372,7 @@ static async Task<int> ExportAsync(
     var result = await service.ExportSnapshotAsync(
         destination);
     PrintJson(result, options);
+    WriteAuditWarning(result.AuditRecorded);
     return 0;
 }
 
@@ -669,6 +672,15 @@ static int? ParseOptionalInteger(
 static void PrintJson<T>(T value, JsonSerializerOptions options)
 {
     Console.WriteLine(JsonSerializer.Serialize(value, options));
+}
+
+static void WriteAuditWarning(bool auditRecorded)
+{
+    if (!auditRecorded)
+    {
+        Console.Error.WriteLine(
+            "warning: operation completed, but its audit event was not recorded.");
+    }
 }
 
 static void PrintHelp()

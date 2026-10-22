@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using CipherVault.Core.Documents;
+using System.Diagnostics;
 using System.Text.Json.Nodes;
 
 namespace CipherVault.Core.Storage;
@@ -54,6 +55,44 @@ internal static class AuditWriter
             detailsJson,
             cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public static async Task<bool> TryAppendAsync(
+        SqliteConnection connection,
+        VaultActorKind actor,
+        Guid? sessionId,
+        string action,
+        Guid? documentId,
+        string result,
+        int? bytesReturned,
+        string detailsJson,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await AppendAsync(
+                connection,
+                actor,
+                sessionId,
+                action,
+                documentId,
+                result,
+                bytesReturned,
+                detailsJson,
+                cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            Trace.TraceError("CipherVault audit event write was cancelled after publication.");
+            return false;
+        }
+        catch (Exception exception) when (
+            exception is SqliteException or InvalidOperationException)
+        {
+            Trace.TraceError($"CipherVault audit event write failed: {exception.GetType().Name}");
+            return false;
+        }
     }
 
     public static Task AppendAsync(

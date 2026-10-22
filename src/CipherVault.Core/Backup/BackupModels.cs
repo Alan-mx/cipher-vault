@@ -4,11 +4,13 @@ public sealed record VaultBackupResult(
     string BackupPath,
     Guid VaultId,
     DateTimeOffset CreatedAt,
-    long BackupBytes);
+    long BackupBytes,
+    bool AuditRecorded = true);
 
 public sealed record VaultRestoreBackupResult(
     string VaultPath,
-    Guid VaultId);
+    Guid VaultId,
+    bool AuditRecorded = true);
 
 public sealed record VaultAuditItem(
     Guid EventId,
