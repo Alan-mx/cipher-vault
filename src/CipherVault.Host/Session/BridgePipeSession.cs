@@ -1,4 +1,5 @@
 using System.IO;
+using System.Threading.Channels;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Security;
 using CipherVault.Ipc;
@@ -10,6 +11,7 @@ internal sealed class BridgePipeSession : IAsyncDisposable
     private readonly BridgePipeServerOptions _options;
     private readonly BridgeProcessSession _session;
     private readonly PipeJsonConnection _connection;
+    private readonly ChannelReader<PipeRpcRequest> _requests;
     private AccessGrantContext? _grant;
     private bool _disposed;
 
@@ -17,62 +19,61 @@ internal sealed class BridgePipeSession : IAsyncDisposable
         BridgePipeServerOptions options,
         BridgeProcessSession session,
         PipeJsonConnection connection,
-        CancellationToken cancellationToken)
+        ChannelReader<PipeRpcRequest> requests,
+        CancellationToken sessionToken,
+        CancellationToken handlerToken)
     {
         _options = options;
         _session = session;
         _connection = connection;
-        CancellationToken = cancellationToken;
+        _requests = requests;
+        SessionToken = sessionToken;
+        HandlerToken = handlerToken;
     }
 
-    private CancellationToken CancellationToken { get; }
+    private CancellationToken SessionToken { get; }
+    private CancellationToken HandlerToken { get; }
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
-        while (true)
+        try
         {
-            PipeRpcRequest request;
-            try
+            await foreach (var request in _requests.ReadAllAsync(
+                               cancellationToken).ConfigureAwait(false))
             {
-                request = await _connection.ReadAsync<PipeRpcRequest>(
-                    cancellationToken).ConfigureAwait(false);
-            }
-            catch (EndOfStreamException)
-            {
-                return;
-            }
-            catch (IOException)
-            {
-                return;
-            }
+                PipeRpcResponse response;
+                if (string.Equals(
+                        request.Method,
+                        "bridge.grant.request",
+                        StringComparison.Ordinal))
+                {
+                    response = await HandleGrantAsync(request)
+                        .ConfigureAwait(false);
+                }
+                else if (string.Equals(
+                        request.Method,
+                        "bridge.tools.call",
+                        StringComparison.Ordinal))
+                {
+                    response = await HandleToolCallAsync(request)
+                        .ConfigureAwait(false);
+                }
+                else
+                {
+                    response = PipeRpcCodec.Failure(
+                        request.RequestId,
+                        "unsupported_method",
+                        $"Unsupported bridge method: {request.Method}");
+                }
 
-            PipeRpcResponse response;
-            if (string.Equals(
-                    request.Method,
-                    "bridge.grant.request",
-                    StringComparison.Ordinal))
-            {
-                response = await HandleGrantAsync(request)
+                await _connection.WriteAsync(response, cancellationToken)
                     .ConfigureAwait(false);
             }
-            else if (string.Equals(
-                    request.Method,
-                    "bridge.tools.call",
-                    StringComparison.Ordinal))
-            {
-                response = await HandleToolCallAsync(request)
-                    .ConfigureAwait(false);
-            }
-            else
-            {
-                response = PipeRpcCodec.Failure(
-                    request.RequestId,
-                    "unsupported_method",
-                    $"Unsupported bridge method: {request.Method}");
-            }
-
-            await _connection.WriteAsync(response, cancellationToken)
-                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (
+            cancellationToken.IsCancellationRequested &&
+            _requests.Completion.IsCompleted)
+        {
         }
     }
 
@@ -104,7 +105,7 @@ internal sealed class BridgePipeSession : IAsyncDisposable
             var issued = await _options.Handler.RequestGrantAsync(
                 _session,
                 grantRequest,
-                CancellationToken).ConfigureAwait(false);
+                HandlerToken).ConfigureAwait(false);
             _grant = issued.Context;
             return PipeRpcCodec.Success(request.RequestId, issued.Data);
         }
@@ -142,7 +143,7 @@ internal sealed class BridgePipeSession : IAsyncDisposable
                 _session,
                 _grant,
                 call,
-                CancellationToken).ConfigureAwait(false);
+                HandlerToken).ConfigureAwait(false);
             return PipeRpcCodec.Success(request.RequestId, result);
         }
         catch (OperationCanceledException)

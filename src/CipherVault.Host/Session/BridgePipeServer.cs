@@ -1,6 +1,7 @@
 using System.IO;
 using System.IO.Pipes;
 using System.Security.Principal;
+using System.Threading.Channels;
 using CipherVault.Core.Configuration;
 using CipherVault.Host.Contracts;
 using CipherVault.Ipc;
@@ -59,8 +60,13 @@ public sealed class BridgePipeServer : IAsyncDisposable
         await _server.WaitForConnectionAsync(cancellationToken)
             .ConfigureAwait(false);
         await using var connection = new PipeJsonConnection(_server);
-        await using var lifetime = new BridgeConnectionLifetime(_server);
-        lifetime.StartMonitoring(cancellationToken);
+        using var sessionCancellation =
+            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var disconnected = new CancellationTokenSource();
+        using var handlerCancellation =
+            CancellationTokenSource.CreateLinkedTokenSource(
+                sessionCancellation.Token,
+                disconnected.Token);
         using var clientEvidence = VerifyClientProcess();
         var clientIdentity = clientEvidence.Identity;
         if (clientIdentity.SessionId == 0 ||
@@ -74,7 +80,8 @@ public sealed class BridgePipeServer : IAsyncDisposable
                 "bridge_owner_mismatch");
         }
 
-        var hello = await connection.ReadAsync<PipeHelloRequest>(lifetime.Token)
+        var hello = await connection.ReadAsync<PipeHelloRequest>(
+                sessionCancellation.Token)
             .ConfigureAwait(false);
         if (!string.Equals(
                 hello.ProtocolVersion,
@@ -98,10 +105,10 @@ public sealed class BridgePipeServer : IAsyncDisposable
                 _options.ServiceIdentity.ProcessStartedAt,
                 _options.ServiceIdentity.ImageSha256,
                 _options.ServiceIdentity.SignerThumbprint ?? string.Empty),
-            lifetime.Token).ConfigureAwait(false);
+            sessionCancellation.Token).ConfigureAwait(false);
 
         var authenticate = await connection.ReadAsync<PipeAuthenticateRequest>(
-            lifetime.Token).ConfigureAwait(false);
+            sessionCancellation.Token).ConfigureAwait(false);
         var expectedTranscript = PipeHandshakeTranscript.Compute(
             NamedPipeServerFactory.NormalizePipeName(_options.PipeName),
             PipeProtocol.Version,
@@ -137,26 +144,91 @@ public sealed class BridgePipeServer : IAsyncDisposable
                 session.OwnerSid,
                 clientIdentity.SessionId,
                 session.ExpiresAt),
-            lifetime.Token).ConfigureAwait(false);
+            sessionCancellation.Token).ConfigureAwait(false);
 
+        var requests = Channel.CreateUnbounded<PipeRpcRequest>(
+            new UnboundedChannelOptions
+            {
+                SingleReader = true,
+                SingleWriter = true,
+                AllowSynchronousContinuations = false
+            });
+        var readTask = ReadRequestsAsync(
+            connection,
+            requests.Writer,
+            disconnected,
+            sessionCancellation);
         var bridgeSession = new BridgePipeSession(
             _options,
             session,
             connection,
-            lifetime.Token);
+            requests.Reader,
+            sessionCancellation.Token,
+            handlerCancellation.Token);
         try
         {
-            await bridgeSession.RunAsync(lifetime.Token).ConfigureAwait(false);
+            await bridgeSession.RunAsync(
+                sessionCancellation.Token).ConfigureAwait(false);
         }
         finally
         {
+            disconnected.Cancel();
+            handlerCancellation.Cancel();
+            sessionCancellation.Cancel();
             await bridgeSession.DisposeAsync().ConfigureAwait(false);
+            try
+            {
+                await readTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
             await _options.Handler.CloseSessionAsync(
                 session.ProcessSessionId,
                 "bridge-disconnected",
                 CancellationToken.None).ConfigureAwait(false);
         }
         return session;
+    }
+
+    private static async Task ReadRequestsAsync(
+        PipeJsonConnection connection,
+        ChannelWriter<PipeRpcRequest> writer,
+        CancellationTokenSource disconnected,
+        CancellationTokenSource sessionCancellation)
+    {
+        try
+        {
+            while (!sessionCancellation.IsCancellationRequested)
+            {
+                var request = await connection.ReadAsync<PipeRpcRequest>(
+                    sessionCancellation.Token).ConfigureAwait(false);
+                await writer.WriteAsync(
+                    request,
+                    sessionCancellation.Token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (
+            sessionCancellation.IsCancellationRequested)
+        {
+        }
+        catch (EndOfStreamException)
+        {
+            disconnected.Cancel();
+        }
+        catch (IOException)
+        {
+            disconnected.Cancel();
+        }
+        catch (Exception)
+        {
+            disconnected.Cancel();
+            throw;
+        }
+        finally
+        {
+            writer.TryComplete();
+        }
     }
 
     public async ValueTask DisposeAsync()

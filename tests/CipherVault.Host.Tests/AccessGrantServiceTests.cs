@@ -1,5 +1,6 @@
 using System.Text;
 using CipherVault.Core.Configuration;
+using CipherVault.Host.Contracts;
 using CipherVault.Host.Security;
 
 namespace CipherVault.Host.Tests;
