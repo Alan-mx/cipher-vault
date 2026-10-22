@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Security.Principal;
+using CipherVault.Core.Documents;
 using CipherVault.Core.Session;
 using CipherVault.Host.Client;
 using CipherVault.Host.Contracts;
@@ -79,7 +80,13 @@ public sealed class AdminPipeTests
                 (_, _, _) => Task.FromException<HostInitializeData>(
                     new AdminPipeRpcException(
                         "approval_broker_unavailable",
-                        "Broker unavailable."))));
+                        "Broker unavailable.")),
+                (_, method, _, _) => method == "admin.catalog.list"
+                    ? Task.FromResult<object>(
+                        new VaultCatalogPage([], "catalog-next"))
+                    : Task.FromException<object>(
+                        new InvalidOperationException(
+                            $"Unexpected method: {method}"))));
         var acceptTask = server.AcceptOnceAsync();
 
         await using var client = await NamedPipeHostVaultClient.CreateAsync(
@@ -104,6 +111,12 @@ public sealed class AdminPipeTests
         Assert.Equal(
             "approval_broker_unavailable",
             unlockException.Code);
+        var catalog = await client.ListCatalogAsync(
+            folder: null,
+            cursor: null,
+            limit: 100);
+        Assert.Empty(catalog.Items);
+        Assert.Equal("catalog-next", catalog.NextCursor);
 
         await client.DisposeAsync();
         var session = await acceptTask.WaitAsync(TimeSpan.FromSeconds(5));

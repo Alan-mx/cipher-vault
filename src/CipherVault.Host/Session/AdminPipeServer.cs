@@ -325,6 +325,17 @@ public sealed class AdminPipeServer : IAsyncDisposable
                 })
                 .ConfigureAwait(false);
         }
+        if (_options.MethodProvider is not null)
+        {
+            return await ExecuteAsync(
+                request,
+                () => _options.MethodProvider(
+                    session,
+                    request.Method,
+                    request.Payload,
+                    cancellationToken))
+                .ConfigureAwait(false);
+        }
 
         return PipeRpcCodec.Failure(
             request.RequestId,

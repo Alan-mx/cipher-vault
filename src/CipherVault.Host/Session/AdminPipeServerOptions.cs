@@ -31,4 +31,10 @@ public sealed record AdminPipeServerOptions(
         AdminSession,
         string,
         CancellationToken,
-        Task<HostInitializeData>>? InitializeProvider = null);
+        Task<HostInitializeData>>? InitializeProvider = null,
+    Func<
+        AdminSession,
+        string,
+        System.Text.Json.JsonElement,
+        CancellationToken,
+        Task<object>>? MethodProvider = null);

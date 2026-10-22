@@ -139,6 +139,8 @@ public sealed class StrictServiceHost : IAsyncDisposable
                     serviceProvider
                         .GetRequiredService<HostSessionCoordinator>()
                         .InitializeAsync));
+            builder.Services.AddSingleton<HostVaultGateway>();
+            builder.Services.AddSingleton<StrictAdminVaultRpcProvider>();
             builder.Services.AddHostedService<AdminPipeHostedService>();
             builder.Services.AddHostedService<BrokerPipeHostedService>();
             host = builder.Build();

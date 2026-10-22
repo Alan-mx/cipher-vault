@@ -98,7 +98,8 @@ public sealed class AdminPipeHostedService(
     StrictAdminStatusProvider statusProvider,
     StrictAdminLockProvider lockProvider,
     StrictAdminUnlockProvider unlockProvider,
-    StrictAdminInitializeProvider initializeProvider) : BackgroundService
+    StrictAdminInitializeProvider initializeProvider,
+    StrictAdminVaultRpcProvider vaultRpcProvider) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -165,6 +166,11 @@ public sealed class AdminPipeHostedService(
             (_, vaultPath, cancellationToken) =>
                 initializeProvider.InitializeAsync(
                     vaultPath,
+                    cancellationToken),
+            (_, method, payload, cancellationToken) =>
+                vaultRpcProvider.HandleAsync(
+                    method,
+                    payload,
                     cancellationToken));
 
         while (!stoppingToken.IsCancellationRequested)

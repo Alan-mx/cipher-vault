@@ -90,7 +90,7 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
     {
         return CallAsync<VaultCatalogPage>(
             "admin.catalog.list",
-            new { folder, cursor, limit },
+            new AdminCatalogListRequest(folder, cursor, limit),
             cancellationToken);
     }
 
@@ -103,7 +103,7 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
     {
         return CallAsync<VaultSearchPage>(
             "admin.search.notes",
-            new { query, folder, cursor, limit },
+            new AdminSearchNotesRequest(query, folder, cursor, limit),
             cancellationToken);
     }
 
@@ -115,7 +115,7 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
     {
         return CallAsync<VaultReadResult>(
             "admin.notes.read",
-            new { documentId, offset, maxChars },
+            new AdminReadNoteRequest(documentId, offset, maxChars),
             cancellationToken);
     }
 
@@ -126,7 +126,7 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
     {
         return CallAsync<VaultScanPage>(
             "admin.notes.scan",
-            new { cursor, limit },
+            new AdminScanNotesRequest(cursor, limit),
             cancellationToken);
     }
 
