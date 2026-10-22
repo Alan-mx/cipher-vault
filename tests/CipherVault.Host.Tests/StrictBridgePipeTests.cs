@@ -1,13 +1,19 @@
 using System.Diagnostics;
 using System.IO;
 using System.Security.Principal;
+using System.Text.Json;
+using CipherVault.Core;
 using CipherVault.Core.Configuration;
+using CipherVault.Core.Documents;
+using CipherVault.Core.Session;
 using CipherVault.Host.Client;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Security;
+using CipherVault.Host.Service;
 using CipherVault.Host.Session;
 using CipherVault.Ipc;
 using CipherVault.Security.Win;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace CipherVault.Host.Tests;
 
@@ -125,6 +131,122 @@ public sealed class StrictBridgePipeTests
         Assert.Empty(grants.List());
     }
 
+    [Fact]
+    public async Task StrictBridgeExposesNineCompatibleTools()
+    {
+        await using var environment = await CreateRealBridgeEnvironmentAsync();
+        var acceptTask = environment.Server.AcceptOnceAsync();
+        await using var client = await BridgePipeClientConnection.ConnectAsync(
+            new BridgePipeClientOptions(
+                environment.Options.PipeName,
+                environment.Options.ClientId,
+                environment.Options.AccessMode,
+                new HashSet<string>(StringComparer.Ordinal) { "read", "write", "delete" },
+                environment.Options.AllowedClientPolicy,
+                CurrentProcessServicePolicy(environment.Options.OwnerSid)));
+
+        var grant = await client.RequestGrantAsync();
+        Assert.Equal("readWrite", grant.AccessMode);
+
+        using var status = await CallToolAsync(client, "vault_status", []);
+        Assert.True(status.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal(
+            "mcp",
+            status.RootElement
+                .GetProperty("vault")
+                .GetProperty("clientId")
+                .GetString());
+        Assert.Equal(
+            "unlocked",
+            status.RootElement
+                .GetProperty("session")
+                .GetProperty("state")
+                .GetString());
+
+        using var emptyCatalog = await CallToolAsync(
+            client,
+            "list_catalog",
+            [("limit", 10)]);
+        Assert.True(emptyCatalog.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal(
+            JsonValueKind.Object,
+            emptyCatalog.RootElement.GetProperty("page").ValueKind);
+
+        using var created = await CallToolAsync(
+            client,
+            "create_note",
+            [
+                ("title", "Strict Bridge Note"),
+                ("content", "Searchable strict bridge content."),
+                ("folder", "notes"),
+                ("tags", new[] { "strict", "bridge" })
+            ]);
+        Assert.True(created.RootElement.GetProperty("ok").GetBoolean());
+        var documentId = Guid.Parse(
+            created.RootElement
+                .GetProperty("document")
+                .GetProperty("documentId")
+                .GetString()!);
+        Assert.Equal(1, created.RootElement.GetProperty("document").GetProperty("revision").GetInt32());
+
+        using var read = await CallToolAsync(
+            client,
+            "read_note",
+            [("documentId", documentId), ("maxChars", 100)]);
+        Assert.Equal(
+            "Strict Bridge Note",
+            read.RootElement.GetProperty("document").GetProperty("title").GetString());
+
+        using var appended = await CallToolAsync(
+            client,
+            "append_note",
+            [
+                ("documentId", documentId),
+                ("expectedRevision", 1),
+                ("content", "Appended strict content.")
+            ]);
+        Assert.Equal(2, appended.RootElement.GetProperty("document").GetProperty("revision").GetInt32());
+
+        using var updated = await CallToolAsync(
+            client,
+            "update_note",
+            [
+                ("documentId", documentId),
+                ("expectedRevision", 2),
+                ("title", "Updated Strict Bridge Note"),
+                ("content", "Updated searchable strict bridge content.")
+            ]);
+        Assert.Equal(3, updated.RootElement.GetProperty("document").GetProperty("revision").GetInt32());
+
+        using var search = await CallToolAsync(
+            client,
+            "search_notes",
+            [("query", "strict bridge")]);
+        Assert.True(search.RootElement.GetProperty("ok").GetBoolean());
+        Assert.True(
+            search.RootElement.GetProperty("page").GetProperty("hits")
+                .EnumerateArray().Count() >= 1);
+
+        using var scan = await CallToolAsync(client, "scan_notes", [("limit", 10)]);
+        Assert.True(scan.RootElement.GetProperty("ok").GetBoolean());
+        Assert.True(scan.RootElement.GetProperty("page").GetProperty("items").EnumerateArray().Count() >= 1);
+
+        using var deleted = await CallToolAsync(
+            client,
+            "delete_note",
+            [("documentId", documentId), ("expectedRevision", 3)]);
+        Assert.True(
+            deleted.RootElement.GetProperty("ok").GetBoolean(),
+            deleted.RootElement.GetRawText());
+        Assert.Equal(
+            documentId,
+            deleted.RootElement.GetProperty("document").GetProperty("documentId").GetGuid());
+
+        await client.DisposeAsync();
+        _ = await acceptTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Empty(environment.Grants.List());
+    }
+
     private static (
         BridgePipeServer Server,
         BridgePipeServerOptions Options) CreateServer(
@@ -180,6 +302,56 @@ public sealed class StrictBridgePipeTests
             AllowedSignerThumbprints: [],
             RequireSha256: true,
             RequireSignature: false);
+    }
+
+    private static async Task<JsonDocument> CallToolAsync(
+        BridgePipeClientConnection client,
+        string toolName,
+        IReadOnlyCollection<(string Name, object? Value)> arguments)
+    {
+        var payload = arguments.ToDictionary(
+            item => item.Name,
+            item => item.Value,
+            StringComparer.Ordinal);
+        var result = await client.CallToolAsync(
+            toolName,
+            payload,
+            CancellationToken.None);
+        return JsonDocument.Parse(result);
+    }
+
+    private static async Task<StrictBridgeTestEnvironment> CreateRealBridgeEnvironmentAsync()
+    {
+        var fixture = await HostTestFixture.CreateAsync();
+        var sessions = fixture.App.Services.GetRequiredService<HostSessionCoordinator>();
+        var grants = fixture.App.Services.GetRequiredService<AccessGrantService>();
+        var gateway = fixture.App.Services.GetRequiredService<HostVaultGateway>();
+        await sessions.UnlockAsync(HostCredentialPreference.Password);
+
+        var paths = CipherVaultServicePaths.Create(
+            Path.Combine(fixture.Root, "ProgramFiles"),
+            Path.Combine(fixture.Root, "ProgramData"),
+            Path.Combine(fixture.Root, "LocalAppData"));
+        var provider = new StrictAdminVaultRpcProvider(
+            gateway,
+            sessions,
+            new ApprovalStore(),
+            new RejectingApprovalPrompt(),
+            new TransferCoordinator(paths),
+            new RejectingTransferPrompt());
+        var handler = new StrictBridgeHandler(
+            sessions,
+            grants,
+            fixture.AccessGrantPrompt,
+            provider);
+        var pipeName = "CipherVault.Bridge.Test." + Guid.NewGuid().ToString("N");
+        var (server, options) = CreateServer(pipeName, handler, McpAccessMode.ReadWrite);
+        return new StrictBridgeTestEnvironment(
+            fixture,
+            server,
+            options,
+            grants,
+            provider);
     }
 
     private static ProcessVerificationPolicy CurrentProcessBridgePolicy(
@@ -243,6 +415,56 @@ public sealed class StrictBridgePipeTests
         {
             ClosedReasons.Add(reasonCode);
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class RejectingApprovalPrompt : IApprovalPrompt
+    {
+        public Task<HostApprovalDecision> RequestAsync(
+            HostApprovalRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+    }
+
+    private sealed class RejectingTransferPrompt : ITransferPrompt
+    {
+        public Task<HostTransferResult> TransferAsync(
+            HostTransferRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+    }
+
+    private sealed class StrictBridgeTestEnvironment : IAsyncDisposable
+    {
+        public StrictBridgeTestEnvironment(
+            HostTestFixture fixture,
+            BridgePipeServer server,
+            BridgePipeServerOptions options,
+            AccessGrantService grants,
+            StrictAdminVaultRpcProvider provider)
+        {
+            Fixture = fixture;
+            Server = server;
+            Options = options;
+            Grants = grants;
+            Provider = provider;
+        }
+
+        public HostTestFixture Fixture { get; }
+        public BridgePipeServer Server { get; }
+        public BridgePipeServerOptions Options { get; }
+        public AccessGrantService Grants { get; }
+        public StrictAdminVaultRpcProvider Provider { get; }
+
+        public async ValueTask DisposeAsync()
+        {
+            await Server.DisposeAsync();
+            Provider.Dispose();
+            await Fixture.DisposeAsync();
         }
     }
 

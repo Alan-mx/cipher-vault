@@ -1,6 +1,9 @@
 using CipherVault.Core.Configuration;
+using CipherVault.Core.Documents;
+using CipherVault.Core.Errors;
 using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
+using CipherVault.Host.Mcp;
 using CipherVault.Host.Security;
 using CipherVault.Host.Session;
 
@@ -94,19 +97,131 @@ public sealed class StrictBridgeHandler(
             context);
     }
 
-    public Task<string> CallToolAsync(
+    public async Task<string> CallToolAsync(
         BridgeProcessSession session,
         AccessGrantContext? grant,
         BridgeToolCallRequest request,
         CancellationToken cancellationToken)
     {
-        _ = session;
-        _ = grant;
-        _ = cancellationToken;
-        _ = _rpc;
-        return Task.FromException<string>(new AdminPipeRpcException(
-            "unsupported_tool",
-            $"Bridge tool dispatch is not enabled: {request.ToolName}"));
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentNullException.ThrowIfNull(request);
+        if (grant is null)
+        {
+            return BridgeToolEnvelope.Error(
+                "access_grant_required",
+                "Request a Bridge Access Grant first.");
+        }
+
+        var snapshot = await sessions.GetSnapshotAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (snapshot.State is not (
+                VaultSessionState.Unlocked or
+                VaultSessionState.Expiring))
+        {
+            return BridgeToolEnvelope.Error(
+                "auth_required",
+                "Vault must be unlocked.");
+        }
+        if (snapshot.SessionId != grant.VaultSessionId)
+        {
+            return BridgeToolEnvelope.Error(
+                "access_grant_revoked",
+                "Vault session changed.");
+        }
+        if (!BridgeToolCatalog.TryGet(
+                request.ToolName,
+                out var definition))
+        {
+            return BridgeToolEnvelope.Error(
+                "unsupported_tool",
+                $"Unsupported bridge tool: {request.ToolName}");
+        }
+        if (!AccessGrantScopes.Includes(
+                grant.Scopes,
+                definition.RequiredScope))
+        {
+            return BridgeToolEnvelope.Error(
+                "access_denied",
+                "Access Grant does not allow this operation.");
+        }
+
+        var used = grants.UseBridgeGrant(grant);
+        if (used.Status != AccessGrantValidationStatus.Valid ||
+            used.Grant is null)
+        {
+            return BridgeToolEnvelope.Error(
+                used.Status == AccessGrantValidationStatus.Expired
+                    ? "access_grant_expired"
+                    : "access_grant_revoked",
+                "Access Grant is no longer valid.");
+        }
+        grant = used.Grant;
+
+        if (definition.ResultKind == BridgeToolResultKind.VaultStatus)
+        {
+            return BridgeToolEnvelope.VaultStatus(
+                session.ClientId,
+                session.AccessMode,
+                snapshot);
+        }
+
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            var adminSession = new AdminSession(
+                Guid.NewGuid(),
+                session.ProcessSessionId,
+                session.Client,
+                session.OwnerSid,
+                session.ServiceSid,
+                now,
+                now,
+                now + TimeSpan.FromMinutes(15),
+                now + TimeSpan.FromHours(4),
+                grant.VaultSessionId,
+                AdminSessionState.Active,
+                RevocationReason: null);
+            var mapped = BridgeToolMapper.Map(
+                definition,
+                request.Arguments);
+            var result = await _rpc.HandleAsync(
+                adminSession,
+                mapped.AdminMethod,
+                mapped.AdminPayload,
+                cancellationToken).ConfigureAwait(false);
+            var resultElement = BridgeToolEnvelope.SerializeResult(result);
+            return definition.ResultKind == BridgeToolResultKind.Page
+                ? BridgeToolEnvelope.Page(resultElement)
+                : BridgeToolEnvelope.Document(resultElement);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (BridgeToolException exception)
+        {
+            return BridgeToolEnvelope.Error(
+                exception.Code,
+                exception.Message);
+        }
+        catch (AdminPipeRpcException exception)
+        {
+            return BridgeToolEnvelope.Error(
+                exception.Code,
+                exception.Message);
+        }
+        catch (HostException exception)
+        {
+            return BridgeToolEnvelope.Error(
+                BridgeToolErrorMapper.ToCode(exception),
+                exception.Message);
+        }
+        catch (VaultException exception)
+        {
+            return BridgeToolEnvelope.Error(
+                BridgeToolErrorMapper.ToCode(exception),
+                exception.Message);
+        }
     }
 
     public async Task CloseSessionAsync(
