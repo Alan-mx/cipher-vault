@@ -167,8 +167,9 @@ public sealed class AdminPipeHostedService(
                 initializeProvider.InitializeAsync(
                     vaultPath,
                     cancellationToken),
-            (_, method, payload, cancellationToken) =>
+            (session, method, payload, cancellationToken) =>
                 vaultRpcProvider.HandleAsync(
+                    session,
                     method,
                     payload,
                     cancellationToken));

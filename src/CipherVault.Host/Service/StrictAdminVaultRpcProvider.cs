@@ -1,5 +1,7 @@
 using System.Text.Json;
+using CipherVault.Core.Documents;
 using CipherVault.Host.Contracts;
+using CipherVault.Host.Security;
 using CipherVault.Host.Session;
 using CipherVault.Ipc;
 
@@ -8,6 +10,7 @@ namespace CipherVault.Host.Service;
 public sealed class StrictAdminVaultRpcProvider(HostVaultGateway vault)
 {
     public async Task<object> HandleAsync(
+        AdminSession session,
         string method,
         JsonElement payload,
         CancellationToken cancellationToken)
@@ -72,10 +75,40 @@ public sealed class StrictAdminVaultRpcProvider(HostVaultGateway vault)
                         scanRequest.Limit,
                         token),
                     cancellationToken).ConfigureAwait(false);
+            case "admin.notes.create":
+                var createRequest = PipeRpcCodec.ReadPayload<HostCreateNoteRequest>(
+                    new PipeRpcRequest(
+                        PipeProtocol.Version,
+                        Guid.Empty,
+                        method,
+                        payload));
+                if (string.IsNullOrWhiteSpace(createRequest.Title))
+                {
+                    throw new AdminPipeRpcException(
+                        "invalid_input",
+                        "Note title is required.");
+                }
+                return await vault.ExecuteAsync(
+                    (service, token) => service.CreateNoteAsync(
+                        createRequest.Title,
+                        createRequest.Folder,
+                        createRequest.Format ?? "md",
+                        createRequest.Content ?? string.Empty,
+                        createRequest.Tags,
+                        Actor(session),
+                        token),
+                    cancellationToken).ConfigureAwait(false);
             default:
                 throw new AdminPipeRpcException(
                     "unsupported_method",
                     $"Unsupported Admin method: {method}");
         }
+    }
+
+    private static VaultActorKind Actor(AdminSession session)
+    {
+        return session.Client.Kind == VerifiedProcessKind.AdminUi
+            ? VaultActorKind.UserUi
+            : VaultActorKind.UserCli;
     }
 }
