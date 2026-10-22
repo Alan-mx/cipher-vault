@@ -253,6 +253,10 @@ public sealed class StrictAdminVaultRpcProvider(HostVaultGateway vault)
                         Actor(session),
                         token),
                     cancellationToken).ConfigureAwait(false);
+            case "admin.maintenance.verify":
+                return await vault.ExecuteAsync(
+                    (service, token) => service.VerifyVaultAsync(token),
+                    cancellationToken).ConfigureAwait(false);
             default:
                 throw new AdminPipeRpcException(
                     "unsupported_method",

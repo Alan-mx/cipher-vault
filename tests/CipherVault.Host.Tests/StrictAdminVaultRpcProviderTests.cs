@@ -1,5 +1,6 @@
 using System.Security.Principal;
 using System.Text.Json;
+using CipherVault.Core.Backup;
 using CipherVault.Core.Documents;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Security;
@@ -186,5 +187,12 @@ public sealed class StrictAdminVaultRpcProviderTests
             restoreRevisionResult);
         Assert.Equal(restored.DocumentId, restoredRevision.DocumentId);
         Assert.True(restoredRevision.Revision > restored.Revision);
+        var verifyResult = await provider.HandleAsync(
+            session,
+            "admin.maintenance.verify",
+            JsonSerializer.SerializeToElement(new { }),
+            CancellationToken.None);
+        var verification = Assert.IsType<VaultIntegrityReport>(verifyResult);
+        Assert.True(verification.Valid);
     }
 }
