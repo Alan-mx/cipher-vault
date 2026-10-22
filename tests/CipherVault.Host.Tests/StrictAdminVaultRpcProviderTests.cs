@@ -343,6 +343,31 @@ public sealed class StrictAdminVaultRpcProviderTests
         Assert.True(Directory.Exists(export.Destination));
         Assert.True(File.Exists(export.ManifestPath));
         Assert.Equal(3, approvalPrompt.RequestCount);
+        var importSource = Path.Combine(fixture.Root, "import-source");
+        Directory.CreateDirectory(importSource);
+        File.WriteAllText(
+            Path.Combine(importSource, "imported.md"),
+            "# Imported\n\nImported through strict staging.");
+        var previewResult = await provider.HandleAsync(
+            session,
+            "admin.maintenance.import_preview",
+            JsonSerializer.SerializeToElement(
+                new HostImportPreviewRequest(importSource),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            CancellationToken.None);
+        var preview = Assert.IsType<VaultImportPreview>(previewResult);
+        Assert.Equal(1, preview.SupportedFiles);
+        Assert.Equal(4, approvalPrompt.RequestCount);
+        var commitResult = await provider.HandleAsync(
+            session,
+            "admin.maintenance.import_commit",
+            JsonSerializer.SerializeToElement(
+                new AdminImportCommitRequest(preview.JobId),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            CancellationToken.None);
+        var imported = Assert.IsType<VaultImportResult>(commitResult);
+        Assert.Equal(1, imported.Imported);
+        Assert.Equal(5, approvalPrompt.RequestCount);
     }
 
     private sealed class TestApprovalPrompt(ApprovalStore store)
@@ -368,6 +393,16 @@ public sealed class StrictAdminVaultRpcProviderTests
             HostTransferRequest request,
             CancellationToken cancellationToken = default)
         {
+            if (request.Direction == HostTransferDirection.Import &&
+                request.PayloadKind == HostTransferPayloadKind.Directory)
+            {
+                CopyDirectory(request.SuggestedPath, request.StagingPath);
+                return Task.FromResult(new HostTransferResult(
+                    request.TransferId,
+                    true,
+                    Path.GetFullPath(request.StagingPath),
+                    null));
+            }
             if (request.Direction != HostTransferDirection.Export)
             {
                 return Task.FromResult(new HostTransferResult(

@@ -268,7 +268,7 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
     {
         return CallAsync<VaultImportResult>(
             "admin.maintenance.import_commit",
-            new { jobId },
+            new AdminImportCommitRequest(jobId),
             cancellationToken);
     }
 

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO;
 using System.Text.Json;
 using CipherVault.Core.Backup;
@@ -17,8 +18,11 @@ public sealed class StrictAdminVaultRpcProvider(
     ApprovalStore approvals,
     IApprovalPrompt approvalPrompt,
     TransferCoordinator transfers,
-    ITransferPrompt transferPrompt)
+    ITransferPrompt transferPrompt) : IDisposable
 {
+    private readonly ConcurrentDictionary<Guid, TransferWorkspace> _importWorkspaces =
+        new();
+
     public async Task<object> HandleAsync(
         AdminSession session,
         string method,
@@ -539,6 +543,164 @@ public sealed class StrictAdminVaultRpcProvider(
                         Path.Combine(exportTransfer.FinalPath, manifestRelative),
                         stagingExport.AuditRecorded);
                 }
+            case "admin.maintenance.import_preview":
+                {
+                    var importRequest = PipeRpcCodec.ReadPayload<HostImportPreviewRequest>(
+                        new PipeRpcRequest(
+                            PipeProtocol.Version,
+                            Guid.Empty,
+                            method,
+                            payload));
+                    if (string.IsNullOrWhiteSpace(importRequest.SourceRoot))
+                    {
+                        throw new AdminPipeRpcException(
+                            "invalid_input",
+                            "Import source hint is required.");
+                    }
+                    var importSnapshot = await sessions
+                        .GetSnapshotAsync(cancellationToken)
+                        .ConfigureAwait(false);
+                    if (importSnapshot.SessionId is null)
+                    {
+                        throw new AdminPipeRpcException(
+                            "session_locked",
+                            "Vault must be unlocked for import.");
+                    }
+                    var importOperation = approvals.Prepare(
+                        ApprovalOperationKind.PreviewImport,
+                        session.ProcessSessionId,
+                        importSnapshot.SessionId,
+                        JsonSerializer.SerializeToElement(importRequest));
+                    var importApproval = approvals.CreateRequest(
+                        importOperation,
+                        "预览导入资料库",
+                        $"选择要导入的文件夹，建议位置 {importRequest.SourceRoot}。");
+                    var importDecision = await approvalPrompt.RequestAsync(
+                        importApproval,
+                        cancellationToken).ConfigureAwait(false);
+                    if (!importDecision.Approved)
+                    {
+                        throw new AdminPipeRpcException(
+                            "approval_denied",
+                            importDecision.DenialReason ?? "User denied import.");
+                    }
+                    ConsumeApproval(
+                        approvals,
+                        importOperation,
+                        session,
+                        importSnapshot.SessionId.Value,
+                        ApprovalOperationKind.PreviewImport);
+                    var workspace = transfers.CreateWorkspace(
+                        HostTransferDirection.Import,
+                        HostTransferPayloadKind.Directory,
+                        session.Client.UserSid,
+                        session.Client.LogonSid,
+                        "input");
+                    try
+                    {
+                        var transfer = await transferPrompt.TransferAsync(
+                            new HostTransferRequest(
+                                workspace.TransferId,
+                                HostTransferDirection.Import,
+                                HostTransferPayloadKind.Directory,
+                                workspace.PayloadPath,
+                                importRequest.SourceRoot,
+                                importOperation.ExpiresAt),
+                            cancellationToken).ConfigureAwait(false);
+                        if (!transfer.Completed)
+                        {
+                            throw new AdminPipeRpcException(
+                                transfer.ErrorCode ?? "transfer_failed",
+                                "Import file transfer did not complete.");
+                        }
+                        transfers.EnsureNoReparsePoints(workspace.PayloadPath);
+                        var preview = await vault.ExecuteAsync(
+                            (service, token) => service.PreviewImportAsync(
+                                workspace.PayloadPath,
+                                Actor(session),
+                                token),
+                            cancellationToken).ConfigureAwait(false);
+                        if (!_importWorkspaces.TryAdd(preview.JobId, workspace))
+                        {
+                            throw new AdminPipeRpcException(
+                                "conflict",
+                                "Import job already exists.");
+                        }
+                        workspace = null!;
+                        return preview;
+                    }
+                    finally
+                    {
+                        workspace?.Dispose();
+                    }
+                }
+            case "admin.maintenance.import_commit":
+                {
+                    var commitRequest = PipeRpcCodec.ReadPayload<AdminImportCommitRequest>(
+                        new PipeRpcRequest(
+                            PipeProtocol.Version,
+                            Guid.Empty,
+                            method,
+                            payload));
+                    if (!_importWorkspaces.TryGetValue(
+                            commitRequest.JobId,
+                            out var importWorkspace))
+                    {
+                        throw new AdminPipeRpcException(
+                            "not_found",
+                            "Import job was not found.");
+                    }
+                    var commitSnapshot = await sessions
+                        .GetSnapshotAsync(cancellationToken)
+                        .ConfigureAwait(false);
+                    if (commitSnapshot.SessionId is null)
+                    {
+                        throw new AdminPipeRpcException(
+                            "session_locked",
+                            "Vault must be unlocked for import commit.");
+                    }
+                    var commitOperation = approvals.Prepare(
+                        ApprovalOperationKind.CommitImport,
+                        session.ProcessSessionId,
+                        commitSnapshot.SessionId,
+                        JsonSerializer.SerializeToElement(commitRequest));
+                    var commitApproval = approvals.CreateRequest(
+                        commitOperation,
+                        "提交资料库导入",
+                        $"提交已预览的导入任务 {commitRequest.JobId}。");
+                    var commitDecision = await approvalPrompt.RequestAsync(
+                        commitApproval,
+                        cancellationToken).ConfigureAwait(false);
+                    if (!commitDecision.Approved)
+                    {
+                        throw new AdminPipeRpcException(
+                            "approval_denied",
+                            commitDecision.DenialReason ?? "User denied import commit.");
+                    }
+                    ConsumeApproval(
+                        approvals,
+                        commitOperation,
+                        session,
+                        commitSnapshot.SessionId.Value,
+                        ApprovalOperationKind.CommitImport);
+                    if (!_importWorkspaces.TryRemove(
+                            commitRequest.JobId,
+                            out importWorkspace))
+                    {
+                        throw new AdminPipeRpcException(
+                            "not_found",
+                            "Import job was not found.");
+                    }
+                    using (importWorkspace)
+                    {
+                        return await vault.ExecuteMaintenanceAsync(
+                            (service, token) => service.CommitImportAsync(
+                                commitRequest.JobId,
+                                Actor(session),
+                                token),
+                            cancellationToken).ConfigureAwait(false);
+                    }
+                }
             default:
                 throw new AdminPipeRpcException(
                     "unsupported_method",
@@ -572,5 +734,14 @@ public sealed class StrictAdminVaultRpcProvider(
                 consumed.ReasonCode ?? "approval_invalid",
                 "Operation approval could not be consumed.");
         }
+    }
+
+    public void Dispose()
+    {
+        foreach (var workspace in _importWorkspaces.Values)
+        {
+            workspace.Dispose();
+        }
+        _importWorkspaces.Clear();
     }
 }

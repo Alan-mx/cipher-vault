@@ -56,3 +56,6 @@ public sealed record AdminAuditListRequest(
 
 public sealed record AdminPurgeNoteRequest(
     Guid DocumentId);
+
+public sealed record AdminImportCommitRequest(
+    Guid JobId);
