@@ -536,6 +536,7 @@ static async Task<CliHostSession> CreateHostSessionAsync(
         var configuration = CipherVaultHostConfiguration.Load(
             CreateHostOverrides(arguments),
             GetOption(arguments, "--config"));
+        VaultModeStore.EnsureCompatibilityAllowed(configuration.VaultPath);
         var ownership = await VaultOwnershipLock.AcquireAsync(
             configuration.VaultPath);
         try

@@ -53,6 +53,7 @@ static async Task RunCompatibilityHostAsync(string[] arguments)
     var configuration = CipherVaultHostConfiguration.Load(
         CipherVaultHostConfigOverrides.Empty,
         configPath);
+    VaultModeStore.EnsureCompatibilityAllowed(configuration.VaultPath);
     using var userInstance = HostUserInstanceLock.Acquire();
     await using var ownership = await VaultOwnershipLock.AcquireAsync(
         configuration.VaultPath);

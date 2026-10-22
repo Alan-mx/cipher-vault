@@ -8,6 +8,7 @@ using System.Net.Sockets;
 using System.Text.Json;
 using CipherVault.Auth.Win;
 using CipherVault.Core;
+using CipherVault.Core.Configuration;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
 using CipherVault.Core.Session;
@@ -21,6 +22,60 @@ namespace CipherVault.Host.Tests;
 public sealed class HostProcessIntegrationTests
 {
     private const string Password = "host process integration password";
+
+    [Fact]
+    public async Task CompatibilityHostRejectsStrictVaultModeMarker()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-host-mode-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var vaultPath = Path.Combine(root, "vault");
+            Directory.CreateDirectory(vaultPath);
+            VaultModeStore.Write(
+                Path.Combine(vaultPath, "vault.mode"),
+                new CipherVaultVaultModeManifest
+                {
+                    Format = CipherVaultServiceConfiguration.VaultModeFormat,
+                    FormatVersion =
+                        CipherVaultServiceConfiguration.VaultModeFormatVersion,
+                    Mode = CipherVaultServiceConfiguration.StrictModeValue,
+                    OwnerSid = "S-1-5-21-1",
+                    InstallId = Guid.NewGuid(),
+                    CreatedAt = DateTimeOffset.UtcNow
+                });
+            var configPath = Path.Combine(root, "config.json");
+            await File.WriteAllTextAsync(
+                configPath,
+                JsonSerializer.Serialize(new
+                {
+                    configVersion = 2,
+                    vaultPath,
+                    host = new
+                    {
+                        bindAddress = "127.0.0.1",
+                        port = ReservePort(),
+                        mcpPath = "/mcp",
+                        adminPath = "/admin/v1"
+                    },
+                    clients = Array.Empty<object>()
+                }));
+
+            using var process = StartHost(configPath);
+            using var timeout = new CancellationTokenSource(
+                TimeSpan.FromSeconds(10));
+            await process.WaitForExitAsync(timeout.Token);
+
+            Assert.NotEqual(0, process.ExitCode);
+            Assert.True(process.HasExited);
+        }
+        finally
+        {
+            await DeleteDirectoryWithRetryAsync(root);
+        }
+    }
 
     [Fact]
     public async Task RealHostEnforcesSingleInstanceAndRestartsLocked()

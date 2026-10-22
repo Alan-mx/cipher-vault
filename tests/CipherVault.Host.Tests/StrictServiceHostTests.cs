@@ -16,8 +16,10 @@ public sealed class StrictServiceHostTests
     public async Task StrictServiceHostStartsAndStopsThroughHostLifetime()
     {
         using var fixture = new ServiceHostFixture();
+        var configuration = CreateConfiguration(fixture.Paths);
+        CreateInstallState(fixture.Paths, configuration);
         await using var service = StrictServiceHost.Create(
-            CreateConfiguration(fixture.Paths),
+            configuration,
             fixture.Paths);
         var lifetime = service.Services.GetRequiredService<IHostApplicationLifetime>();
         var started = new TaskCompletionSource(
@@ -37,6 +39,7 @@ public sealed class StrictServiceHostTests
     {
         using var fixture = new ServiceHostFixture();
         var configuration = CreateConfiguration(fixture.Paths);
+        CreateInstallState(fixture.Paths, configuration);
         var first = StrictServiceHost.Create(configuration, fixture.Paths);
 
         var exception = Assert.Throws<VaultException>(
@@ -57,6 +60,7 @@ public sealed class StrictServiceHostTests
     {
         using var fixture = new ServiceHostFixture();
         var configuration = CreateConfiguration(fixture.Paths);
+        CreateInstallState(fixture.Paths, configuration);
         if (scenario == "compatibility")
         {
             configuration = configuration with
@@ -71,6 +75,36 @@ public sealed class StrictServiceHostTests
                 DataRoot = Path.Combine(fixture.Root, "other")
             };
         }
+
+        var exception = Assert.Throws<VaultException>(
+            () => StrictServiceHost.Create(configuration, fixture.Paths));
+
+        Assert.Equal(VaultErrorCode.InvalidInput, exception.Code);
+    }
+
+    [Fact]
+    public void StrictServiceHostRejectsMissingVaultModeMarker()
+    {
+        using var fixture = new ServiceHostFixture();
+        var configuration = CreateConfiguration(fixture.Paths);
+        CreateInstallManifest(fixture.Paths, Guid.NewGuid());
+
+        var exception = Assert.Throws<VaultException>(
+            () => StrictServiceHost.Create(configuration, fixture.Paths));
+
+        Assert.Equal(VaultErrorCode.NotFound, exception.Code);
+    }
+
+    [Fact]
+    public void StrictServiceHostRejectsInstallIdMismatch()
+    {
+        using var fixture = new ServiceHostFixture();
+        var configuration = CreateConfiguration(fixture.Paths);
+        CreateInstallState(fixture.Paths, configuration);
+        var mode = VaultModeStore.Read(fixture.Paths.ModePath);
+        VaultModeStore.Write(
+            fixture.Paths.ModePath,
+            mode with { InstallId = Guid.NewGuid() });
 
         var exception = Assert.Throws<VaultException>(
             () => StrictServiceHost.Create(configuration, fixture.Paths));
@@ -118,6 +152,62 @@ public sealed class StrictServiceHostTests
                 CompatibilityHttpEnabled = false
             }
         };
+    }
+
+    private static void CreateInstallState(
+        CipherVaultServicePaths paths,
+        CipherVaultServiceConfigFile configuration)
+    {
+        var installId = Guid.NewGuid();
+        CreateInstallManifest(paths, installId);
+        VaultModeStore.Write(
+            paths.ModePath,
+            new CipherVaultVaultModeManifest
+            {
+                Format = CipherVaultServiceConfiguration.VaultModeFormat,
+                FormatVersion =
+                    CipherVaultServiceConfiguration.VaultModeFormatVersion,
+                Mode = CipherVaultServiceConfiguration.StrictModeValue,
+                OwnerSid = configuration.OwnerSid,
+                InstallId = installId,
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+    }
+
+    private static void CreateInstallManifest(
+        CipherVaultServicePaths paths,
+        Guid installId)
+    {
+        Directory.CreateDirectory(paths.DataRoot);
+        var imagePath = Path.Combine(
+            paths.InstallRoot,
+            "CipherVault.Host.exe").Replace(
+            "\\",
+            "\\\\",
+            StringComparison.Ordinal);
+        File.WriteAllText(
+            paths.PublicManifestPath,
+            $$"""
+            {
+              "format": "cipher-vault-install",
+              "formatVersion": 1,
+              "installId": "{{installId:D}}",
+              "productVersion": "1.0.0",
+              "serviceName": "CipherVaultHost",
+              "serviceAccount": "NT SERVICE\\CipherVaultHost",
+              "serviceSid": "S-1-5-80-1",
+              "ownerSid": "S-1-5-21-1",
+              "pipes": { "admin": "CipherVault.Admin.v1", "broker": "CipherVault.Broker.v1", "bridge": "CipherVault.Bridge.v1", "rejectRemoteClients": true },
+              "allowedServerImages": [
+                {
+                  "kind": "host",
+                  "path": "{{imagePath}}",
+                  "sha256": "{{Sha256}}",
+                  "signerThumbprint": "{{Sha256}}"
+                }
+              ]
+            }
+            """);
     }
 
     private sealed class ServiceHostFixture : IDisposable
