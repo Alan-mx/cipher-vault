@@ -5,4 +5,7 @@ namespace CipherVault.Host.Security;
 public sealed record AuthenticatedHostClient(
     string ClientId,
     McpAccessMode AccessMode,
-    AgentAuthorizationMode AuthorizationMode);
+    AgentAuthorizationMode AuthorizationMode,
+    AgentClientIdentityKind IdentityKind =
+        AgentClientIdentityKind.CompatibilityToken,
+    Guid? VerifiedProcessSessionId = null);

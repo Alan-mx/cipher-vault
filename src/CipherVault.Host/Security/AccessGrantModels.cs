@@ -19,6 +19,12 @@ public enum AccessGrantState
     Expired
 }
 
+public enum AgentClientIdentityKind
+{
+    CompatibilityToken,
+    VerifiedBridgeProcess
+}
+
 public sealed record AccessGrantVaultGeneration(
     Guid SessionId,
     DateTimeOffset HardExpiresAt);
@@ -37,7 +43,9 @@ public sealed record AccessGrantRecord(
     DateTimeOffset? IdleExpiresAt,
     DateTimeOffset? HardExpiresAt,
     Guid? VaultSessionId,
-    string? DenialReason);
+    string? DenialReason,
+    AgentClientIdentityKind IdentityKind = AgentClientIdentityKind.CompatibilityToken,
+    Guid? VerifiedProcessSessionId = null);
 
 public sealed record IssuedAccessGrant(
     AccessGrantRecord Record,
@@ -48,7 +56,15 @@ public sealed record AccessGrantContext(
     string ClientId,
     Guid ClientInstanceId,
     AccessGrantScope Scopes,
-    Guid VaultSessionId);
+    Guid VaultSessionId,
+    AgentClientIdentityKind IdentityKind = AgentClientIdentityKind.CompatibilityToken,
+    Guid? VerifiedProcessSessionId = null);
+
+public sealed record AccessGrantPrincipal(
+    string ClientId,
+    Guid ClientInstanceId,
+    AgentClientIdentityKind IdentityKind,
+    Guid? VerifiedProcessSessionId);
 
 public readonly record struct AccessGrantSlotKey(
     string ClientId,

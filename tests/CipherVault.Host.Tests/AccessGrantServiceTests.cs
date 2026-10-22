@@ -155,6 +155,68 @@ public sealed class AccessGrantServiceTests
     }
 
     [Fact]
+    public async Task VerifiedBridgeGrantBindsProcessSession()
+    {
+        var now = DateTimeOffset.Parse("2026-10-21T10:00:00Z");
+        var service = new AccessGrantService(
+            timeProvider: new MutableTimeProvider(now));
+        var generation = Generation(now, TimeSpan.FromHours(1));
+        var processSessionId = Guid.NewGuid();
+
+        var outcome = await service.RequestAsync(
+            "bridge",
+            Guid.NewGuid(),
+            McpAccessMode.ReadOnly,
+            AccessGrantScope.Read,
+            generation,
+            (_, _) => Task.FromResult(new AccessGrantApprovalResult(
+                true,
+                AccessGrantScope.Read)),
+            AgentClientIdentityKind.VerifiedBridgeProcess,
+            processSessionId);
+        var issued = Assert.IsType<IssuedAccessGrant>(outcome.IssuedGrant);
+        Assert.Equal(AgentClientIdentityKind.VerifiedBridgeProcess, issued.Record.IdentityKind);
+        Assert.Equal(processSessionId, issued.Record.VerifiedProcessSessionId);
+
+        var validation = await service.ValidateAsync(
+            "bridge",
+            issued.PlaintextSecret,
+            generation);
+
+        Assert.Equal(AccessGrantValidationStatus.Valid, validation.Status);
+        Assert.Equal(AgentClientIdentityKind.VerifiedBridgeProcess, validation.Grant!.IdentityKind);
+        Assert.Equal(processSessionId, validation.Grant.VerifiedProcessSessionId);
+        Assert.True(service.RecordUse(validation.Grant));
+        Assert.False(service.RecordUse(validation.Grant with
+        {
+            VerifiedProcessSessionId = Guid.NewGuid()
+        }));
+    }
+
+    [Fact]
+    public async Task VerifiedBridgeGrantRequiresProcessSession()
+    {
+        var now = DateTimeOffset.Parse("2026-10-21T10:00:00Z");
+        var service = new AccessGrantService(
+            timeProvider: new MutableTimeProvider(now));
+
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.RequestAsync(
+                "bridge",
+                Guid.NewGuid(),
+                McpAccessMode.ReadOnly,
+                AccessGrantScope.Read,
+                Generation(now, TimeSpan.FromHours(1)),
+                (_, _) => Task.FromResult(new AccessGrantApprovalResult(
+                    true,
+                    AccessGrantScope.Read)),
+                AgentClientIdentityKind.VerifiedBridgeProcess,
+                verifiedProcessSessionId: null));
+
+        Assert.Contains("process session", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task ValidationExpiresAtIdleAndHardLimits()
     {
         var now = DateTimeOffset.Parse("2026-10-21T10:00:00Z");

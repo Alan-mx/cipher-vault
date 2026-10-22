@@ -96,8 +96,33 @@ public sealed class AccessGrantService : IDisposable
             approvalHandler,
         CancellationToken cancellationToken = default)
     {
+        return await RequestAsync(
+            clientId,
+            clientInstanceId,
+            tokenAccessMode,
+            requestedScopes,
+            vaultGeneration,
+            approvalHandler,
+            AgentClientIdentityKind.CompatibilityToken,
+            verifiedProcessSessionId: null,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<AccessGrantRequestOutcome> RequestAsync(
+        string clientId,
+        Guid clientInstanceId,
+        McpAccessMode tokenAccessMode,
+        AccessGrantScope requestedScopes,
+        AccessGrantVaultGeneration vaultGeneration,
+        Func<AccessGrantApprovalRequest, CancellationToken, Task<AccessGrantApprovalResult>>
+            approvalHandler,
+        AgentClientIdentityKind identityKind,
+        Guid? verifiedProcessSessionId,
+        CancellationToken cancellationToken = default)
+    {
         ArgumentException.ThrowIfNullOrWhiteSpace(clientId);
         ArgumentNullException.ThrowIfNull(approvalHandler);
+        ValidateIdentity(identityKind, verifiedProcessSessionId);
 
         var allowed = AccessGrantScopes.Ceiling(tokenAccessMode);
         var effectiveRequest = AccessGrantScopes.Normalize(requestedScopes) & allowed;
@@ -156,10 +181,21 @@ public sealed class AccessGrantService : IDisposable
                         IdleExpiresAt: null,
                         HardExpiresAt: null,
                         VaultSessionId: null,
-                        DenialReason: null),
+                        DenialReason: null,
+                        IdentityKind: identityKind,
+                        VerifiedProcessSessionId: verifiedProcessSessionId),
                     vaultGeneration);
                 _pendingSlots[slot] = pending;
                 isOwner = true;
+            }
+            else if (pending.Record.IdentityKind != identityKind ||
+                     pending.Record.VerifiedProcessSessionId != verifiedProcessSessionId)
+            {
+                return new AccessGrantRequestOutcome(
+                    AccessGrantRequestStatus.Conflict,
+                    IssuedGrant: null,
+                    RetryAfter: null,
+                    ReasonCode: "client_identity_mismatch");
             }
         }
 
@@ -342,7 +378,9 @@ public sealed class AccessGrantService : IDisposable
                         matched.ClientId,
                         matched.ClientInstanceId,
                         matched.Scopes,
-                        matched.VaultSessionId.Value),
+                        matched.VaultSessionId.Value,
+                        matched.IdentityKind,
+                        matched.VerifiedProcessSessionId),
                     ReasonCode: null,
                     Record: matched);
             }
@@ -360,6 +398,8 @@ public sealed class AccessGrantService : IDisposable
             if (!_grants.TryGetValue(grant.GrantId, out var record) ||
                 record.State != AccessGrantState.Active ||
                 record.VaultSessionId != grant.VaultSessionId ||
+                record.IdentityKind != grant.IdentityKind ||
+                record.VerifiedProcessSessionId != grant.VerifiedProcessSessionId ||
                 record.HardExpiresAt is null ||
                 record.IdleExpiresAt is null)
             {
@@ -862,5 +902,26 @@ public sealed class AccessGrantService : IDisposable
         public TaskCompletionSource<AccessGrantRequestOutcome> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool Canceled { get; set; }
+    }
+
+    private static void ValidateIdentity(
+        AgentClientIdentityKind identityKind,
+        Guid? verifiedProcessSessionId)
+    {
+        if (identityKind == AgentClientIdentityKind.VerifiedBridgeProcess &&
+            (verifiedProcessSessionId is null ||
+             verifiedProcessSessionId == Guid.Empty))
+        {
+            throw new ArgumentException(
+                "Verified bridge grants require a process session id.",
+                nameof(verifiedProcessSessionId));
+        }
+        if (identityKind == AgentClientIdentityKind.CompatibilityToken &&
+            verifiedProcessSessionId is not null)
+        {
+            throw new ArgumentException(
+                "Compatibility grants cannot bind a process session id.",
+                nameof(verifiedProcessSessionId));
+        }
     }
 }
