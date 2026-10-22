@@ -10,6 +10,7 @@ using CipherVault.Host.Session;
 using CipherVault.Ipc;
 using CipherVault.Security.Win;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace CipherVault.Host.Service;
 
@@ -102,7 +103,8 @@ public sealed class AdminPipeHostedService(
     StrictAdminInitializeProvider initializeProvider,
     StrictAdminVaultRpcProvider vaultRpcProvider,
     AdminSessionStore adminSessions,
-    HostSessionCoordinator sessions) : BackgroundService
+    HostSessionCoordinator sessions,
+    IHostApplicationLifetime applicationLifetime) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -176,7 +178,12 @@ public sealed class AdminPipeHostedService(
                     method,
                     payload,
                     cancellationToken),
-            adminSessions);
+            adminSessions,
+            StopHostCallback: () =>
+            {
+                applicationLifetime.StopApplication();
+                return Task.CompletedTask;
+            });
 
         while (!stoppingToken.IsCancellationRequested)
         {

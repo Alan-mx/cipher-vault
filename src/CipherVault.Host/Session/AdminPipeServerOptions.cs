@@ -38,4 +38,5 @@ public sealed record AdminPipeServerOptions(
         System.Text.Json.JsonElement,
         CancellationToken,
         Task<object>>? MethodProvider = null,
-    AdminSessionStore? AdminSessions = null);
+    AdminSessionStore? AdminSessions = null,
+    Func<Task>? StopHostCallback = null);

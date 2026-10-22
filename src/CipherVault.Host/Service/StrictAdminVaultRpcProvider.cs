@@ -19,8 +19,7 @@ public sealed class StrictAdminVaultRpcProvider(
     ApprovalStore approvals,
     IApprovalPrompt approvalPrompt,
     TransferCoordinator transfers,
-    ITransferPrompt transferPrompt,
-    IHostApplicationLifetime? applicationLifetime = null) : IDisposable
+    ITransferPrompt transferPrompt) : IDisposable
 {
     private readonly ConcurrentDictionary<Guid, TransferWorkspace> _importWorkspaces =
         new();
@@ -833,11 +832,6 @@ public sealed class StrictAdminVaultRpcProvider(
                             "lock_in_progress",
                             "Vault lock is still in progress.");
                     }
-                    _ = StopAfterResponseAsync(
-                        applicationLifetime
-                            ?? throw new AdminPipeRpcException(
-                                "unsupported_method",
-                                "Host application lifetime is unavailable."));
                     return true;
                 }
             default:
@@ -845,14 +839,6 @@ public sealed class StrictAdminVaultRpcProvider(
                     "unsupported_method",
                     $"Unsupported Admin method: {method}");
         }
-    }
-
-    private static async Task StopAfterResponseAsync(
-        IHostApplicationLifetime applicationLifetime)
-    {
-        await Task.Delay(TimeSpan.FromMilliseconds(100))
-            .ConfigureAwait(false);
-        applicationLifetime.StopApplication();
     }
 
     private static VaultActorKind Actor(AdminSession session)

@@ -18,13 +18,12 @@ namespace CipherVault.Host.Tests;
 public sealed class StrictAdminVaultRpcProviderTests
 {
     [Fact]
-    public async Task StopLocksVaultAndSignalsApplicationStop()
+    public async Task StopLocksVault()
     {
         await using var fixture = await HostTestFixture.CreateAsync();
         var sessions = fixture.App.Services.GetRequiredService<
             HostSessionCoordinator>();
         await sessions.UnlockAsync(HostCredentialPreference.Password);
-        var lifetime = new TestHostApplicationLifetime();
         var paths = CipherVaultServicePaths.Create(
             Path.Combine(fixture.Root, "ProgramFiles"),
             Path.Combine(fixture.Root, "ProgramData"),
@@ -35,8 +34,7 @@ public sealed class StrictAdminVaultRpcProviderTests
             new ApprovalStore(),
             new TestApprovalPrompt(new ApprovalStore()),
             new TransferCoordinator(paths),
-            new TestTransferPrompt(),
-            lifetime);
+            new TestTransferPrompt());
         var session = CreateAdminSession();
 
         var result = await provider.HandleAsync(
@@ -48,7 +46,6 @@ public sealed class StrictAdminVaultRpcProviderTests
             CancellationToken.None);
 
         Assert.Equal(true, result);
-        await lifetime.Stopping.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(
             VaultSessionState.Locked,
             (await sessions.GetSnapshotAsync()).State);
@@ -472,25 +469,6 @@ public sealed class StrictAdminVaultRpcProviderTests
             VaultSessionId: null,
             State: AdminSessionState.Active,
             RevocationReason: null);
-    }
-
-    private sealed class TestHostApplicationLifetime : IHostApplicationLifetime
-    {
-        private readonly CancellationTokenSource _stopping = new();
-        private readonly CancellationTokenSource _stopped = new();
-        public TaskCompletionSource Stopping { get; } = new(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public CancellationToken ApplicationStarted => CancellationToken.None;
-        public CancellationToken ApplicationStopping => _stopping.Token;
-        public CancellationToken ApplicationStopped => _stopped.Token;
-
-        public void StopApplication()
-        {
-            _stopping.Cancel();
-            _stopped.Cancel();
-            Stopping.TrySetResult();
-        }
     }
 
     private sealed class TestTransferPrompt : ITransferPrompt

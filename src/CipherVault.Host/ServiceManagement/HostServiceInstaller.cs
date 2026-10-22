@@ -334,6 +334,13 @@ public sealed class HostServiceInstaller(
         HostServiceInstallOptions options,
         CipherVaultServicePaths paths)
     {
+        if ((File.GetAttributes(paths.InstallRoot) &
+             FileAttributes.ReparsePoint) != 0)
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                $"Install root must not be a reparse point: {paths.InstallRoot}");
+        }
         if (string.IsNullOrWhiteSpace(options.UiExecutablePath) &&
             string.IsNullOrWhiteSpace(options.CliExecutablePath))
         {
@@ -369,6 +376,13 @@ public sealed class HostServiceInstaller(
                     VaultErrorCode.NotFound,
                     $"Service image was not found: {fullPath}");
             }
+            if ((File.GetAttributes(fullPath) &
+                 FileAttributes.ReparsePoint) != 0)
+            {
+                throw new VaultException(
+                    VaultErrorCode.InvalidInput,
+                    $"Service image must not be a reparse point: {fullPath}");
+            }
             result.Add(imageInspector.Inspect(fullPath));
         }
         return result;
@@ -401,7 +415,7 @@ public sealed class HostServiceInstaller(
         string signerThumbprint,
         IReadOnlyList<ServiceImageEvidence> images)
     {
-        var imagePaths = EnumerateImagePaths(options).ToArray();
+        var definitions = CreateImageDefinitions(options, images).ToArray();
         return new CipherVaultServiceConfigFile
         {
             ConfigVersion = CipherVaultServiceConfiguration.CurrentConfigVersion,
@@ -425,14 +439,14 @@ public sealed class HostServiceInstaller(
             ProcessPolicy = new CipherVaultProcessPolicyConfigFile
             {
                 AllowedSignerThumbprints = [signerThumbprint],
-                AllowedImages = imagePaths
-                    .Select((path, index) => new CipherVaultImagePolicyFile
+                AllowedImages = definitions
+                    .Select(definition => new CipherVaultImagePolicyFile
                     {
-                        Kind = ImageKind(index),
-                        Path = Path.GetFullPath(path),
-                        Sha256 = images[index].ImageSha256,
+                        Kind = definition.Kind.ToString(),
+                        Path = definition.Path,
+                        Sha256 = definition.Evidence.ImageSha256,
                         SignerThumbprint = signerThumbprint,
-                        SignerSubject = images[index].SignerSubject
+                        SignerSubject = definition.Evidence.SignerSubject
                     })
                     .ToArray(),
                 RequireSha256 = true
@@ -452,9 +466,15 @@ public sealed class HostServiceInstaller(
                         {
                             Kind = VerifiedProcessKind.McpBridge.ToString(),
                             Path = Path.GetFullPath(options.McpExecutablePath!),
-                            Sha256 = images[4].ImageSha256,
+                            Sha256 = definitions
+                                .Single(item => item.Kind ==
+                                    VerifiedProcessKind.McpBridge)
+                                .Evidence.ImageSha256,
                             SignerThumbprint = signerThumbprint,
-                            SignerSubject = images[4].SignerSubject
+                            SignerSubject = definitions
+                                .Single(item => item.Kind ==
+                                    VerifiedProcessKind.McpBridge)
+                                .Evidence.SignerSubject
                         }
                     }
                 ],
@@ -469,7 +489,13 @@ public sealed class HostServiceInstaller(
         Guid installId,
         IReadOnlyList<ServiceImageEvidence> images)
     {
-        var imagePaths = EnumerateImagePathsFromConfiguration(configuration)
+        var definitions = configuration.ProcessPolicy!.AllowedImages!
+            .Select((image, index) => (
+                Kind: Enum.Parse<VerifiedProcessKind>(
+                    image.Kind!,
+                    ignoreCase: true),
+                Path: Path.GetFullPath(image.Path!),
+                Evidence: images[index]))
             .ToArray();
         return new CipherVaultInstallPublicManifest
         {
@@ -488,19 +514,66 @@ public sealed class HostServiceInstaller(
             [
                 ToManifestImage(
                     VerifiedProcessKind.HostService.ToString(),
-                    Path.GetFullPath(imagePaths[0]),
-                    images[0],
+                    definitions[0].Path,
+                    definitions[0].Evidence,
                     configuration.ProcessPolicy!.AllowedSignerThumbprints![0])
             ],
-            AllowedClientImages = imagePaths
+            AllowedClientImages = definitions
                 .Skip(1)
-                .Select((path, index) => ToManifestImage(
-                    ImageKind(index + 1),
-                    Path.GetFullPath(path),
-                    images[index + 1],
+                .Select(definition => ToManifestImage(
+                    definition.Kind.ToString(),
+                    definition.Path,
+                    definition.Evidence,
                     configuration.ProcessPolicy!.AllowedSignerThumbprints![0]))
                 .ToArray()
         };
+    }
+
+    private static IReadOnlyList<(
+        VerifiedProcessKind Kind,
+        string Path,
+        ServiceImageEvidence Evidence)> CreateImageDefinitions(
+        HostServiceInstallOptions options,
+        IReadOnlyList<ServiceImageEvidence> images)
+    {
+        var definitions = new List<(
+            VerifiedProcessKind Kind,
+            string Path,
+            ServiceImageEvidence Evidence)>();
+        var index = 0;
+        definitions.Add(
+            (VerifiedProcessKind.HostService,
+                options.HostExecutablePath,
+                images[index++]));
+        if (!string.IsNullOrWhiteSpace(options.UiExecutablePath))
+        {
+            definitions.Add(
+                (VerifiedProcessKind.AdminUi,
+                    options.UiExecutablePath,
+                    images[index++]));
+        }
+        if (!string.IsNullOrWhiteSpace(options.CliExecutablePath))
+        {
+            definitions.Add(
+                (VerifiedProcessKind.AdminCli,
+                    options.CliExecutablePath,
+                    images[index++]));
+        }
+        definitions.Add(
+            (VerifiedProcessKind.AuthBroker,
+                options.BrokerExecutablePath!,
+                images[index++]));
+        definitions.Add(
+            (VerifiedProcessKind.McpBridge,
+                options.McpExecutablePath!,
+                images[index++]));
+        if (index != images.Count)
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "Service image count does not match the image policy.");
+        }
+        return definitions;
     }
 
     private static CipherVaultImagePolicyFile ToManifestImage(

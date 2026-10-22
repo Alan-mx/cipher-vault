@@ -202,6 +202,15 @@ public sealed class AdminPipeServer : IAsyncDisposable
             }
 
             await connection.WriteAsync(response, cancellationToken).ConfigureAwait(false);
+            if (response.Ok &&
+                string.Equals(
+                    request.Method,
+                    "admin.service.stop",
+                    StringCompare.Ordinal) &&
+                _options.StopHostCallback is not null)
+            {
+                await _options.StopHostCallback().ConfigureAwait(false);
+            }
             if (!response.Ok &&
                 string.Equals(
                     response.Error?.Code,
