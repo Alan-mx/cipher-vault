@@ -514,6 +514,62 @@ public sealed class AccessGrantService : IDisposable
         }
     }
 
+    public AccessGrantValidationResult PeekBridgeGrant(
+        AccessGrantContext grant)
+    {
+        ArgumentNullException.ThrowIfNull(grant);
+        lock (_sync)
+        {
+            if (!_grants.TryGetValue(grant.GrantId, out var record) ||
+                !string.Equals(
+                    record.ClientId,
+                    grant.ClientId,
+                    StringComparison.OrdinalIgnoreCase) ||
+                record.ClientInstanceId != grant.ClientInstanceId ||
+                record.VerifiedProcessSessionId !=
+                    grant.VerifiedProcessSessionId)
+            {
+                return new AccessGrantValidationResult(
+                    AccessGrantValidationStatus.Revoked,
+                    Grant: null,
+                    ReasonCode: "access_grant_revoked");
+            }
+
+            if (record.State != AccessGrantState.Active ||
+                record.VaultSessionId != grant.VaultSessionId)
+            {
+                return new AccessGrantValidationResult(
+                    record.State == AccessGrantState.Expired
+                        ? AccessGrantValidationStatus.Expired
+                        : AccessGrantValidationStatus.Revoked,
+                    Grant: null,
+                    ReasonCode: record.State == AccessGrantState.Expired
+                        ? "access_grant_expired"
+                        : "access_grant_revoked",
+                    Record: record);
+            }
+
+            var now = _timeProvider.GetUtcNow();
+            if (record.HardExpiresAt is null ||
+                record.IdleExpiresAt is null ||
+                now >= record.HardExpiresAt ||
+                now >= record.IdleExpiresAt)
+            {
+                return new AccessGrantValidationResult(
+                    AccessGrantValidationStatus.Expired,
+                    Grant: null,
+                    ReasonCode: "access_grant_expired",
+                    Record: record with { State = AccessGrantState.Expired });
+            }
+
+            return new AccessGrantValidationResult(
+                AccessGrantValidationStatus.Valid,
+                grant with { Scopes = record.Scopes },
+                ReasonCode: null,
+                Record: record);
+        }
+    }
+
     public async Task<AccessGrantRevokeStatus> RevokeAsync(
         string clientId,
         Guid grantId,

@@ -485,6 +485,34 @@ public sealed class AccessGrantServiceTests
     }
 
     [Fact]
+    public async Task PeekBridgeGrantDoesNotRefreshIdleExpiry()
+    {
+        var now = DateTimeOffset.Parse("2026-10-21T10:00:00Z");
+        var time = new MutableTimeProvider(now);
+        var service = new AccessGrantService(
+            timeProvider: time,
+            idleLifetime: TimeSpan.FromSeconds(10));
+        var generation = Generation(now, TimeSpan.FromHours(1));
+        var issued = await ApproveBridgeAsync(
+            service,
+            now,
+            AccessGrantScope.Read,
+            generation,
+            Guid.NewGuid());
+        var context = Context(issued.Record);
+
+        time.Advance(TimeSpan.FromSeconds(6));
+        Assert.Equal(
+            AccessGrantValidationStatus.Valid,
+            service.PeekBridgeGrant(context).Status);
+
+        time.Advance(TimeSpan.FromSeconds(4));
+        var expired = service.PeekBridgeGrant(context);
+        Assert.Equal(AccessGrantValidationStatus.Expired, expired.Status);
+        Assert.Equal("access_grant_expired", expired.ReasonCode);
+    }
+
+    [Fact]
     public async Task RevokeByProcessSessionCancelsOnlyThatBridge()
     {
         var now = DateTimeOffset.Parse("2026-10-21T10:00:00Z");

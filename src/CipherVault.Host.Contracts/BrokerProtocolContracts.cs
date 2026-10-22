@@ -68,3 +68,19 @@ public sealed record BridgeGrantData(
 public sealed record BridgeToolCallRequest(
     string ToolName,
     JsonElement Arguments);
+
+public sealed record BridgeStatusData(
+    bool GrantActive,
+    string ClientId,
+    string AccessMode,
+    Guid ProcessSessionId,
+    Guid BridgeInstanceId,
+    DateTimeOffset SessionExpiresAt,
+    IReadOnlyList<string> GrantScopes,
+    DateTimeOffset? GrantExpiresAt);
+
+public sealed record BridgeSessionCloseRequest(
+    string? Reason);
+
+public sealed record BridgeSessionCloseData(
+    string Reason);

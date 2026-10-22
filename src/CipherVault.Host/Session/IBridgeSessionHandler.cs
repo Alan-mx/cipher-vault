@@ -20,6 +20,11 @@ public interface IBridgeSessionHandler
         BridgeToolCallRequest request,
         CancellationToken cancellationToken);
 
+    Task<BridgeStatusData> GetStatusAsync(
+        BridgeProcessSession session,
+        AccessGrantContext? grant,
+        CancellationToken cancellationToken);
+
     Task CloseSessionAsync(
         Guid processSessionId,
         string reasonCode,

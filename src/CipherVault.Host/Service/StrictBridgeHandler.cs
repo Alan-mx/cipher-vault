@@ -222,6 +222,36 @@ public sealed class StrictBridgeHandler(
         }
     }
 
+    public async Task<BridgeStatusData> GetStatusAsync(
+        BridgeProcessSession session,
+        AccessGrantContext? grant,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        _ = await sessions.GetSnapshotAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var validation = grant is null
+            ? null
+            : grants.PeekBridgeGrant(grant);
+        var active = validation?.Status == AccessGrantValidationStatus.Valid;
+        var scopes = active && validation?.Grant is not null
+            ? AccessGrantScopes.ToNames(validation.Grant.Scopes)
+                .OrderBy(value => value, StringComparer.Ordinal)
+                .ToArray()
+            : [];
+        return new BridgeStatusData(
+            active,
+            session.ClientId,
+            session.AccessMode == McpAccessMode.ReadWrite
+                ? "readWrite"
+                : "readOnly",
+            session.ProcessSessionId,
+            session.BridgeInstanceId,
+            session.ExpiresAt,
+            scopes,
+            active ? validation?.Record?.HardExpiresAt : null);
+    }
+
     public async Task CloseSessionAsync(
         Guid processSessionId,
         string reasonCode,

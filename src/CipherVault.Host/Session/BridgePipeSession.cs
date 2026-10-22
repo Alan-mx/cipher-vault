@@ -12,6 +12,8 @@ internal sealed class BridgePipeSession : IAsyncDisposable
     private readonly BridgeProcessSession _session;
     private readonly PipeJsonConnection _connection;
     private readonly ChannelReader<PipeRpcRequest> _requests;
+    private readonly ChannelWriter<PipeRpcRequest> _requestWriter;
+    private bool _closeRequested;
     private AccessGrantContext? _grant;
     private bool _disposed;
 
@@ -20,6 +22,7 @@ internal sealed class BridgePipeSession : IAsyncDisposable
         BridgeProcessSession session,
         PipeJsonConnection connection,
         ChannelReader<PipeRpcRequest> requests,
+        ChannelWriter<PipeRpcRequest> requestWriter,
         CancellationToken sessionToken,
         CancellationToken handlerToken)
     {
@@ -27,6 +30,7 @@ internal sealed class BridgePipeSession : IAsyncDisposable
         _session = session;
         _connection = connection;
         _requests = requests;
+        _requestWriter = requestWriter;
         SessionToken = sessionToken;
         HandlerToken = handlerToken;
     }
@@ -58,6 +62,31 @@ internal sealed class BridgePipeSession : IAsyncDisposable
                     response = await HandleToolCallAsync(request)
                         .ConfigureAwait(false);
                 }
+                else if (string.Equals(
+                        request.Method,
+                        "bridge.status",
+                        StringComparison.Ordinal))
+                {
+                    response = await HandleStatusAsync(request)
+                        .ConfigureAwait(false);
+                }
+                else if (string.Equals(
+                        request.Method,
+                        PipeProtocol.PingMethod,
+                        StringComparison.Ordinal))
+                {
+                    response = PipeRpcCodec.Success(
+                        request.RequestId,
+                        new PipePingResponse(DateTimeOffset.UtcNow));
+                }
+                else if (string.Equals(
+                        request.Method,
+                        "bridge.session.close",
+                        StringComparison.Ordinal))
+                {
+                    response = await HandleCloseAsync(request)
+                        .ConfigureAwait(false);
+                }
                 else
                 {
                     response = PipeRpcCodec.Failure(
@@ -68,6 +97,10 @@ internal sealed class BridgePipeSession : IAsyncDisposable
 
                 await _connection.WriteAsync(response, cancellationToken)
                     .ConfigureAwait(false);
+                if (_closeRequested)
+                {
+                    _requestWriter.TryComplete();
+                }
             }
         }
         catch (OperationCanceledException) when (
@@ -169,4 +202,79 @@ internal sealed class BridgePipeSession : IAsyncDisposable
                 exception.Message);
         }
     }
+
+    private async Task<PipeRpcResponse> HandleStatusAsync(PipeRpcRequest request)
+    {
+        try
+        {
+            var status = await _options.Handler.GetStatusAsync(
+                _session,
+                _grant,
+                HandlerToken).ConfigureAwait(false);
+            return PipeRpcCodec.Success(request.RequestId, status);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is not IOException)
+        {
+            return PipeRpcCodec.Failure(
+                request.RequestId,
+                exception is AdminPipeRpcException rpcException
+                    ? rpcException.Code
+                    : "bridge_error",
+                exception.Message);
+        }
+    }
+
+    private async Task<PipeRpcResponse> HandleCloseAsync(PipeRpcRequest request)
+    {
+        try
+        {
+            var closeRequest = PipeRpcCodec.ReadPayload<BridgeSessionCloseRequest>(
+                request);
+            var reason = string.IsNullOrWhiteSpace(closeRequest.Reason)
+                ? "client-requested"
+                : closeRequest.Reason.Trim();
+            if (reason.Length > 200)
+            {
+                return PipeRpcCodec.Failure(
+                    request.RequestId,
+                    "invalid_input",
+                    "Bridge close reason is too long.");
+            }
+            await _options.Handler.CloseSessionAsync(
+                _session.ProcessSessionId,
+                reason,
+                HandlerToken).ConfigureAwait(false);
+            _grant = null;
+            _closeRequested = true;
+            return PipeRpcCodec.Success(
+                request.RequestId,
+                new BridgeSessionCloseData(reason));
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is InvalidDataException or System.Text.Json.JsonException)
+        {
+            return PipeRpcCodec.Failure(
+                request.RequestId,
+                "invalid_input",
+                "Bridge close request payload is invalid.");
+        }
+        catch (Exception exception) when (exception is not IOException)
+        {
+            return PipeRpcCodec.Failure(
+                request.RequestId,
+                exception is AdminPipeRpcException rpcException
+                    ? rpcException.Code
+                    : "bridge_error",
+                exception.Message);
+        }
+    }
 }
+

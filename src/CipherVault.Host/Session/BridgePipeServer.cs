@@ -163,6 +163,7 @@ public sealed class BridgePipeServer : IAsyncDisposable
             session,
             connection,
             requests.Reader,
+            requests.Writer,
             sessionCancellation.Token,
             handlerCancellation.Token);
         try
@@ -219,6 +220,9 @@ public sealed class BridgePipeServer : IAsyncDisposable
         catch (IOException)
         {
             disconnected.Cancel();
+        }
+        catch (ChannelClosedException)
+        {
         }
         catch (Exception)
         {

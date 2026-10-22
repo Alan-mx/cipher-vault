@@ -81,6 +81,167 @@ public sealed class StrictBridgePipeTests
     }
 
     [Fact]
+    public async Task BridgeSupportsPingStatusAndClientRequestedClose()
+    {
+        using var grants = new AccessGrantService();
+        var prompt = new ImmediateAccessGrantPrompt();
+        var handler = new RealGrantBridgeHandler(grants, prompt);
+        var pipeName = "CipherVault.Bridge.Test." + Guid.NewGuid().ToString("N");
+        var (server, options) = CreateServer(pipeName, handler);
+        await using var serverInstance = server;
+        var acceptTask = server.AcceptOnceAsync();
+        await using var client = await BridgePipeClientConnection.ConnectAsync(
+            new BridgePipeClientOptions(
+                pipeName,
+                options.ClientId,
+                options.AccessMode,
+                new HashSet<string>(StringComparer.Ordinal) { "read" },
+                options.AllowedClientPolicy,
+                CurrentProcessServicePolicy(options.OwnerSid)));
+
+        var ping = await client.PingAsync();
+        Assert.NotEqual(default, ping.ServerTime);
+
+        var beforeGrant = await client.GetStatusAsync();
+        Assert.False(beforeGrant.GrantActive);
+        Assert.Empty(beforeGrant.GrantScopes);
+
+        _ = await client.RequestGrantAsync();
+        var active = await client.GetStatusAsync();
+        Assert.True(active.GrantActive);
+        Assert.Contains("read", active.GrantScopes);
+
+        var closed = await client.CloseSessionAsync("test-close");
+        Assert.Equal("test-close", closed.Reason);
+        _ = await acceptTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Empty(grants.List());
+    }
+
+    [Fact]
+    public async Task CloseWithoutReasonUsesClientRequested()
+    {
+        using var grants = new AccessGrantService();
+        var handler = new RealGrantBridgeHandler(
+            grants,
+            new ImmediateAccessGrantPrompt());
+        var pipeName = "CipherVault.Bridge.Test." + Guid.NewGuid().ToString("N");
+        var (server, options) = CreateServer(pipeName, handler);
+        await using var serverInstance = server;
+        var acceptTask = server.AcceptOnceAsync();
+        await using var client = await BridgePipeClientConnection.ConnectAsync(
+            new BridgePipeClientOptions(
+                pipeName,
+                options.ClientId,
+                options.AccessMode,
+                new HashSet<string>(StringComparer.Ordinal) { "read" },
+                options.AllowedClientPolicy,
+                CurrentProcessServicePolicy(options.OwnerSid)));
+
+        var closed = await client.CloseSessionAsync();
+
+        Assert.Equal("client-requested", closed.Reason);
+        _ = await acceptTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Empty(grants.List());
+    }
+
+    [Fact]
+    public async Task OverlongCloseReasonIsRejectedWithoutClosingSession()
+    {
+        using var grants = new AccessGrantService();
+        var handler = new RealGrantBridgeHandler(
+            grants,
+            new ImmediateAccessGrantPrompt());
+        var pipeName = "CipherVault.Bridge.Test." + Guid.NewGuid().ToString("N");
+        var (server, options) = CreateServer(pipeName, handler);
+        await using var serverInstance = server;
+        var acceptTask = server.AcceptOnceAsync();
+        await using var client = await BridgePipeClientConnection.ConnectAsync(
+            new BridgePipeClientOptions(
+                pipeName,
+                options.ClientId,
+                options.AccessMode,
+                new HashSet<string>(StringComparer.Ordinal) { "read" },
+                options.AllowedClientPolicy,
+                CurrentProcessServicePolicy(options.OwnerSid)));
+        _ = await client.RequestGrantAsync();
+
+        var exception = await Assert.ThrowsAsync<PipeRpcException>(() =>
+            client.CloseSessionAsync(new string('x', 201)));
+
+        Assert.Equal("invalid_input", exception.Code);
+        var status = await client.GetStatusAsync();
+        Assert.True(status.GrantActive);
+        Assert.Contains("read", status.GrantScopes);
+
+        var closed = await client.CloseSessionAsync("test-cleanup");
+        Assert.Equal("test-cleanup", closed.Reason);
+        _ = await acceptTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Empty(grants.List());
+    }
+
+    [Fact]
+    public async Task StatusReportsRevokedGrantThroughStrictHandler()
+    {
+        await using var environment = await CreateRealBridgeEnvironmentAsync();
+        var acceptTask = environment.Server.AcceptOnceAsync();
+        await using var client = await BridgePipeClientConnection.ConnectAsync(
+            new BridgePipeClientOptions(
+                environment.Options.PipeName,
+                environment.Options.ClientId,
+                environment.Options.AccessMode,
+                new HashSet<string>(StringComparer.Ordinal) { "read" },
+                environment.Options.AllowedClientPolicy,
+                CurrentProcessServicePolicy(environment.Options.OwnerSid)));
+        var grant = await client.RequestGrantAsync();
+        Assert.True((await client.GetStatusAsync()).GrantActive);
+
+        Assert.Equal(
+            AccessGrantRevokeStatus.Revoked,
+            await environment.Grants.RevokeByIdAsync(
+                grant.GrantId,
+                "admin-requested"));
+
+        var revoked = await client.GetStatusAsync();
+        Assert.False(revoked.GrantActive);
+        Assert.Empty(revoked.GrantScopes);
+        Assert.Null(revoked.GrantExpiresAt);
+
+        _ = await client.CloseSessionAsync();
+        _ = await acceptTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task StatusReportsExpiredGrantThroughStrictHandler()
+    {
+        var time = new MutableTimeProvider(DateTimeOffset.UtcNow);
+        using var grants = new AccessGrantService(
+            timeProvider: time,
+            idleLifetime: TimeSpan.FromSeconds(10));
+        await using var environment = await CreateRealBridgeEnvironmentAsync(grants);
+        var acceptTask = environment.Server.AcceptOnceAsync();
+        await using var client = await BridgePipeClientConnection.ConnectAsync(
+            new BridgePipeClientOptions(
+                environment.Options.PipeName,
+                environment.Options.ClientId,
+                environment.Options.AccessMode,
+                new HashSet<string>(StringComparer.Ordinal) { "read" },
+                environment.Options.AllowedClientPolicy,
+                CurrentProcessServicePolicy(environment.Options.OwnerSid)));
+        _ = await client.RequestGrantAsync();
+        Assert.True((await client.GetStatusAsync()).GrantActive);
+
+        time.Advance(TimeSpan.FromSeconds(10));
+
+        var expired = await client.GetStatusAsync();
+        Assert.False(expired.GrantActive);
+        Assert.Empty(expired.GrantScopes);
+        Assert.Null(expired.GrantExpiresAt);
+
+        _ = await client.CloseSessionAsync();
+        _ = await acceptTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
     public async Task PendingGrantIsCancelledWhenBridgeDisconnects()
     {
         using var grants = new AccessGrantService();
@@ -383,11 +544,12 @@ public sealed class StrictBridgePipeTests
         return JsonDocument.Parse(result);
     }
 
-    private static async Task<StrictBridgeTestEnvironment> CreateRealBridgeEnvironmentAsync()
+    private static async Task<StrictBridgeTestEnvironment> CreateRealBridgeEnvironmentAsync(
+        AccessGrantService? grants = null)
     {
         var fixture = await HostTestFixture.CreateAsync();
         var sessions = fixture.App.Services.GetRequiredService<HostSessionCoordinator>();
-        var grants = fixture.App.Services.GetRequiredService<AccessGrantService>();
+        grants ??= fixture.App.Services.GetRequiredService<AccessGrantService>();
         var gateway = fixture.App.Services.GetRequiredService<HostVaultGateway>();
         await sessions.UnlockAsync(HostCredentialPreference.Password);
 
@@ -471,6 +633,14 @@ public sealed class StrictBridgePipeTests
             throw new NotSupportedException();
         }
 
+        public Task<BridgeStatusData> GetStatusAsync(
+            BridgeProcessSession session,
+            AccessGrantContext? grant,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(CreateStatus(session, grant));
+        }
+
         public Task CloseSessionAsync(
             Guid processSessionId,
             string reasonCode,
@@ -500,6 +670,14 @@ public sealed class StrictBridgePipeTests
             CancellationToken cancellationToken)
         {
             throw new NotSupportedException();
+        }
+
+        public Task<BridgeStatusData> GetStatusAsync(
+            BridgeProcessSession session,
+            AccessGrantContext? grant,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(CreateStatus(session, grant));
         }
 
         public Task CloseSessionAsync(
@@ -639,6 +817,34 @@ public sealed class StrictBridgePipeTests
             throw new NotSupportedException();
         }
 
+        public Task<BridgeStatusData> GetStatusAsync(
+            BridgeProcessSession session,
+            AccessGrantContext? grant,
+            CancellationToken cancellationToken)
+        {
+            var validation = grant is null
+                ? null
+                : grants.PeekBridgeGrant(grant);
+            var active =
+                validation?.Status == AccessGrantValidationStatus.Valid;
+            var scopes = active && validation?.Grant is not null
+                ? AccessGrantScopes.ToNames(validation.Grant.Scopes)
+                    .OrderBy(value => value, StringComparer.Ordinal)
+                    .ToArray()
+                : [];
+            return Task.FromResult(new BridgeStatusData(
+                active,
+                session.ClientId,
+                session.AccessMode == McpAccessMode.ReadWrite
+                    ? "readWrite"
+                    : "readOnly",
+                session.ProcessSessionId,
+                session.BridgeInstanceId,
+                session.ExpiresAt,
+                scopes,
+                active ? validation?.Record?.HardExpiresAt : null));
+        }
+
         public Task CloseSessionAsync(
             Guid processSessionId,
             string reasonCode,
@@ -665,6 +871,42 @@ public sealed class StrictBridgePipeTests
                 };
             }
             return AccessGrantScopes.Normalize(scopes);
+        }
+    }
+
+    private static BridgeStatusData CreateStatus(
+        BridgeProcessSession session,
+        AccessGrantContext? grant)
+    {
+        return new BridgeStatusData(
+            GrantActive: grant is not null,
+            session.ClientId,
+            session.AccessMode == McpAccessMode.ReadWrite
+                ? "readWrite"
+                : "readOnly",
+            session.ProcessSessionId,
+            session.BridgeInstanceId,
+            session.ExpiresAt,
+            grant is null
+                ? []
+                : AccessGrantScopes.ToNames(grant.Scopes)
+                    .OrderBy(value => value, StringComparer.Ordinal)
+                    .ToArray(),
+            GrantExpiresAt: null);
+    }
+
+    private sealed class MutableTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        private DateTimeOffset _now = now;
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            return _now;
+        }
+
+        public void Advance(TimeSpan duration)
+        {
+            _now += duration;
         }
     }
 

@@ -152,6 +152,34 @@ public sealed class BridgePipeClientConnection : IAsyncDisposable
             cancellationToken);
     }
 
+    public Task<BridgeStatusData> GetStatusAsync(
+        CancellationToken cancellationToken = default)
+    {
+        return CallAsync<object, BridgeStatusData>(
+            "bridge.status",
+            new { },
+            cancellationToken);
+    }
+
+    public Task<PipePingResponse> PingAsync(
+        CancellationToken cancellationToken = default)
+    {
+        return CallAsync<object, PipePingResponse>(
+            PipeProtocol.PingMethod,
+            new { },
+            cancellationToken);
+    }
+
+    public Task<BridgeSessionCloseData> CloseSessionAsync(
+        string? reason = null,
+        CancellationToken cancellationToken = default)
+    {
+        return CallAsync<BridgeSessionCloseRequest, BridgeSessionCloseData>(
+            "bridge.session.close",
+            new BridgeSessionCloseRequest(reason),
+            cancellationToken);
+    }
+
     private async Task<TResponse> CallAsync<TRequest, TResponse>(
         string method,
         TRequest payload,
