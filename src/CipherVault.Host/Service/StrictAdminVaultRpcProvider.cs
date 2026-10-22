@@ -1,8 +1,8 @@
-using System.Collections.Concurrent;
 using System.IO;
 using System.Text.Json;
 using CipherVault.Core.Backup;
 using CipherVault.Core.Documents;
+using CipherVault.Core.Errors;
 using CipherVault.Core.ImportExport;
 using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
@@ -19,10 +19,11 @@ public sealed class StrictAdminVaultRpcProvider(
     ApprovalStore approvals,
     IApprovalPrompt approvalPrompt,
     TransferCoordinator transfers,
-    ITransferPrompt transferPrompt) : IDisposable
+    ITransferPrompt transferPrompt,
+    ImportWorkspaceRegistry? importWorkspaces = null) : IDisposable
 {
-    private readonly ConcurrentDictionary<Guid, TransferWorkspace> _importWorkspaces =
-        new();
+    private readonly ImportWorkspaceRegistry _importWorkspaces =
+        importWorkspaces ?? new ImportWorkspaceRegistry();
 
     public async Task<object> HandleAsync(
         AdminSession session,
@@ -431,6 +432,7 @@ public sealed class StrictAdminVaultRpcProvider(
                             token),
                         cancellationToken).ConfigureAwait(false);
                     transfers.FreezeManifest(backupWorkspace);
+                    VerifyTransferManifest(transfers, backupWorkspace);
                     var backupTransfer = await transferPrompt.TransferAsync(
                         new HostTransferRequest(
                             backupWorkspace.TransferId,
@@ -514,6 +516,7 @@ public sealed class StrictAdminVaultRpcProvider(
                             token),
                         cancellationToken).ConfigureAwait(false);
                     transfers.FreezeManifest(exportWorkspace);
+                    VerifyTransferManifest(transfers, exportWorkspace);
                     var exportTransfer = await transferPrompt.TransferAsync(
                         new HostTransferRequest(
                             exportWorkspace.TransferId,
@@ -609,8 +612,7 @@ public sealed class StrictAdminVaultRpcProvider(
                                 transfer.ErrorCode ?? "transfer_failed",
                                 "Import file transfer did not complete.");
                         }
-                        transfers.EnsureNoReparsePoints(workspace.PayloadPath);
-                        transfers.FreezeManifest(workspace);
+                        FreezeAndVerifyImport(transfers, workspace);
                         var preview = await vault.ExecuteAsync(
                             (service, token) => service.PreviewImportAsync(
                                 workspace.PayloadPath,
@@ -639,9 +641,7 @@ public sealed class StrictAdminVaultRpcProvider(
                             Guid.Empty,
                             method,
                             payload));
-                    if (!_importWorkspaces.TryGetValue(
-                            commitRequest.JobId,
-                            out var importWorkspace))
+                    if (!_importWorkspaces.Contains(commitRequest.JobId))
                     {
                         throw new AdminPipeRpcException(
                             "not_found",
@@ -680,9 +680,10 @@ public sealed class StrictAdminVaultRpcProvider(
                         session,
                         commitSnapshot.SessionId.Value,
                         ApprovalOperationKind.CommitImport);
-                    if (!_importWorkspaces.TryRemove(
+                    if (!_importWorkspaces.TryTake(
                             commitRequest.JobId,
-                            out importWorkspace))
+                            out var importWorkspace) ||
+                        importWorkspace is null)
                     {
                         throw new AdminPipeRpcException(
                             "not_found",
@@ -690,6 +691,7 @@ public sealed class StrictAdminVaultRpcProvider(
                     }
                     using (importWorkspace)
                     {
+                        VerifyTransferManifest(transfers, importWorkspace);
                         return await vault.ExecuteMaintenanceAsync(
                             (service, token) => service.CommitImportAsync(
                                 commitRequest.JobId,
@@ -768,22 +770,26 @@ public sealed class StrictAdminVaultRpcProvider(
                             importTransfer.ErrorCode ?? "transfer_failed",
                             "Backup import into staging did not complete.");
                     }
-                    transfers.EnsureNoReparsePoints(restoreWorkspace.PayloadPath);
-                    transfers.FreezeManifest(restoreWorkspace);
-                    var restoredPath = Path.Combine(
-                        restoreWorkspace.RootPath,
+                    FreezeAndVerifyImport(transfers, restoreWorkspace);
+                    using var restoreExportWorkspace = transfers.CreateWorkspace(
+                        HostTransferDirection.Export,
+                        HostTransferPayloadKind.Directory,
+                        session.Client.UserSid,
+                        session.Client.LogonSid,
                         "restored");
                     var restored = await sessions.RestoreBackupToNewAsync(
                         restoreWorkspace.PayloadPath,
-                        restoredPath,
+                        restoreExportWorkspace.PayloadPath,
                         Actor(session),
                         cancellationToken).ConfigureAwait(false);
+                    transfers.FreezeManifest(restoreExportWorkspace);
+                    VerifyTransferManifest(transfers, restoreExportWorkspace);
                     var exportTransfer = await transferPrompt.TransferAsync(
                         new HostTransferRequest(
-                            restoreWorkspace.TransferId,
+                            restoreExportWorkspace.TransferId,
                             HostTransferDirection.Export,
                             HostTransferPayloadKind.Directory,
-                            restoredPath,
+                            restoreExportWorkspace.PayloadPath,
                             restoreBackupRequest.TargetPath,
                             restoreOperation.ExpiresAt),
                         cancellationToken).ConfigureAwait(false);
@@ -865,12 +871,44 @@ public sealed class StrictAdminVaultRpcProvider(
         }
     }
 
+    private static void VerifyTransferManifest(
+        TransferCoordinator transfers,
+        TransferWorkspace workspace)
+    {
+        try
+        {
+            transfers.VerifyManifest(workspace);
+        }
+        catch (VaultException exception) when (
+            exception.Code == VaultErrorCode.InvalidInput)
+        {
+            throw new AdminPipeRpcException(
+                "transfer_invalid",
+                exception.Message);
+        }
+    }
+
+    private static void FreezeAndVerifyImport(
+        TransferCoordinator transfers,
+        TransferWorkspace workspace)
+    {
+        try
+        {
+            transfers.EnsureNoReparsePoints(workspace.PayloadPath);
+            transfers.FreezeManifest(workspace);
+            transfers.VerifyManifest(workspace);
+        }
+        catch (VaultException exception) when (
+            exception.Code == VaultErrorCode.InvalidInput)
+        {
+            throw new AdminPipeRpcException(
+                "transfer_invalid",
+                exception.Message);
+        }
+    }
+
     public void Dispose()
     {
-        foreach (var workspace in _importWorkspaces.Values)
-        {
-            workspace.Dispose();
-        }
-        _importWorkspaces.Clear();
+        _importWorkspaces.Dispose();
     }
 }

@@ -97,8 +97,21 @@ public sealed class TransferWorkspace : IDisposable
 
 public sealed class TransferCoordinator : IDisposable
 {
+    public const string ManifestFormat = "cipher-vault-transfer";
+    public const int ManifestFormatVersion = 1;
     public static readonly TimeSpan DefaultWorkspaceLifetime = TimeSpan.FromMinutes(30);
     public static readonly TimeSpan DefaultSweepInterval = TimeSpan.FromMinutes(1);
+    private const long MaxManifestBytes = 16 * 1024 * 1024;
+    private static readonly JsonSerializerOptions ManifestJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        Converters =
+        {
+            new JsonStringEnumConverter(
+                JsonNamingPolicy.CamelCase,
+                allowIntegerValues: false)
+        }
+    };
 
     private readonly ConcurrentDictionary<Guid, TransferWorkspace> _activeWorkspaces = new();
     private readonly CipherVaultServicePaths _paths;
@@ -334,34 +347,311 @@ public sealed class TransferCoordinator : IDisposable
                     VaultErrorCode.InvalidInput,
                     "Transfer path has no staging parent.");
         }
+
+        if (File.Exists(fullPath))
+        {
+            if ((File.GetAttributes(fullPath) & FileAttributes.ReparsePoint) != 0)
+            {
+                throw new VaultException(
+                    VaultErrorCode.InvalidInput,
+                    "Transfer path contains a reparse point.");
+            }
+        }
+        else if (Directory.Exists(fullPath))
+        {
+            _ = EnumerateStagedFiles(fullPath);
+        }
+    }
+
+    public TransferManifest VerifyManifest(TransferWorkspace workspace)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(workspace);
+        if (!Directory.Exists(workspace.RootPath))
+        {
+            throw InvalidManifest(
+                "Transfer workspace is no longer available.");
+        }
+
+        var manifest = ReadManifest(workspace);
+        ValidateManifestHeader(workspace, manifest);
+        var expected = ValidateManifestEntries(workspace, manifest);
+        var actual = EnumerateStagedFiles(workspace.RootPath);
+        actual.Remove(Path.GetFileName(workspace.ManifestPath));
+        if (actual.Count != expected.Count)
+        {
+            throw InvalidManifest(
+                "Transfer manifest does not match the staged files.");
+        }
+
+        foreach (var entry in expected.Values)
+        {
+            if (!actual.TryGetValue(entry.RelativePath, out var path))
+            {
+                throw InvalidManifest(
+                    "Transfer manifest references a missing file.");
+            }
+            var info = new FileInfo(path);
+            if (info.Length != entry.SizeBytes)
+            {
+                throw InvalidManifest(
+                    "Transfer file size does not match the manifest.");
+            }
+            using var stream = info.OpenRead();
+            var hash = Convert.ToHexString(SHA256.HashData(stream));
+            if (!string.Equals(
+                    hash,
+                    entry.Sha256,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw InvalidManifest(
+                    "Transfer file hash does not match the manifest.");
+            }
+        }
+
+        foreach (var relativePath in actual.Keys)
+        {
+            if (!expected.ContainsKey(relativePath))
+            {
+                throw InvalidManifest(
+                    "Transfer staging contains an unlisted file.");
+            }
+        }
+
+        ValidatePayload(workspace, expected);
+        return manifest;
+    }
+
+    private static TransferManifest ReadManifest(TransferWorkspace workspace)
+    {
+        var info = new FileInfo(workspace.ManifestPath);
+        if (!info.Exists ||
+            (info.Attributes & FileAttributes.ReparsePoint) != 0)
+        {
+            throw InvalidManifest("Transfer manifest is missing.");
+        }
+        if (info.Length <= 0 || info.Length > MaxManifestBytes)
+        {
+            throw InvalidManifest("Transfer manifest size is invalid.");
+        }
+        try
+        {
+            using var stream = info.OpenRead();
+            return JsonSerializer.Deserialize<TransferManifest>(
+                    stream,
+                    ManifestJsonOptions)
+                ?? throw new JsonException("Transfer manifest is empty.");
+        }
+        catch (Exception exception) when (
+            exception is JsonException or NotSupportedException)
+        {
+            throw InvalidManifest("Transfer manifest is invalid.");
+        }
+    }
+
+    private static void ValidateManifestHeader(
+        TransferWorkspace workspace,
+        TransferManifest manifest)
+    {
+        if (!string.Equals(
+                manifest.Format,
+                ManifestFormat,
+                StringComparison.Ordinal) ||
+            manifest.FormatVersion != ManifestFormatVersion ||
+            manifest.TransferId != workspace.TransferId ||
+            manifest.Direction != workspace.Direction ||
+            manifest.PayloadKind != workspace.PayloadKind ||
+            manifest.CreatedAt == default ||
+            manifest.ExpiresAt != workspace.ExpiresAt ||
+            manifest.Files is null)
+        {
+            throw InvalidManifest(
+                "Transfer manifest metadata is invalid.");
+        }
+    }
+
+    private static Dictionary<string, TransferFileEntry> ValidateManifestEntries(
+        TransferWorkspace workspace,
+        TransferManifest manifest)
+    {
+        var expected = new Dictionary<string, TransferFileEntry>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in manifest.Files)
+        {
+            if (entry is null)
+            {
+                throw InvalidManifest("Transfer manifest entry is invalid.");
+            }
+            var relativePath = NormalizeRelativePath(entry.RelativePath);
+            if (entry.SizeBytes < 0 ||
+                entry.Sha256 is null ||
+                entry.Sha256.Length != 64 ||
+                !entry.Sha256.All(Uri.IsHexDigit))
+            {
+                throw InvalidManifest("Transfer manifest entry is invalid.");
+            }
+            if (string.Equals(
+                    relativePath,
+                    Path.GetFileName(workspace.ManifestPath),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw InvalidManifest(
+                    "Transfer manifest cannot list itself.");
+            }
+            var fullPath = Path.GetFullPath(
+                Path.Combine(workspace.RootPath, relativePath));
+            if (!IsUnderRoot(workspace.RootPath, fullPath))
+            {
+                throw InvalidManifest(
+                    "Transfer manifest path is outside staging.");
+            }
+            if (!expected.TryAdd(
+                    relativePath,
+                    entry with { RelativePath = relativePath }))
+            {
+                throw InvalidManifest(
+                    "Transfer manifest contains duplicate paths.");
+            }
+        }
+        if (expected.Count != manifest.Files.Count)
+        {
+            throw InvalidManifest(
+                "Transfer manifest contains duplicate paths.");
+        }
+        return expected;
+    }
+
+    private static void ValidatePayload(
+        TransferWorkspace workspace,
+        IReadOnlyDictionary<string, TransferFileEntry> expected)
+    {
+        var payloadRelative = NormalizeRelativePath(
+            Path.GetRelativePath(workspace.RootPath, workspace.PayloadPath));
+        if (workspace.PayloadKind == HostTransferPayloadKind.File)
+        {
+            if (!File.Exists(workspace.PayloadPath) ||
+                (File.GetAttributes(workspace.PayloadPath) &
+                    FileAttributes.ReparsePoint) != 0 ||
+                expected.Count != 1 ||
+                !expected.ContainsKey(payloadRelative))
+            {
+                throw InvalidManifest(
+                    "Transfer payload file is missing or invalid.");
+            }
+            return;
+        }
+
+        if (!Directory.Exists(workspace.PayloadPath) ||
+            (File.GetAttributes(workspace.PayloadPath) &
+                FileAttributes.ReparsePoint) != 0)
+        {
+            throw InvalidManifest(
+                "Transfer payload directory is missing or invalid.");
+        }
+    }
+
+    private static string NormalizeRelativePath(string relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath))
+        {
+            throw InvalidManifest(
+                "Transfer manifest path is invalid.");
+        }
+        var normalized = relativePath.Replace('\\', '/');
+        if (normalized.StartsWith('/') ||
+            normalized.EndsWith('/') ||
+            normalized.Contains(':') ||
+            Path.IsPathRooted(normalized))
+        {
+            throw InvalidManifest(
+                "Transfer manifest path is invalid.");
+        }
+        var segments = normalized.Split('/');
+        if (segments.Any(segment =>
+                segment.Length == 0 ||
+                string.Equals(segment, ".", StringComparison.Ordinal) ||
+                string.Equals(segment, "..", StringComparison.Ordinal)))
+        {
+            throw InvalidManifest(
+                "Transfer manifest path is invalid.");
+        }
+        return normalized;
+    }
+
+    private static bool IsUnderRoot(string rootPath, string candidatePath)
+    {
+        var root = Path.GetFullPath(rootPath).TrimEnd(
+            Path.DirectorySeparatorChar,
+            Path.AltDirectorySeparatorChar);
+        return candidatePath.StartsWith(
+            root + Path.DirectorySeparatorChar,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static Dictionary<string, string> EnumerateStagedFiles(
+        string rootPath)
+    {
+        var root = Path.GetFullPath(rootPath);
+        var files = new Dictionary<string, string>(
+            StringComparer.OrdinalIgnoreCase);
+        var pending = new Stack<string>();
+        pending.Push(root);
+        while (pending.Count > 0)
+        {
+            var directory = pending.Pop();
+            foreach (var entry in Directory.EnumerateFileSystemEntries(
+                         directory))
+            {
+                var attributes = File.GetAttributes(entry);
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                {
+                    throw InvalidManifest(
+                        "Transfer staging contains a reparse point.");
+                }
+                if ((attributes & FileAttributes.Directory) != 0)
+                {
+                    pending.Push(entry);
+                    continue;
+                }
+                var relativePath = Path.GetRelativePath(root, entry)
+                    .Replace('\\', '/');
+                if (!files.TryAdd(relativePath, entry))
+                {
+                    throw InvalidManifest(
+                        "Transfer staging contains duplicate paths.");
+                }
+            }
+        }
+        return files;
+    }
+
+    private static VaultException InvalidManifest(string message)
+    {
+        return new VaultException(VaultErrorCode.InvalidInput, message);
     }
 
     private static TransferManifest WriteManifest(TransferWorkspace workspace)
     {
-        var files = Directory.EnumerateFiles(
-                workspace.RootPath,
-                "*",
-                SearchOption.AllDirectories)
-            .Where(path => !string.Equals(
-                Path.GetFullPath(path),
-                workspace.ManifestPath,
+        var manifestName = Path.GetFileName(workspace.ManifestPath);
+        var files = EnumerateStagedFiles(workspace.RootPath)
+            .Where(pair => !string.Equals(
+                pair.Key,
+                manifestName,
                 StringComparison.OrdinalIgnoreCase))
-            .Select(path =>
+            .Select(pair =>
             {
-                var info = new FileInfo(path);
+                var info = new FileInfo(pair.Value);
                 using var stream = info.OpenRead();
                 return new TransferFileEntry(
-                    Path.GetRelativePath(
-                        workspace.RootPath,
-                        path).Replace('\\', '/'),
+                    pair.Key,
                     info.Length,
                     Convert.ToHexString(SHA256.HashData(stream)));
             })
             .OrderBy(item => item.RelativePath, StringComparer.Ordinal)
             .ToArray();
         var manifest = new TransferManifest(
-            "cipher-vault-transfer",
-            1,
+            ManifestFormat,
+            ManifestFormatVersion,
             workspace.TransferId,
             workspace.Direction,
             workspace.PayloadKind,
@@ -370,15 +660,7 @@ public sealed class TransferCoordinator : IDisposable
             workspace.ExpiresAt);
         File.WriteAllText(
             workspace.ManifestPath,
-            JsonSerializer.Serialize(
-                manifest,
-                new JsonSerializerOptions
-                {
-                    Converters =
-                    {
-                        new JsonStringEnumConverter(JsonNamingPolicy.CamelCase)
-                    }
-                }));
+            JsonSerializer.Serialize(manifest, ManifestJsonOptions));
         return manifest;
     }
 

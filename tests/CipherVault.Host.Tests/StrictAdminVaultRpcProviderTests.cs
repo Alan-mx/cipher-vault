@@ -417,6 +417,78 @@ public sealed class StrictAdminVaultRpcProviderTests
         Assert.Equal(6, approvalPrompt.RequestCount);
     }
 
+    [Fact]
+    public async Task ImportCommitAfterWorkspaceExpiryReturnsNotFound()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var sessions = fixture.App.Services.GetRequiredService<
+            HostSessionCoordinator>();
+        await sessions.UnlockAsync(HostCredentialPreference.Password);
+        var approvals = new ApprovalStore();
+        var approvalPrompt = new TestApprovalPrompt(approvals);
+        var paths = CipherVaultServicePaths.Create(
+            Path.Combine(fixture.Root, "ProgramFiles"),
+            Path.Combine(fixture.Root, "ProgramData"),
+            Path.Combine(fixture.Root, "LocalAppData"));
+        using var transfers = new TransferCoordinator(paths);
+        var time = new MutableTimeProvider(DateTimeOffset.UtcNow);
+        using var registry = new ImportWorkspaceRegistry(
+            time,
+            TimeSpan.FromHours(1));
+        using var provider = new StrictAdminVaultRpcProvider(
+            fixture.App.Services.GetRequiredService<HostVaultGateway>(),
+            sessions,
+            approvals,
+            approvalPrompt,
+            transfers,
+            new TestTransferPrompt(),
+            registry);
+        var session = CreateAdminSession();
+        var source = Path.Combine(fixture.Root, "import-source");
+        Directory.CreateDirectory(source);
+        File.WriteAllText(
+            Path.Combine(source, "imported.md"),
+            "# Imported\n\nExpired staging.");
+        var previewResult = await provider.HandleAsync(
+            session,
+            "admin.maintenance.import_preview",
+            JsonSerializer.SerializeToElement(
+                new HostImportPreviewRequest(source),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            CancellationToken.None);
+        var preview = Assert.IsType<VaultImportPreview>(previewResult);
+        Assert.Equal(1, registry.Count);
+
+        time.Advance(TimeSpan.FromHours(1));
+
+        var exception = await Assert.ThrowsAsync<AdminPipeRpcException>(() =>
+            provider.HandleAsync(
+                session,
+                "admin.maintenance.import_commit",
+                JsonSerializer.SerializeToElement(
+                    new AdminImportCommitRequest(preview.JobId),
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                CancellationToken.None));
+
+        Assert.Equal("not_found", exception.Code);
+        Assert.Equal(0, registry.Count);
+    }
+
+    private sealed class MutableTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        private DateTimeOffset _now = now;
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            return _now;
+        }
+
+        public void Advance(TimeSpan duration)
+        {
+            _now += duration;
+        }
+    }
+
     private sealed class TestApprovalPrompt(ApprovalStore store)
         : IApprovalPrompt
     {
