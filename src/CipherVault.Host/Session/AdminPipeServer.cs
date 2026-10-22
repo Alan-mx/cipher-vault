@@ -1,6 +1,8 @@
 using System.IO;
 using System.IO.Pipes;
+using System.Text.Json;
 using StringCompare = System.StringComparison;
+using CipherVault.Core.Errors;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Security;
 using CipherVault.Ipc;
@@ -10,6 +12,8 @@ namespace CipherVault.Host.Session;
 
 public sealed class AdminPipeServer : IAsyncDisposable
 {
+    private static readonly JsonSerializerOptions JsonOptions =
+        new(JsonSerializerDefaults.Web);
     private readonly AdminPipeServerOptions _options;
     private readonly AdminSessionStore _sessions;
     private readonly NamedPipeServerStream _server;
@@ -215,29 +219,75 @@ public sealed class AdminPipeServer : IAsyncDisposable
     {
         if (string.Equals(request.Method, "admin.status", StringCompare.Ordinal))
         {
-            try
-            {
-                var status = await (_options.StatusProvider?.Invoke(
+            return await ExecuteAsync(
+                request,
+                () => _options.StatusProvider?.Invoke(
                         session,
                         cancellationToken) ??
                     Task.FromResult(CreateDefaultStatus()))
-                    .ConfigureAwait(false);
-                return PipeRpcCodec.Success(request.RequestId, status);
-            }
-            catch (Exception exception) when (
-                exception is not OperationCanceledException)
-            {
-                return PipeRpcCodec.Failure(
-                    request.RequestId,
-                    "storage_error",
-                    exception.Message);
-            }
+                .ConfigureAwait(false);
+        }
+        if (string.Equals(
+                request.Method,
+                "admin.session.lock",
+                StringCompare.Ordinal))
+        {
+            return await ExecuteAsync(
+                request,
+                async () =>
+                {
+                    if (_options.LockProvider is null)
+                    {
+                        throw new InvalidOperationException(
+                            "Admin session lock is not configured.");
+                    }
+                    var lockRequest = request.Payload.Deserialize<HostLockRequest>(
+                        JsonOptions)
+                        ?? throw new InvalidDataException(
+                            "Admin lock request was empty.");
+                    var reason = string.IsNullOrWhiteSpace(lockRequest.Reason)
+                        ? "user-requested"
+                        : lockRequest.Reason.Trim();
+                    if (reason.Length > 200)
+                    {
+                        throw new InvalidDataException(
+                            "Admin lock reason is too long.");
+                    }
+                    return await _options.LockProvider(
+                        session,
+                        reason,
+                        cancellationToken).ConfigureAwait(false);
+                })
+                .ConfigureAwait(false);
         }
 
         return PipeRpcCodec.Failure(
             request.RequestId,
             "unsupported_method",
             $"Unsupported Admin method: {request.Method}");
+    }
+
+    private static async Task<PipeRpcResponse> ExecuteAsync<T>(
+        PipeRpcRequest request,
+        Func<Task<T>> operation)
+    {
+        try
+        {
+            var result = await operation().ConfigureAwait(false);
+            return PipeRpcCodec.Success(request.RequestId, result);
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException)
+        {
+            return PipeRpcCodec.Failure(
+                request.RequestId,
+                exception is InvalidDataException or
+                HostException { Code: HostErrorCode.InvalidInput } or
+                VaultException { Code: VaultErrorCode.InvalidInput }
+                    ? "invalid_input"
+                    : "storage_error",
+                exception.Message);
+        }
     }
 
     private VerifiedProcessEvidence VerifyClientProcess()

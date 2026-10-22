@@ -33,11 +33,25 @@ public sealed class StrictAdminStatusProvider(
     }
 }
 
+public sealed class StrictAdminLockProvider(
+    Func<string, CancellationToken, Task<HostSessionSnapshot>> lockSession)
+{
+    public async Task<HostSessionStatusData> LockAsync(
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        var snapshot = await lockSession(reason, cancellationToken)
+            .ConfigureAwait(false);
+        return HostDtoMapper.ToSessionStatus(snapshot);
+    }
+}
+
 public sealed class AdminPipeHostedService(
     CipherVaultServiceConfigFile configuration,
     CipherVaultServicePaths paths,
     StrictServiceHostOptions options,
-    StrictAdminStatusProvider statusProvider) : BackgroundService
+    StrictAdminStatusProvider statusProvider,
+    StrictAdminLockProvider lockProvider) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -96,7 +110,9 @@ public sealed class AdminPipeHostedService(
             sessionOptions.IdleTimeout,
             sessionOptions.HardLifetime,
             (_, cancellationToken) =>
-                statusProvider.GetStatusAsync(cancellationToken));
+                statusProvider.GetStatusAsync(cancellationToken),
+            (_, reason, cancellationToken) =>
+                lockProvider.LockAsync(reason, cancellationToken));
 
         while (!stoppingToken.IsCancellationRequested)
         {

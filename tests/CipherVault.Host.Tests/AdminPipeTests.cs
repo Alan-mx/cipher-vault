@@ -69,7 +69,9 @@ public sealed class AdminPipeTests
                         PipeProtocol.Version,
                         "strict",
                         BrokerAvailable: true,
-                        expectedSession))));
+                        expectedSession)),
+                (_, reason, _) => Task.FromResult(
+                    expectedSession with { LockReason = reason })));
         var acceptTask = server.AcceptOnceAsync();
 
         await using var client = await NamedPipeHostVaultClient.CreateAsync(
@@ -83,6 +85,8 @@ public sealed class AdminPipeTests
         Assert.Null(status.SessionId);
         Assert.Equal("startup", status.LockReason);
         Assert.True(status.RecoveryVerified);
+        var locked = await client.LockAsync("test-lock");
+        Assert.Equal("test-lock", locked.LockReason);
 
         await client.DisposeAsync();
         var session = await acceptTask.WaitAsync(TimeSpan.FromSeconds(5));

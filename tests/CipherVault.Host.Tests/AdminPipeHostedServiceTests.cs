@@ -41,6 +41,36 @@ public sealed class AdminPipeHostedServiceTests
     }
 
     [Fact]
+    public async Task LockProviderDelegatesReasonAndReturnsLockedSession()
+    {
+        string? receivedReason = null;
+        var provider = new StrictAdminLockProvider(
+            (reason, _) =>
+            {
+                receivedReason = reason;
+                return Task.FromResult(new HostSessionSnapshot(
+                    VaultSessionState.Locked,
+                    SessionId: null,
+                    StartedAt: null,
+                    LastUserActivityAt: null,
+                    IdleExpiresAt: null,
+                    HardExpiresAt: null,
+                    LockReason: reason,
+                    ActiveLeases: 0,
+                    ConnectedClients: 1,
+                    RecoveryVerified: false));
+            });
+
+        var status = await provider.LockAsync(
+            "test-lock",
+            CancellationToken.None);
+
+        Assert.Equal("test-lock", receivedReason);
+        Assert.Equal("locked", status.State);
+        Assert.Equal("test-lock", status.LockReason);
+    }
+
+    [Fact]
     public void PoliciesIncludeServiceAndBothAdminClientKinds()
     {
         using var fixture = new PolicyFixture();

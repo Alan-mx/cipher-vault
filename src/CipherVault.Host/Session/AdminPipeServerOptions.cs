@@ -16,4 +16,9 @@ public sealed record AdminPipeServerOptions(
     string ServiceSid,
     TimeSpan SessionIdleLifetime,
     TimeSpan SessionHardLifetime,
-    Func<AdminSession, CancellationToken, Task<AdminPipeStatusData>>? StatusProvider = null);
+    Func<AdminSession, CancellationToken, Task<AdminPipeStatusData>>? StatusProvider = null,
+    Func<
+        AdminSession,
+        string,
+        CancellationToken,
+        Task<HostSessionStatusData>>? LockProvider = null);

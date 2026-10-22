@@ -119,6 +119,11 @@ public sealed class StrictServiceHost : IAsyncDisposable
                     serviceProvider
                         .GetRequiredService<HostSessionCoordinator>()
                         .GetSnapshotAsync));
+            builder.Services.AddSingleton(serviceProvider =>
+                new StrictAdminLockProvider(
+                    serviceProvider
+                        .GetRequiredService<HostSessionCoordinator>()
+                        .LockAsync));
             builder.Services.AddHostedService<AdminPipeHostedService>();
             host = builder.Build();
             return new StrictServiceHost(
