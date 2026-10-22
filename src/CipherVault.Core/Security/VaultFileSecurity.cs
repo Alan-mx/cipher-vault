@@ -5,6 +5,11 @@ using CipherVault.Core.Errors;
 
 namespace CipherVault.Core.Security;
 
+public sealed record VaultFileAccessRule(
+    SecurityIdentifier Identity,
+    FileSystemRights Rights,
+    bool InheritToChildren = false);
+
 public static class VaultFileSecurity
 {
     public static void ProtectDirectory(string path)
@@ -79,6 +84,26 @@ public static class VaultFileSecurity
         }
     }
 
+    public static void ProtectDirectoryWithRules(
+        string path,
+        IEnumerable<VaultFileAccessRule> rules)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            ProtectDirectoryWithRulesWindows(path, NormalizeRules(rules));
+        }
+    }
+
+    public static void ProtectFileWithRules(
+        string path,
+        IEnumerable<VaultFileAccessRule> rules)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            ProtectFileWithRulesWindows(path, NormalizeRules(rules));
+        }
+    }
+
     [SupportedOSPlatform("windows")]
     private static void ProtectFileWindows(
         string path,
@@ -93,6 +118,77 @@ public static class VaultFileSecurity
             info.SetAccessControl(security);
         }
         catch (Exception exception) when (exception is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
+        {
+            throw new VaultException(
+                VaultErrorCode.StorageError,
+                "Unable to apply Vault file permissions.",
+                exception);
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void ProtectDirectoryWithRulesWindows(
+        string path,
+        IReadOnlyCollection<VaultFileAccessRule> rules)
+    {
+        try
+        {
+            var info = new DirectoryInfo(path);
+            var security = new DirectorySecurity();
+            security.SetAccessRuleProtection(
+                isProtected: true,
+                preserveInheritance: false);
+            foreach (var rule in rules)
+            {
+                security.AddAccessRule(new FileSystemAccessRule(
+                    rule.Identity,
+                    rule.Rights,
+                    rule.InheritToChildren
+                        ? InheritanceFlags.ContainerInherit |
+                          InheritanceFlags.ObjectInherit
+                        : InheritanceFlags.None,
+                    PropagationFlags.None,
+                    AccessControlType.Allow));
+            }
+            info.SetAccessControl(security);
+        }
+        catch (Exception exception) when (
+            exception is UnauthorizedAccessException or
+            IOException or
+            PlatformNotSupportedException)
+        {
+            throw new VaultException(
+                VaultErrorCode.StorageError,
+                "Unable to apply Vault directory permissions.",
+                exception);
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void ProtectFileWithRulesWindows(
+        string path,
+        IReadOnlyCollection<VaultFileAccessRule> rules)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            var security = new FileSecurity();
+            security.SetAccessRuleProtection(
+                isProtected: true,
+                preserveInheritance: false);
+            foreach (var rule in rules)
+            {
+                security.AddAccessRule(new FileSystemAccessRule(
+                    rule.Identity,
+                    rule.Rights,
+                    AccessControlType.Allow));
+            }
+            info.SetAccessControl(security);
+        }
+        catch (Exception exception) when (
+            exception is UnauthorizedAccessException or
+            IOException or
+            PlatformNotSupportedException)
         {
             throw new VaultException(
                 VaultErrorCode.StorageError,
@@ -230,5 +326,39 @@ public static class VaultFileSecurity
                 "At least one access identity is required.");
         }
         return identities.Values.ToArray();
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static IReadOnlyCollection<VaultFileAccessRule> NormalizeRules(
+        IEnumerable<VaultFileAccessRule> rules)
+    {
+        ArgumentNullException.ThrowIfNull(rules);
+        var normalized = rules
+            .Select(rule =>
+            {
+                ArgumentNullException.ThrowIfNull(rule);
+                ArgumentNullException.ThrowIfNull(rule.Identity);
+                if (rule.Rights == 0)
+                {
+                    throw new VaultException(
+                        VaultErrorCode.InvalidInput,
+                        "Vault file access rights cannot be empty.");
+                }
+                return rule;
+            })
+            .GroupBy(
+                rule => (
+                    rule.Identity.Value,
+                    rule.Rights,
+                    rule.InheritToChildren))
+            .Select(group => group.First())
+            .ToArray();
+        if (normalized.Length == 0)
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "At least one access rule is required.");
+        }
+        return normalized;
     }
 }
