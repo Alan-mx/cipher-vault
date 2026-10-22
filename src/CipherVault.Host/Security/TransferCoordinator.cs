@@ -129,7 +129,8 @@ public sealed class TransferCoordinator(CipherVaultServicePaths paths)
                     InheritToChildren: true));
             }
             VaultFileSecurity.ProtectDirectoryWithRules(rootPath, rules);
-            if (payloadKind == HostTransferPayloadKind.Directory)
+            if (payloadKind == HostTransferPayloadKind.Directory &&
+                direction == HostTransferDirection.Import)
             {
                 Directory.CreateDirectory(payloadPath);
                 VaultFileSecurity.ProtectDirectoryWithRules(payloadPath, rules);

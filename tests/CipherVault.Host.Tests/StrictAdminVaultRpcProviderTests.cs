@@ -4,6 +4,7 @@ using System.Text.Json;
 using CipherVault.Core.Backup;
 using CipherVault.Core.Configuration;
 using CipherVault.Core.Documents;
+using CipherVault.Core.ImportExport;
 using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Security;
@@ -326,6 +327,22 @@ public sealed class StrictAdminVaultRpcProviderTests
         Assert.Equal(Path.GetFullPath(backupPath), backup.BackupPath);
         Assert.True(File.Exists(backupPath));
         Assert.Equal(2, approvalPrompt.RequestCount);
+        var exportPath = Path.Combine(
+            fixture.Root,
+            "exports",
+            "plaintext");
+        var exportResult = await provider.HandleAsync(
+            session,
+            "admin.maintenance.export",
+            JsonSerializer.SerializeToElement(
+                new HostExportRequest(exportPath),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            CancellationToken.None);
+        var export = Assert.IsType<VaultExportResult>(exportResult);
+        Assert.Equal(Path.GetFullPath(exportPath), export.Destination);
+        Assert.True(Directory.Exists(export.Destination));
+        Assert.True(File.Exists(export.ManifestPath));
+        Assert.Equal(3, approvalPrompt.RequestCount);
     }
 
     private sealed class TestApprovalPrompt(ApprovalStore store)
@@ -351,8 +368,7 @@ public sealed class StrictAdminVaultRpcProviderTests
             HostTransferRequest request,
             CancellationToken cancellationToken = default)
         {
-            if (request.Direction != HostTransferDirection.Export ||
-                !File.Exists(request.StagingPath))
+            if (request.Direction != HostTransferDirection.Export)
             {
                 return Task.FromResult(new HostTransferResult(
                     request.TransferId,
@@ -360,17 +376,57 @@ public sealed class StrictAdminVaultRpcProviderTests
                     null,
                     "transfer_invalid"));
             }
-            Directory.CreateDirectory(
-                Path.GetDirectoryName(request.SuggestedPath)!);
-            File.Copy(
-                request.StagingPath,
-                request.SuggestedPath,
-                overwrite: false);
+            if (request.PayloadKind == HostTransferPayloadKind.File)
+            {
+                if (!File.Exists(request.StagingPath))
+                {
+                    return Task.FromResult(new HostTransferResult(
+                        request.TransferId,
+                        false,
+                        null,
+                        "transfer_invalid"));
+                }
+                Directory.CreateDirectory(
+                    Path.GetDirectoryName(request.SuggestedPath)!);
+                File.Copy(
+                    request.StagingPath,
+                    request.SuggestedPath,
+                    overwrite: false);
+            }
+            else
+            {
+                CopyDirectory(request.StagingPath, request.SuggestedPath);
+            }
             return Task.FromResult(new HostTransferResult(
                 request.TransferId,
                 true,
                 Path.GetFullPath(request.SuggestedPath),
                 null));
+        }
+
+        private static void CopyDirectory(string source, string destination)
+        {
+            Directory.CreateDirectory(destination);
+            foreach (var directory in Directory.EnumerateDirectories(
+                         source,
+                         "*",
+                         SearchOption.AllDirectories))
+            {
+                Directory.CreateDirectory(Path.Combine(
+                    destination,
+                    Path.GetRelativePath(source, directory)));
+            }
+            foreach (var file in Directory.EnumerateFiles(
+                         source,
+                         "*",
+                         SearchOption.AllDirectories))
+            {
+                var target = Path.Combine(
+                    destination,
+                    Path.GetRelativePath(source, file));
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                File.Copy(file, target, overwrite: false);
+            }
         }
     }
 }

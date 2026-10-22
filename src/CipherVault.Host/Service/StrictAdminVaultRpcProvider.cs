@@ -1,6 +1,8 @@
+using System.IO;
 using System.Text.Json;
 using CipherVault.Core.Backup;
 using CipherVault.Core.Documents;
+using CipherVault.Core.ImportExport;
 using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Security;
@@ -452,6 +454,90 @@ public sealed class StrictAdminVaultRpcProvider(
                         stagingBackup.CreatedAt,
                         stagingBackup.BackupBytes,
                         stagingBackup.AuditRecorded);
+                }
+            case "admin.maintenance.export":
+                {
+                    var exportRequest = PipeRpcCodec.ReadPayload<HostExportRequest>(
+                        new PipeRpcRequest(
+                            PipeProtocol.Version,
+                            Guid.Empty,
+                            method,
+                            payload));
+                    if (string.IsNullOrWhiteSpace(exportRequest.DestinationPath))
+                    {
+                        throw new AdminPipeRpcException(
+                            "invalid_input",
+                            "Export destination hint is required.");
+                    }
+                    var exportSnapshot = await sessions
+                        .GetSnapshotAsync(cancellationToken)
+                        .ConfigureAwait(false);
+                    if (exportSnapshot.SessionId is null)
+                    {
+                        throw new AdminPipeRpcException(
+                            "session_locked",
+                            "Vault must be unlocked for export.");
+                    }
+                    var exportOperation = approvals.Prepare(
+                        ApprovalOperationKind.ExportPlaintext,
+                        session.ProcessSessionId,
+                        exportSnapshot.SessionId,
+                        JsonSerializer.SerializeToElement(exportRequest));
+                    var exportApproval = approvals.CreateRequest(
+                        exportOperation,
+                        "导出明文资料库",
+                        $"导出资料库明文内容，建议保存到 {exportRequest.DestinationPath}。");
+                    var exportDecision = await approvalPrompt.RequestAsync(
+                        exportApproval,
+                        cancellationToken).ConfigureAwait(false);
+                    if (!exportDecision.Approved)
+                    {
+                        throw new AdminPipeRpcException(
+                            "approval_denied",
+                            exportDecision.DenialReason ?? "User denied export.");
+                    }
+                    ConsumeApproval(
+                        approvals,
+                        exportOperation,
+                        session,
+                        exportSnapshot.SessionId.Value,
+                        ApprovalOperationKind.ExportPlaintext);
+                    using var exportWorkspace = transfers.CreateWorkspace(
+                        HostTransferDirection.Export,
+                        HostTransferPayloadKind.Directory,
+                        session.Client.UserSid,
+                        session.Client.LogonSid,
+                        "export");
+                    var stagingExport = await vault.ExecuteMaintenanceAsync(
+                        (service, token) => service.ExportSnapshotAsync(
+                            exportWorkspace.PayloadPath,
+                            Actor(session),
+                            token),
+                        cancellationToken).ConfigureAwait(false);
+                    var exportTransfer = await transferPrompt.TransferAsync(
+                        new HostTransferRequest(
+                            exportWorkspace.TransferId,
+                            HostTransferDirection.Export,
+                            HostTransferPayloadKind.Directory,
+                            exportWorkspace.PayloadPath,
+                            exportRequest.DestinationPath,
+                            exportOperation.ExpiresAt),
+                        cancellationToken).ConfigureAwait(false);
+                    if (!exportTransfer.Completed ||
+                        string.IsNullOrWhiteSpace(exportTransfer.FinalPath))
+                    {
+                        throw new AdminPipeRpcException(
+                            exportTransfer.ErrorCode ?? "transfer_failed",
+                            "Export file transfer did not complete.");
+                    }
+                    var manifestRelative = Path.GetRelativePath(
+                        stagingExport.Destination,
+                        stagingExport.ManifestPath);
+                    return new VaultExportResult(
+                        exportTransfer.FinalPath,
+                        stagingExport.ExportedDocuments,
+                        Path.Combine(exportTransfer.FinalPath, manifestRelative),
+                        stagingExport.AuditRecorded);
                 }
             default:
                 throw new AdminPipeRpcException(
