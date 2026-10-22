@@ -84,6 +84,18 @@ public static class WindowsProcessIdentityVerifier
         return Convert.ToHexString(SHA256.HashData(stream));
     }
 
+    public static bool TryGetAuthenticodeSigner(
+        string imagePath,
+        out string? thumbprint,
+        out string? subject)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(imagePath);
+        return TryGetValidSigner(
+            Path.GetFullPath(imagePath),
+            out thumbprint,
+            out subject);
+    }
+
     private static ProcessVerificationResult VerifyHandle(
         SafeProcessHandle processHandle,
         uint processId,

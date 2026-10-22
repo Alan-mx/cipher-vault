@@ -1,3 +1,4 @@
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -539,6 +540,8 @@ static async Task<int> RunServiceCommandAsync(
                         operations.UninstallAsync(
                             StrictServiceHost.ServiceName,
                             cancellationToken));
+            case "install":
+                return await RunServiceInstallAsync(arguments, options);
             default:
                 Console.Error.WriteLine($"Unknown service command: {action}");
                 return 2;
@@ -549,6 +552,50 @@ static async Task<int> RunServiceCommandAsync(
         Console.Error.WriteLine($"{exception.Code}: {exception.Message}");
         return 1;
     }
+    catch (Exception exception)
+    {
+        Console.Error.WriteLine($"storage_error: {exception.Message}");
+        return 1;
+    }
+}
+
+static async Task<int> RunServiceInstallAsync(
+    string[] arguments,
+    JsonSerializerOptions options)
+{
+    var paths = CipherVaultServicePaths.Default;
+    var currentSid = WindowsIdentity.GetCurrent().User
+        ?? throw new VaultException(
+            VaultErrorCode.StorageError,
+            "Unable to resolve the current Windows user.");
+    var installOptions = new HostServiceInstallOptions(
+        GetOption(arguments, "--owner-sid") ?? currentSid.Value,
+        GetOption(arguments, "--signer-thumbprint"),
+        GetOption(arguments, "--host-exe") ??
+            Path.Combine(paths.InstallRoot, "CipherVault.Host.exe"),
+        GetOption(arguments, "--ui-exe"),
+        GetOption(arguments, "--cli-exe"),
+        GetOption(arguments, "--broker-exe"),
+        GetOption(arguments, "--mcp-exe"),
+        StartService: !HasFlag(arguments, "--no-start"));
+    using var cancellationTokenSource = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, eventArguments) =>
+    {
+        eventArguments.Cancel = true;
+        cancellationTokenSource.Cancel();
+    };
+    var installer = new HostServiceInstaller(
+        new WindowsServiceQuery(),
+        new ScExeCommandRunner(),
+        new WindowsServiceSidResolver(),
+        new SignedServiceImageInspector(),
+        new WindowsServiceInstallAcl());
+    var result = await installer.InstallAsync(
+        installOptions,
+        paths,
+        cancellationTokenSource.Token);
+    PrintJson(result, options);
+    return 0;
 }
 
 static async Task<int> RunServiceOperationAsync(
@@ -790,6 +837,7 @@ static void PrintHelp()
 
         Commands:
           service status      Inspect the Windows service and install manifest
+          service install     Install strict service from signed Program Files binaries
           service start       Start the installed Windows service
           service stop        Stop the Windows service
           service uninstall   Remove the service registration and retain data

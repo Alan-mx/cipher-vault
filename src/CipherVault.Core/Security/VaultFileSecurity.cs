@@ -1,7 +1,10 @@
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
-using System.Runtime.Versioning;
 using CipherVault.Core.Errors;
+using Microsoft.Win32.SafeHandles;
 
 namespace CipherVault.Core.Security;
 
@@ -205,6 +208,7 @@ public static class VaultFileSecurity
         }
         try
         {
+            EnableRestorePrivilegeIfNeeded(owner);
             var info = new DirectoryInfo(path);
             var security = info.GetAccessControl();
             security.SetOwner(owner);
@@ -230,6 +234,7 @@ public static class VaultFileSecurity
         }
         try
         {
+            EnableRestorePrivilegeIfNeeded(owner);
             var info = new FileInfo(path);
             var security = info.GetAccessControl();
             security.SetOwner(owner);
@@ -360,5 +365,122 @@ public static class VaultFileSecurity
                 "At least one access rule is required.");
         }
         return normalized;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void EnableRestorePrivilegeIfNeeded(
+        SecurityIdentifier owner)
+    {
+        var currentUser = WindowsIdentity.GetCurrent().User
+            ?? throw new VaultException(
+                VaultErrorCode.StorageError,
+                "Unable to resolve the current Windows user.");
+        if (currentUser.Equals(owner))
+        {
+            return;
+        }
+        if (!NativeMethods.OpenProcessToken(
+                NativeMethods.GetCurrentProcess(),
+                NativeMethods.TokenAdjustPrivileges |
+                NativeMethods.TokenQuery,
+                out var token))
+        {
+            throw new VaultException(
+                VaultErrorCode.StorageError,
+                "Unable to open the current process token.",
+                new Win32Exception(Marshal.GetLastWin32Error()));
+        }
+        using (token)
+        {
+            if (!NativeMethods.LookupPrivilegeValue(
+                    null,
+                    "SeRestorePrivilege",
+                    out var luid))
+            {
+                throw new VaultException(
+                    VaultErrorCode.StorageError,
+                    "SeRestorePrivilege is unavailable.",
+                    new Win32Exception(Marshal.GetLastWin32Error()));
+            }
+            var privileges = new TokenPrivileges
+            {
+                PrivilegeCount = 1,
+                Luid = luid,
+                Attributes = NativeMethods.SePrivilegeEnabled
+            };
+            if (!NativeMethods.AdjustTokenPrivileges(
+                    token,
+                    disableAllPrivileges: false,
+                    ref privileges,
+                    bufferLength: 0,
+                    previousState: IntPtr.Zero,
+                    returnLength: IntPtr.Zero))
+            {
+                throw new VaultException(
+                    VaultErrorCode.StorageError,
+                    "Unable to enable SeRestorePrivilege.",
+                    new Win32Exception(Marshal.GetLastWin32Error()));
+            }
+            var error = Marshal.GetLastWin32Error();
+            if (error == NativeMethods.ErrorNotAllAssigned)
+            {
+                throw new VaultException(
+                    VaultErrorCode.StorageError,
+                    "Administrator restore privilege is required to set the service owner.");
+            }
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Luid
+    {
+        public uint LowPart;
+        public int HighPart;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TokenPrivileges
+    {
+        public uint PrivilegeCount;
+        public Luid Luid;
+        public uint Attributes;
+    }
+
+    private static class NativeMethods
+    {
+        public const uint TokenAdjustPrivileges = 0x0020;
+        public const uint TokenQuery = 0x0008;
+        public const uint SePrivilegeEnabled = 0x00000002;
+        public const int ErrorNotAllAssigned = 1300;
+
+        [DllImport("kernel32.dll")]
+        public static extern IntPtr GetCurrentProcess();
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool OpenProcessToken(
+            IntPtr processHandle,
+            uint desiredAccess,
+            out SafeAccessTokenHandle tokenHandle);
+
+        [DllImport(
+            "advapi32.dll",
+            CharSet = CharSet.Unicode,
+            SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool LookupPrivilegeValue(
+            string? systemName,
+            string name,
+            out Luid luid);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool AdjustTokenPrivileges(
+            SafeAccessTokenHandle tokenHandle,
+            [MarshalAs(UnmanagedType.Bool)] bool disableAllPrivileges,
+            ref TokenPrivileges newState,
+            uint bufferLength,
+            IntPtr previousState,
+            IntPtr returnLength);
     }
 }
