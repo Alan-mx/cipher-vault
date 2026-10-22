@@ -474,13 +474,7 @@ static async Task<int> RunServiceCommandAsync(
                             StrictServiceHost.ServiceName,
                             cancellationToken));
             case "uninstall":
-                return await RunServiceOperationAsync(
-                    arguments,
-                    options,
-                    static (operations, cancellationToken) =>
-                        operations.UninstallAsync(
-                            StrictServiceHost.ServiceName,
-                            cancellationToken));
+                return await RunServiceUninstallAsync(arguments, options);
             case "install":
                 return await RunServiceInstallAsync(arguments, options);
             default:
@@ -541,6 +535,32 @@ static async Task<int> RunServiceInstallAsync(
         cancellationTokenSource.Token);
     PrintJson(result, options);
     return 0;
+}
+
+static async Task<int> RunServiceUninstallAsync(
+    string[] arguments,
+    JsonSerializerOptions options)
+{
+    using var cancellationTokenSource = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, eventArguments) =>
+    {
+        eventArguments.Cancel = true;
+        cancellationTokenSource.Cancel();
+    };
+    var uninstallOptions = new HostServiceUninstallOptions(
+        RemoveData: HasFlag(arguments, "--remove-data"));
+    var installer = new HostServiceInstaller(
+        new WindowsServiceQuery(),
+        new ScExeCommandRunner(),
+        new WindowsServiceSidResolver(),
+        new SignedServiceImageInspector(),
+        new WindowsServiceInstallAcl());
+    var result = await installer.UninstallAsync(
+        uninstallOptions,
+        CipherVaultServicePaths.Default,
+        cancellationTokenSource.Token);
+    PrintJson(result, options);
+    return result.Installed ? 1 : 0;
 }
 
 static async Task<int> RunServiceOperationAsync(
@@ -812,6 +832,7 @@ static void PrintHelp()
           service start       Start the installed Windows service
           service stop        Stop the Windows service
           service uninstall   Remove the service registration and retain data
+                              Add --remove-data to delete %ProgramData%\CipherVault
           init                --vault <directory>
           status              --vault <directory>
           backup              --vault <directory> --to <file.cvbackup>

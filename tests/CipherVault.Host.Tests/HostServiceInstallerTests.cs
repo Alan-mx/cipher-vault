@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Security.Principal;
 using CipherVault.Core.Configuration;
@@ -80,6 +81,37 @@ public sealed class HostServiceInstallerTests
     }
 
     [Fact]
+    public async Task FailedServiceStartRollsBackRegistrationFilesAndDirectories()
+    {
+        using var fixture = new InstallFixture();
+        var runner = new ScriptedCommandRunner(
+            ("start", new WindowsServiceCommandResult(5, "", "denied")));
+        var installer = CreateInstaller(
+            fixture.Paths,
+            runner,
+            new SequenceServiceQuery(
+                new WindowsServiceSnapshot(false, "notInstalled", null),
+                new WindowsServiceSnapshot(true, "stopped", "Automatic")));
+
+        var exception = await Assert.ThrowsAsync<VaultException>(
+            () => installer.InstallAsync(
+                CreateOptions(fixture.Paths, startService: true),
+                fixture.Paths));
+
+        Assert.Equal(VaultErrorCode.StorageError, exception.Code);
+        Assert.Contains(
+            runner.Commands,
+            command => command == "stop CipherVaultHost");
+        Assert.Contains(
+            runner.Commands,
+            command => command == "delete CipherVaultHost");
+        Assert.False(File.Exists(fixture.Paths.ServiceConfigPath));
+        Assert.False(File.Exists(fixture.Paths.PublicManifestPath));
+        Assert.False(File.Exists(fixture.Paths.ModePath));
+        Assert.False(Directory.Exists(fixture.Paths.DataRoot));
+    }
+
+    [Fact]
     public async Task InstallRejectsExistingVaultData()
     {
         using var fixture = new InstallFixture();
@@ -122,12 +154,187 @@ public sealed class HostServiceInstallerTests
         Assert.Equal(VaultErrorCode.InvalidInput, exception.Code);
     }
 
+    [Fact]
+    public async Task UninstallStopsServiceAndRetainsDataByDefault()
+    {
+        using var fixture = new InstallFixture();
+        CreateDataLayout(fixture.Paths);
+        var runner = new ScriptedCommandRunner();
+        var installer = CreateInstaller(
+            fixture.Paths,
+            runner,
+            new SequenceServiceQuery(
+                new WindowsServiceSnapshot(true, "running", "Automatic"),
+                new WindowsServiceSnapshot(true, "running", "Automatic"),
+                new WindowsServiceSnapshot(true, "running", "Automatic"),
+                new WindowsServiceSnapshot(true, "stopped", "Automatic"),
+                new WindowsServiceSnapshot(false, "notInstalled", null)));
+
+        var result = await installer.UninstallAsync(
+            new HostServiceUninstallOptions(RemoveData: false),
+            fixture.Paths);
+
+        Assert.False(result.Installed);
+        Assert.False(result.DataRemoved);
+        Assert.True(result.DataRetained);
+        Assert.True(File.Exists(
+            Path.Combine(fixture.Paths.VaultPath, "vault.db")));
+        Assert.Equal(
+            ["stop CipherVaultHost", "delete CipherVaultHost"],
+            runner.Commands);
+    }
+
+    [Fact]
+    public async Task UninstallRemovesDataRootWhenRequested()
+    {
+        using var fixture = new InstallFixture();
+        CreateDataLayout(fixture.Paths);
+        var installer = CreateInstaller(
+            fixture.Paths,
+            new ScriptedCommandRunner());
+
+        var result = await installer.UninstallAsync(
+            new HostServiceUninstallOptions(
+                RemoveData: true,
+                ExpectedDataRoot: fixture.Paths.DataRoot),
+            fixture.Paths);
+
+        Assert.False(result.Installed);
+        Assert.True(result.DataRemoved);
+        Assert.False(result.DataRetained);
+        Assert.False(Directory.Exists(fixture.Paths.DataRoot));
+        Assert.True(File.Exists(
+            Path.Combine(fixture.Paths.InstallRoot, "CipherVault.Host.exe")));
+    }
+
+    [Fact]
+    public async Task UninstallRejectsUnexpectedDataRoot()
+    {
+        using var fixture = new InstallFixture();
+        CreateDataLayout(fixture.Paths);
+        var installer = CreateInstaller(
+            fixture.Paths,
+            new ScriptedCommandRunner());
+
+        var exception = await Assert.ThrowsAsync<VaultException>(
+            () => installer.UninstallAsync(
+                new HostServiceUninstallOptions(
+                    RemoveData: true,
+                    ExpectedDataRoot: Path.Combine(fixture.Root, "Other")),
+                fixture.Paths));
+
+        Assert.Equal(VaultErrorCode.InvalidInput, exception.Code);
+        Assert.True(File.Exists(
+            Path.Combine(fixture.Paths.VaultPath, "vault.db")));
+    }
+
+    [Fact]
+    public async Task UninstallDoesNotFollowJunctionsInsideDataRoot()
+    {
+        using var fixture = new InstallFixture();
+        CreateDataLayout(fixture.Paths);
+        var outside = Path.Combine(fixture.Root, "outside");
+        Directory.CreateDirectory(outside);
+        var marker = Path.Combine(outside, "keep.txt");
+        File.WriteAllText(marker, "keep");
+        var junction = Path.Combine(fixture.Paths.DataRoot, "linked");
+        CreateJunction(junction, outside);
+        var installer = CreateInstaller(
+            fixture.Paths,
+            new ScriptedCommandRunner());
+
+        await installer.UninstallAsync(
+            new HostServiceUninstallOptions(
+                RemoveData: true,
+                ExpectedDataRoot: fixture.Paths.DataRoot),
+            fixture.Paths);
+
+        Assert.True(File.Exists(marker));
+        Assert.False(Directory.Exists(fixture.Paths.DataRoot));
+    }
+
+    [Fact]
+    public async Task UninstallRejectsReparseDataRoot()
+    {
+        using var fixture = new InstallFixture();
+        CreateDataLayout(fixture.Paths);
+        var outside = Path.Combine(fixture.Root, "outside");
+        Directory.CreateDirectory(outside);
+        var marker = Path.Combine(outside, "keep.txt");
+        File.WriteAllText(marker, "keep");
+        Directory.Delete(fixture.Paths.DataRoot, recursive: true);
+        CreateJunction(fixture.Paths.DataRoot, outside);
+        var installer = CreateInstaller(
+            fixture.Paths,
+            new ScriptedCommandRunner());
+
+        try
+        {
+            var exception = await Assert.ThrowsAsync<VaultException>(
+                () => installer.UninstallAsync(
+                    new HostServiceUninstallOptions(
+                        RemoveData: true,
+                        ExpectedDataRoot: fixture.Paths.DataRoot),
+                    fixture.Paths));
+
+            Assert.Equal(VaultErrorCode.InvalidInput, exception.Code);
+            Assert.True(File.Exists(marker));
+        }
+        finally
+        {
+            if (Directory.Exists(fixture.Paths.DataRoot) &&
+                (File.GetAttributes(fixture.Paths.DataRoot) &
+                 FileAttributes.ReparsePoint) != 0)
+            {
+                Directory.Delete(fixture.Paths.DataRoot);
+            }
+        }
+    }
+
+    private static void CreateDataLayout(CipherVaultServicePaths paths)
+    {
+        Directory.CreateDirectory(paths.VaultPath);
+        Directory.CreateDirectory(paths.LogsPath);
+        Directory.CreateDirectory(paths.LocksPath);
+        Directory.CreateDirectory(paths.TransferRoot);
+        File.WriteAllText(
+            Path.Combine(paths.VaultPath, "vault.db"),
+            "vault");
+        File.WriteAllText(paths.ServiceConfigPath, "{}");
+        File.WriteAllText(paths.PublicManifestPath, "{}");
+        File.WriteAllText(paths.ModePath, "{}");
+    }
+
+    private static void CreateJunction(string path, string target)
+    {
+        var startInfo = new ProcessStartInfo("cmd.exe")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        startInfo.ArgumentList.Add("/c");
+        startInfo.ArgumentList.Add("mklink");
+        startInfo.ArgumentList.Add("/J");
+        startInfo.ArgumentList.Add(path);
+        startInfo.ArgumentList.Add(target);
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Unable to start cmd.exe.");
+        var standardError = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        Assert.True(
+            process.ExitCode == 0,
+            $"Unable to create junction: {standardError}");
+    }
+
     private static HostServiceInstaller CreateInstaller(
         CipherVaultServicePaths paths,
-        IWindowsServiceCommandRunner runner)
+        IWindowsServiceCommandRunner runner,
+        IWindowsServiceQuery? query = null)
     {
         return new HostServiceInstaller(
-            new AlwaysNotInstalledQuery(),
+            query ?? new AlwaysNotInstalledQuery(),
             runner,
             new StaticServiceSidResolver(),
             new StaticImageInspector(),
@@ -201,6 +408,21 @@ public sealed class HostServiceInstallerTests
                 false,
                 "notInstalled",
                 null);
+        }
+    }
+
+    private sealed class SequenceServiceQuery(
+        params WindowsServiceSnapshot[] snapshots) : IWindowsServiceQuery
+    {
+        private readonly Queue<WindowsServiceSnapshot> _snapshots =
+            new(snapshots);
+
+        public WindowsServiceSnapshot GetStatus(string serviceName)
+        {
+            return _snapshots.Count > 0
+                ? _snapshots.Dequeue()
+                : throw new InvalidOperationException(
+                    "No service status snapshot was queued.");
         }
     }
 

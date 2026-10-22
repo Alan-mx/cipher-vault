@@ -31,6 +31,18 @@ public sealed record HostServiceInstallResult(
     string VaultModePath,
     bool Started);
 
+public sealed record HostServiceUninstallOptions(
+    bool RemoveData,
+    string? ExpectedDataRoot = null);
+
+public sealed record HostServiceUninstallResult(
+    string ServiceName,
+    bool Installed,
+    string State,
+    string DataRoot,
+    bool DataRemoved,
+    bool DataRetained);
+
 public sealed record ServiceImageEvidence(
     string ImageSha256,
     string SignerThumbprint,
@@ -327,6 +339,168 @@ public sealed class HostServiceInstaller(
             }
             RemoveEmptyInstallDirectories(paths);
             throw;
+        }
+    }
+
+    public async Task<HostServiceUninstallResult> UninstallAsync(
+        HostServiceUninstallOptions options,
+        CipherVaultServicePaths paths,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(paths);
+        if (options.RemoveData)
+        {
+            ValidateDataRoot(
+                paths,
+                options.ExpectedDataRoot ??
+                    CipherVaultServicePaths.Default.DataRoot);
+        }
+
+        var snapshot = serviceQuery.GetStatus(StrictServiceHost.ServiceName);
+        if (snapshot.Installed)
+        {
+            var operations = new WindowsServiceOperations(
+                serviceQuery,
+                commandRunner);
+            snapshot = await operations.UninstallAsync(
+                StrictServiceHost.ServiceName,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        var dataRemoved = false;
+        if (options.RemoveData)
+        {
+            DeleteDataRoot(paths.DataRoot);
+            dataRemoved = true;
+        }
+        return new HostServiceUninstallResult(
+            StrictServiceHost.ServiceName,
+            snapshot.Installed,
+            snapshot.State,
+            paths.DataRoot,
+            dataRemoved,
+            !options.RemoveData && Directory.Exists(paths.DataRoot));
+    }
+
+    private static void ValidateDataRoot(
+        CipherVaultServicePaths paths,
+        string expectedDataRoot)
+    {
+        var dataRoot = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(paths.DataRoot));
+        var expected = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(expectedDataRoot));
+        if (!string.Equals(
+                Path.GetFileName(dataRoot),
+                "CipherVault",
+                StringComparison.OrdinalIgnoreCase) ||
+            !PathsEqual(dataRoot, expected))
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "Data removal requires the fixed CipherVault ProgramData root.");
+        }
+        if (Directory.Exists(dataRoot))
+        {
+            if ((File.GetAttributes(dataRoot) & FileAttributes.ReparsePoint) != 0)
+            {
+                throw new VaultException(
+                    VaultErrorCode.InvalidInput,
+                    "Data root must not be a reparse point.");
+            }
+        }
+        else if (File.Exists(dataRoot))
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "Data root must be a directory.");
+        }
+
+        var vaultPath = Path.Combine(dataRoot, "Vault");
+        foreach (var (actual, derived) in new[]
+                 {
+                     (paths.PublicManifestPath, Path.Combine(dataRoot, "install-public.json")),
+                     (paths.ServiceConfigPath, Path.Combine(dataRoot, "service.json")),
+                     (paths.VaultPath, vaultPath),
+                     (paths.ModePath, Path.Combine(vaultPath, "vault.mode")),
+                     (paths.LogsPath, Path.Combine(dataRoot, "Logs")),
+                     (paths.LocksPath, Path.Combine(dataRoot, "locks")),
+                     (paths.TransferRoot, Path.Combine(dataRoot, "Transfer"))
+                 })
+        {
+            if (!PathsEqual(actual, derived))
+            {
+                throw new VaultException(
+                    VaultErrorCode.InvalidInput,
+                    "Data root layout does not match the fixed CipherVault layout.");
+            }
+        }
+    }
+
+    private static void DeleteDataRoot(string dataRoot)
+    {
+        var fullPath = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(dataRoot));
+        if (!Directory.Exists(fullPath))
+        {
+            if (File.Exists(fullPath))
+            {
+                throw new VaultException(
+                    VaultErrorCode.InvalidInput,
+                    "Data root must be a directory.");
+            }
+            return;
+        }
+        try
+        {
+            DeleteTree(fullPath);
+        }
+        catch (Exception exception) when (
+            exception is IOException or
+            UnauthorizedAccessException or
+            SystemException)
+        {
+            throw new VaultException(
+                VaultErrorCode.StorageError,
+                $"Unable to remove CipherVault data: {exception.Message}",
+                exception);
+        }
+    }
+
+    private static void DeleteTree(string path)
+    {
+        var attributes = File.GetAttributes(path);
+        if ((attributes & FileAttributes.ReadOnly) != 0)
+        {
+            File.SetAttributes(path, attributes & ~FileAttributes.ReadOnly);
+        }
+        if ((attributes & FileAttributes.ReparsePoint) != 0)
+        {
+            DeleteEntry(path, attributes);
+            return;
+        }
+        if ((attributes & FileAttributes.Directory) == 0)
+        {
+            File.Delete(path);
+            return;
+        }
+        foreach (var child in Directory.EnumerateFileSystemEntries(path))
+        {
+            DeleteTree(child);
+        }
+        Directory.Delete(path);
+    }
+
+    private static void DeleteEntry(string path, FileAttributes attributes)
+    {
+        if ((attributes & FileAttributes.Directory) != 0)
+        {
+            Directory.Delete(path);
+        }
+        else
+        {
+            File.Delete(path);
         }
     }
 
@@ -739,6 +913,14 @@ public sealed class HostServiceInstaller(
             .TrimEnd(Path.DirectorySeparatorChar);
         return normalizedPath.StartsWith(
             normalizedParent + Path.DirectorySeparatorChar,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool PathsEqual(string left, string right)
+    {
+        return string.Equals(
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)),
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
             StringComparison.OrdinalIgnoreCase);
     }
 
