@@ -44,3 +44,8 @@ public sealed record AdminRevisionListRequest(
     Guid DocumentId,
     string? Cursor,
     int Limit);
+
+public sealed record AdminRestoreRevisionRequest(
+    Guid DocumentId,
+    Guid RevisionId,
+    HostRestoreRevisionRequest Request);

@@ -229,6 +229,30 @@ public sealed class StrictAdminVaultRpcProvider(HostVaultGateway vault)
                         revisionRequest.Limit,
                         token),
                     cancellationToken).ConfigureAwait(false);
+            case "admin.revisions.restore":
+                var restoreRevisionRequest =
+                    PipeRpcCodec.ReadPayload<AdminRestoreRevisionRequest>(
+                        new PipeRpcRequest(
+                            PipeProtocol.Version,
+                            Guid.Empty,
+                            method,
+                            payload));
+                if (restoreRevisionRequest.DocumentId == Guid.Empty ||
+                    restoreRevisionRequest.RevisionId == Guid.Empty ||
+                    restoreRevisionRequest.Request.ExpectedRevision < 1)
+                {
+                    throw new AdminPipeRpcException(
+                        "invalid_input",
+                        "Revision restore request is invalid.");
+                }
+                return await vault.ExecuteAsync(
+                    (service, token) => service.RestoreRevisionAsync(
+                        restoreRevisionRequest.DocumentId,
+                        restoreRevisionRequest.RevisionId,
+                        restoreRevisionRequest.Request.ExpectedRevision,
+                        Actor(session),
+                        token),
+                    cancellationToken).ConfigureAwait(false);
             default:
                 throw new AdminPipeRpcException(
                     "unsupported_method",

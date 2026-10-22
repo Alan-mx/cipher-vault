@@ -245,12 +245,10 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
     {
         return CallAsync<VaultWriteResult>(
             "admin.revisions.restore",
-            new
-            {
+            new AdminRestoreRevisionRequest(
                 documentId,
                 revisionId,
-                request = new HostRestoreRevisionRequest(expectedRevision)
-            },
+                new HostRestoreRevisionRequest(expectedRevision)),
             cancellationToken);
     }
 
