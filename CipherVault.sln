@@ -33,6 +33,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CipherVault.Host.Tests", "t
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CipherVault.Host.Client", "src\CipherVault.Host.Client\CipherVault.Host.Client.csproj", "{C419EE68-AFEE-47BB-BEB9-0DD72A9EDDCB}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CipherVault.Security.Win", "src\CipherVault.Security.Win\CipherVault.Security.Win.csproj", "{44B6B60C-3519-41ED-82E3-3006F7299E0F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -199,6 +201,18 @@ Global
 		{C419EE68-AFEE-47BB-BEB9-0DD72A9EDDCB}.Release|x64.Build.0 = Release|Any CPU
 		{C419EE68-AFEE-47BB-BEB9-0DD72A9EDDCB}.Release|x86.ActiveCfg = Release|Any CPU
 		{C419EE68-AFEE-47BB-BEB9-0DD72A9EDDCB}.Release|x86.Build.0 = Release|Any CPU
+		{44B6B60C-3519-41ED-82E3-3006F7299E0F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{44B6B60C-3519-41ED-82E3-3006F7299E0F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{44B6B60C-3519-41ED-82E3-3006F7299E0F}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{44B6B60C-3519-41ED-82E3-3006F7299E0F}.Debug|x64.Build.0 = Debug|Any CPU
+		{44B6B60C-3519-41ED-82E3-3006F7299E0F}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{44B6B60C-3519-41ED-82E3-3006F7299E0F}.Debug|x86.Build.0 = Debug|Any CPU
+		{44B6B60C-3519-41ED-82E3-3006F7299E0F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{44B6B60C-3519-41ED-82E3-3006F7299E0F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{44B6B60C-3519-41ED-82E3-3006F7299E0F}.Release|x64.ActiveCfg = Release|Any CPU
+		{44B6B60C-3519-41ED-82E3-3006F7299E0F}.Release|x64.Build.0 = Release|Any CPU
+		{44B6B60C-3519-41ED-82E3-3006F7299E0F}.Release|x86.ActiveCfg = Release|Any CPU
+		{44B6B60C-3519-41ED-82E3-3006F7299E0F}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -217,5 +231,6 @@ Global
 		{6E373D30-5CE1-4331-8BBF-0557C2F79FAD} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{6C4E5175-BE2A-4740-A232-512E838D397A} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{C419EE68-AFEE-47BB-BEB9-0DD72A9EDDCB} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{44B6B60C-3519-41ED-82E3-3006F7299E0F} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal

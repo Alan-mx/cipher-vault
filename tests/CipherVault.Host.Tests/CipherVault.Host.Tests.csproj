@@ -27,6 +27,7 @@
     <ProjectReference Include="..\..\src\CipherVault.Host\CipherVault.Host.csproj" />
     <ProjectReference Include="..\..\src\CipherVault.Host.Client\CipherVault.Host.Client.csproj" />
     <ProjectReference Include="..\..\src\CipherVault.Host.Contracts\CipherVault.Host.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\CipherVault.Security.Win\CipherVault.Security.Win.csproj" />
   </ItemGroup>
 
 </Project>

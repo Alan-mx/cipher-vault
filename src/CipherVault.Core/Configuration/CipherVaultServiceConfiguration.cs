@@ -435,10 +435,10 @@ public static class CipherVaultServiceConfiguration
     private static void ValidateThumbprint(string? value, string fieldName)
     {
         var thumbprint = RequireNonEmpty(value, fieldName);
-        if (thumbprint.Length is not (40 or 64) ||
+        if (thumbprint.Length != 64 ||
             thumbprint.Any(character => !Uri.IsHexDigit(character)))
         {
-            throw Invalid($"{fieldName} must contain 40 or 64 hex characters.");
+            throw Invalid($"{fieldName} must contain 64 hex characters.");
         }
     }
 

@@ -6,7 +6,8 @@ namespace CipherVault.Core.Tests;
 public sealed class ServiceConfigurationTests
 {
     private const string Sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    private const string Thumbprint = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    private const string Thumbprint =
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
     [Fact]
     public void ValidStrictServiceConfigIsParsed()
