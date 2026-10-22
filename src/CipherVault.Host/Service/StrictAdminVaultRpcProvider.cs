@@ -436,6 +436,7 @@ public sealed class StrictAdminVaultRpcProvider(
                             Actor(session),
                             token),
                         cancellationToken).ConfigureAwait(false);
+                    transfers.FreezeManifest(backupWorkspace);
                     var backupTransfer = await transferPrompt.TransferAsync(
                         new HostTransferRequest(
                             backupWorkspace.TransferId,
@@ -518,6 +519,7 @@ public sealed class StrictAdminVaultRpcProvider(
                             Actor(session),
                             token),
                         cancellationToken).ConfigureAwait(false);
+                    transfers.FreezeManifest(exportWorkspace);
                     var exportTransfer = await transferPrompt.TransferAsync(
                         new HostTransferRequest(
                             exportWorkspace.TransferId,
@@ -614,6 +616,7 @@ public sealed class StrictAdminVaultRpcProvider(
                                 "Import file transfer did not complete.");
                         }
                         transfers.EnsureNoReparsePoints(workspace.PayloadPath);
+                        transfers.FreezeManifest(workspace);
                         var preview = await vault.ExecuteAsync(
                             (service, token) => service.PreviewImportAsync(
                                 workspace.PayloadPath,
@@ -772,6 +775,7 @@ public sealed class StrictAdminVaultRpcProvider(
                             "Backup import into staging did not complete.");
                     }
                     transfers.EnsureNoReparsePoints(restoreWorkspace.PayloadPath);
+                    transfers.FreezeManifest(restoreWorkspace);
                     var restoredPath = Path.Combine(
                         restoreWorkspace.RootPath,
                         "restored");
