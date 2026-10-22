@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace CipherVault.Host.Contracts;
 
 public sealed record PipeHelloRequest(
@@ -34,3 +36,22 @@ public sealed record PipeCloseRequest(
 public sealed record PipeError(
     string Code,
     string Message);
+
+public sealed record PipeRpcRequest(
+    string ProtocolVersion,
+    Guid RequestId,
+    string Method,
+    JsonElement Payload);
+
+public sealed record PipeRpcResponse(
+    Guid RequestId,
+    bool Ok,
+    JsonElement? Data,
+    PipeError? Error);
+
+public sealed record AdminPipeStatusData(
+    string ServiceVersion,
+    string ProtocolVersion,
+    string SecurityMode,
+    bool BrokerAvailable,
+    HostSessionStatusData Session);

@@ -36,6 +36,27 @@ public static class PipeHandshakeTranscript
             .Replace('/', '_');
     }
 
+    public static bool FixedTimeEquals(string expected, string presented)
+    {
+        if (string.IsNullOrWhiteSpace(expected) ||
+            string.IsNullOrWhiteSpace(presented))
+        {
+            return false;
+        }
+        try
+        {
+            var expectedBytes = PipeEncoding.DecodeBase64Url(expected);
+            var presentedBytes = PipeEncoding.DecodeBase64Url(presented);
+            return CryptographicOperations.FixedTimeEquals(
+                expectedBytes,
+                presentedBytes);
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+    }
+
     private static string IdentityValue(VerifiedProcessIdentity identity)
     {
         return string.Join(

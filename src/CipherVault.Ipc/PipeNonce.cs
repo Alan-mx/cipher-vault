@@ -19,4 +19,20 @@ public static class PipeNonce
             CryptographicOperations.ZeroMemory(bytes);
         }
     }
+
+    public static bool IsValid(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+        try
+        {
+            return PipeEncoding.DecodeBase64Url(value).Length == 32;
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+    }
 }
