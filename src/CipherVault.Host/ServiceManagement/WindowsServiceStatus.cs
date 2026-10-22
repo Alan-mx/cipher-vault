@@ -31,7 +31,10 @@ public sealed class WindowsServiceQuery : IWindowsServiceQuery
                 controller.StartType.ToString());
         }
         catch (InvalidOperationException exception) when (
-            exception.InnerException is Win32Exception { NativeErrorCode: 1060 })
+            exception.InnerException is Win32Exception
+            {
+                NativeErrorCode: 1060 or 1072
+            })
         {
             return new WindowsServiceSnapshot(
                 Installed: false,

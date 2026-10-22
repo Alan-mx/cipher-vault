@@ -29,7 +29,7 @@ if (args.Length == 0 || args[0] is "help" or "--help" or "-h")
 var command = args[0].ToLowerInvariant();
 if (command == "service")
 {
-    return RunServiceCommand(args, jsonOptions);
+    return await RunServiceCommandAsync(args, jsonOptions);
 }
 
 var standalone = HasFlag(args, "--standalone");
@@ -493,7 +493,7 @@ static int UnknownCommand(string command)
     return 2;
 }
 
-static int RunServiceCommand(
+static async Task<int> RunServiceCommandAsync(
     string[] arguments,
     JsonSerializerOptions options)
 {
@@ -515,6 +515,30 @@ static int RunServiceCommand(
                     new WindowsServiceQuery());
                 PrintJson(status, options);
                 return status.Installed ? 0 : 1;
+            case "start":
+                return await RunServiceOperationAsync(
+                    arguments,
+                    options,
+                    static (operations, cancellationToken) =>
+                        operations.StartAsync(
+                            StrictServiceHost.ServiceName,
+                            cancellationToken));
+            case "stop":
+                return await RunServiceOperationAsync(
+                    arguments,
+                    options,
+                    static (operations, cancellationToken) =>
+                        operations.StopAsync(
+                            StrictServiceHost.ServiceName,
+                            cancellationToken));
+            case "uninstall":
+                return await RunServiceOperationAsync(
+                    arguments,
+                    options,
+                    static (operations, cancellationToken) =>
+                        operations.UninstallAsync(
+                            StrictServiceHost.ServiceName,
+                            cancellationToken));
             default:
                 Console.Error.WriteLine($"Unknown service command: {action}");
                 return 2;
@@ -525,6 +549,39 @@ static int RunServiceCommand(
         Console.Error.WriteLine($"{exception.Code}: {exception.Message}");
         return 1;
     }
+}
+
+static async Task<int> RunServiceOperationAsync(
+    string[] arguments,
+    JsonSerializerOptions options,
+    Func<
+        WindowsServiceOperations,
+        CancellationToken,
+        Task<WindowsServiceSnapshot>> operation)
+{
+    using var cancellationTokenSource = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, eventArguments) =>
+    {
+        eventArguments.Cancel = true;
+        cancellationTokenSource.Cancel();
+    };
+    var operations = new WindowsServiceOperations(
+        new WindowsServiceQuery(),
+        new ScExeCommandRunner());
+    var snapshot = await operation(
+        operations,
+        cancellationTokenSource.Token);
+    PrintJson(
+        new
+        {
+            serviceName = StrictServiceHost.ServiceName,
+            snapshot.Installed,
+            snapshot.State,
+            snapshot.StartMode,
+            command = arguments[1].ToLowerInvariant()
+        },
+        options);
+    return snapshot.Installed ? 0 : 1;
 }
 
 static async Task<CliHostSession> CreateHostSessionAsync(
@@ -733,6 +790,9 @@ static void PrintHelp()
 
         Commands:
           service status      Inspect the Windows service and install manifest
+          service start       Start the installed Windows service
+          service stop        Stop the Windows service
+          service uninstall   Remove the service registration and retain data
           init                --vault <directory>
           status              --vault <directory>
           backup              --vault <directory> --to <file.cvbackup>
