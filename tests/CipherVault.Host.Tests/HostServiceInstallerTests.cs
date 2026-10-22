@@ -35,7 +35,7 @@ public sealed class HostServiceInstallerTests
             "HostService",
             configuration.ProcessPolicy!.AllowedImages![0].Kind);
         Assert.Equal(
-            ["HostService", "AdminUi", "AdminCli", "AuthBroker"],
+            ["HostService", "AdminUi", "AdminCli", "AuthBroker", "McpBridge"],
             configuration.ProcessPolicy.AllowedImages
                 .Select(image => image.Kind));
         Assert.Equal(result.InstallId, publicManifest.InstallId);
@@ -145,7 +145,7 @@ public sealed class HostServiceInstallerTests
             Path.Combine(paths.InstallRoot, "CipherVault.Ui.Wpf.exe"),
             Path.Combine(paths.InstallRoot, "CipherVault.Cli.exe"),
             Path.Combine(paths.InstallRoot, "CipherVault.Auth.Broker.exe"),
-            McpExecutablePath: null,
+            Path.Combine(paths.InstallRoot, "CipherVault.Mcp.exe"),
             StartService: startService);
     }
 
@@ -174,6 +174,9 @@ public sealed class HostServiceInstallerTests
                 Path.Combine(
                     Paths.InstallRoot,
                     "CipherVault.Auth.Broker.exe"),
+                [1, 2, 3, 4]);
+            File.WriteAllBytes(
+                Path.Combine(Paths.InstallRoot, "CipherVault.Mcp.exe"),
                 [1, 2, 3, 4]);
         }
 

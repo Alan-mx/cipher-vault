@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using CipherVault.Core.Configuration;
 using CipherVault.Core.Errors;
+using CipherVault.Host.Client;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -29,8 +30,23 @@ catch (ArgumentException exception)
     return;
 }
 
-var bridge = new HostMcpBridgeClient(settings);
-var tools = new BridgeVaultTools(bridge, settings.ReadOnly);
+IMcpBridgeClient bridge;
+bool strictReadOnly;
+if (args.Any(argument => string.Equals(
+        argument,
+        "--strict",
+        StringComparison.OrdinalIgnoreCase)))
+{
+    var strict = StrictBridgeSettings.Load(args);
+    bridge = await StrictMcpBridgeClient.ConnectAsync(strict);
+    strictReadOnly = strict.ReadOnly;
+}
+else
+{
+    bridge = new HostMcpBridgeClient(settings);
+    strictReadOnly = settings.ReadOnly;
+}
+var tools = new BridgeVaultTools(bridge, strictReadOnly);
 var builder = Host.CreateApplicationBuilder(Array.Empty<string>());
 builder.Logging.ClearProviders();
 builder.Services
@@ -59,6 +75,17 @@ public sealed record BridgeSettings(
 
     public static BridgeSettings Load(string[] arguments)
     {
+        if (arguments.Any(argument => string.Equals(
+                argument,
+                "--strict",
+                StringComparison.OrdinalIgnoreCase)))
+        {
+            return new BridgeSettings(
+                new Uri("http://127.0.0.1"),
+                "strict-pipe",
+                Guid.NewGuid(),
+                ParseRequestedScopes(arguments));
+        }
         var configuration = CipherVaultHostConfiguration.Load(
             new CipherVaultHostConfigOverrides
             {
@@ -219,7 +246,111 @@ public sealed record BridgeSettings(
     }
 }
 
+public interface IMcpBridgeClient
+{
+    Task<string> CallToolAsync(
+        string name,
+        IReadOnlyDictionary<string, object?> arguments,
+        CancellationToken cancellationToken);
+
+    Task RevokeGrantAsync(CancellationToken cancellationToken = default);
+}
+
+public sealed record StrictBridgeSettings(
+    CipherVaultInstallPublicManifest Manifest,
+    string ManifestPath,
+    string PipeName,
+    string ClientId,
+    McpAccessMode AccessMode,
+    IReadOnlySet<string> RequestedScopes)
+{
+    public bool ReadOnly => AccessMode == McpAccessMode.ReadOnly;
+
+    public static StrictBridgeSettings Load(string[] arguments)
+    {
+        var paths = CipherVaultServicePaths.Default;
+        var manifestPath = GetOption(arguments, "--manifest") ??
+            paths.PublicManifestPath;
+        var manifest = CipherVaultServiceConfiguration.LoadInstallManifest(
+            manifestPath);
+        var pipe = manifest.Pipes?.Bridge
+            ?? throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "Bridge pipe is missing.");
+        var scopesText = GetOption(arguments, "--scopes") ?? "read,write";
+        var scopes = scopesText.Split(
+                ',',
+                StringSplitOptions.RemoveEmptyEntries |
+                StringSplitOptions.TrimEntries)
+            .Select(value => value.ToLowerInvariant())
+            .ToHashSet(StringComparer.Ordinal);
+        return new StrictBridgeSettings(
+            manifest,
+            manifestPath,
+            pipe,
+            GetOption(arguments, "--client-id") ?? "mcp",
+            scopes.SetEquals(["read"])
+                ? McpAccessMode.ReadOnly
+                : McpAccessMode.ReadWrite,
+            scopes);
+    }
+
+    private static string? GetOption(string[] arguments, string option)
+    {
+        var index = Array.FindIndex(
+            arguments,
+            value => string.Equals(value, option, StringComparison.OrdinalIgnoreCase));
+        return index >= 0 && index + 1 < arguments.Length
+            ? arguments[index + 1]
+            : null;
+    }
+}
+
+public sealed class StrictMcpBridgeClient : IMcpBridgeClient
+{
+    private readonly BridgePipeClientConnection _connection;
+
+    private StrictMcpBridgeClient(BridgePipeClientConnection connection)
+    {
+        _connection = connection;
+    }
+
+    public static async Task<StrictMcpBridgeClient> ConnectAsync(
+        StrictBridgeSettings settings)
+    {
+        var user = System.Security.Principal.WindowsIdentity.GetCurrent().User
+            ?? throw new VaultException(
+                VaultErrorCode.StorageError,
+                "Unable to resolve current user.");
+        var options = StrictServiceClientPolicyFactory.CreateBridgeOptions(
+            settings.Manifest,
+            settings.PipeName,
+            settings.ClientId,
+            settings.AccessMode,
+            settings.RequestedScopes,
+            user.Value,
+            (uint)System.Diagnostics.Process.GetCurrentProcess().SessionId);
+        var connection = await BridgePipeClientConnection.ConnectAsync(options);
+        _ = await connection.RequestGrantAsync();
+        return new StrictMcpBridgeClient(connection);
+    }
+
+    public Task<string> CallToolAsync(
+        string name,
+        IReadOnlyDictionary<string, object?> arguments,
+        CancellationToken cancellationToken)
+    {
+        return _connection.CallToolAsync(name, arguments, cancellationToken);
+    }
+
+    public async Task RevokeGrantAsync(CancellationToken cancellationToken = default)
+    {
+        await _connection.DisposeAsync();
+    }
+}
+
 public sealed class HostMcpBridgeClient
+    : IMcpBridgeClient
 {
     private const string ProtocolVersion = "2026-07-28";
     private static readonly JsonSerializerOptions JsonOptions =
@@ -632,10 +763,10 @@ public sealed class HostMcpBridgeClient
 [McpServerToolType]
 public sealed class BridgeVaultTools
 {
-    private readonly HostMcpBridgeClient _bridge;
+    private readonly IMcpBridgeClient _bridge;
     private readonly bool _readOnly;
 
-    public BridgeVaultTools(HostMcpBridgeClient bridge, bool readOnly)
+    public BridgeVaultTools(IMcpBridgeClient bridge, bool readOnly)
     {
         _bridge = bridge;
         _readOnly = readOnly;

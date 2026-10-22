@@ -347,6 +347,12 @@ public sealed class HostServiceInstaller(
                 VaultErrorCode.InvalidInput,
                 "A signed Auth Broker image is required.");
         }
+        if (string.IsNullOrWhiteSpace(options.McpExecutablePath))
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "A signed MCP bridge image is required.");
+        }
         var result = new List<ServiceImageEvidence>();
         foreach (var imagePath in EnumerateImagePaths(options))
         {
@@ -435,7 +441,23 @@ public sealed class HostServiceInstaller(
             {
                 StrictTransport = "stdio-bridge",
                 CompatibilityHttpEnabled = false,
-                Bridges = [],
+                Bridges =
+                [
+                    new CipherVaultStrictBridgeConfigFile
+                    {
+                        Id = "mcp",
+                        AccessMode = "readWrite",
+                        Enabled = true,
+                        Image = new CipherVaultImagePolicyFile
+                        {
+                            Kind = VerifiedProcessKind.McpBridge.ToString(),
+                            Path = Path.GetFullPath(options.McpExecutablePath!),
+                            Sha256 = images[4].ImageSha256,
+                            SignerThumbprint = signerThumbprint,
+                            SignerSubject = images[4].SignerSubject
+                        }
+                    }
+                ],
                 Clients = []
             }
         };

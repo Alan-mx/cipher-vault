@@ -15,7 +15,8 @@ namespace CipherVault.Host.Service;
 
 public sealed record StrictServiceHostOptions(
     bool EnableAdminPipe = true,
-    bool EnableBrokerPipe = true);
+    bool EnableBrokerPipe = true,
+    bool EnableBridgePipe = true);
 
 public sealed class StrictAdminStatusProvider
 {
@@ -243,6 +244,20 @@ public sealed class AdminPipeHostedService(
         return CreatePolicy(
             configuration,
             VerifiedProcessKind.AuthBroker,
+            ownerSid,
+            installRoot,
+            expectedSessionId: null,
+            required: true);
+    }
+
+    public static ProcessVerificationPolicy CreateBridgePolicy(
+        CipherVaultServiceConfigFile configuration,
+        string ownerSid,
+        string installRoot)
+    {
+        return CreatePolicy(
+            configuration,
+            VerifiedProcessKind.McpBridge,
             ownerSid,
             installRoot,
             expectedSessionId: null,

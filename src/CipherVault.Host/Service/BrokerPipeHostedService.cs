@@ -1,5 +1,6 @@
 using System.IO;
 using System.Security.Principal;
+using System.Text.Json;
 using CipherVault.Core.Configuration;
 using CipherVault.Core.Errors;
 using CipherVault.Core.Session;
@@ -249,5 +250,56 @@ public sealed class BrokerApprovalPrompt(
                 "approval_broker_unavailable",
                 "The interactive Auth Broker is unavailable for approval.");
         }
+    }
+}
+
+public sealed class BrokerAccessGrantPrompt(BrokerConnectionRegistry registry)
+    : IHostAccessGrantPrompt
+{
+    public async Task<HostAccessGrantPromptResult> RequestAsync(
+        HostAccessGrantPromptRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var broker = registry.GetRequired();
+        var approvalId = Guid.NewGuid();
+        var nonce = PipeNonce.Create();
+        var expiresAt = DateTimeOffset.UtcNow.AddMinutes(2);
+        var requested = string.Join(
+            ",",
+            AccessGrantScopes.ToNames(request.RequestedScopes)
+                .OrderBy(value => value, StringComparer.Ordinal));
+        var result = await broker.CallAsync<
+                BrokerApprovalRequest,
+                BrokerApprovalDecision>(
+                "broker.approval.request",
+                new BrokerApprovalRequest(
+                    approvalId,
+                    nonce,
+                    "AccessGrant",
+                    "授权 Agent 访问 CipherVault",
+                    $"客户端 {request.ClientId} 请求权限：{requested}",
+                    CanonicalJson.ComputeSha256(
+                        JsonSerializer.SerializeToElement(new
+                        {
+                            request.ClientId,
+                            request.ClientInstanceId,
+                            request.RequestedScopes
+                        })),
+                    expiresAt),
+                expiresAt,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (result.ApprovalId != approvalId ||
+            !PipeHandshakeTranscript.FixedTimeEquals(nonce, result.NonceB64Url))
+        {
+            throw new AdminPipeRpcException(
+                "approval_response_mismatch",
+                "Broker Access Grant response did not match.");
+        }
+        return new HostAccessGrantPromptResult(
+            result.Approved,
+            result.Approved
+                ? request.RequestedScopes & request.AllowedScopes
+                : AccessGrantScope.None);
     }
 }

@@ -117,7 +117,8 @@ public sealed class StrictServiceHost : IAsyncDisposable
                 serviceProvider => new BrokerTransferPrompt(
                     serviceProvider.GetRequiredService<BrokerConnectionRegistry>()));
             builder.Services.AddSingleton<IHostAccessGrantPrompt>(
-                new BrokerUnavailableAccessGrantPrompt());
+                serviceProvider => new BrokerAccessGrantPrompt(
+                    serviceProvider.GetRequiredService<BrokerConnectionRegistry>()));
             builder.Services.AddSingleton<ISecurityEventLog>(
                 new JsonlSecurityEventLog(paths.LogsPath));
             builder.Services.AddSingleton(serviceProvider =>
@@ -152,6 +153,7 @@ public sealed class StrictServiceHost : IAsyncDisposable
             builder.Services.AddSingleton<StrictAdminVaultRpcProvider>();
             builder.Services.AddHostedService<AdminPipeHostedService>();
             builder.Services.AddHostedService<BrokerPipeHostedService>();
+            builder.Services.AddHostedService<StrictBridgeHostedService>();
             host = builder.Build();
             return new StrictServiceHost(
                 host,

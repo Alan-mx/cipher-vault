@@ -810,9 +810,12 @@ public sealed class StrictAdminVaultRpcProvider(
 
     private static VaultActorKind Actor(AdminSession session)
     {
-        return session.Client.Kind == VerifiedProcessKind.AdminUi
-            ? VaultActorKind.UserUi
-            : VaultActorKind.UserCli;
+        return session.Client.Kind switch
+        {
+            VerifiedProcessKind.AdminUi => VaultActorKind.UserUi,
+            VerifiedProcessKind.McpBridge => VaultActorKind.Mcp,
+            _ => VaultActorKind.UserCli
+        };
     }
 
     private static void ConsumeApproval(

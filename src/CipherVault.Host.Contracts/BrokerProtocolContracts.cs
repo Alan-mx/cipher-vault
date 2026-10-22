@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace CipherVault.Host.Contracts;
 
 public sealed record BrokerCapabilitiesData(
@@ -47,3 +49,17 @@ public sealed record BrokerTransferResult(
     bool Completed,
     string? FinalPath,
     string? ErrorCode);
+
+public sealed record BridgeGrantRequest(
+    IReadOnlyList<string> Scopes);
+
+public sealed record BridgeGrantData(
+    Guid GrantId,
+    string ClientId,
+    string AccessMode,
+    IReadOnlyList<string> Scopes,
+    DateTimeOffset ExpiresAt);
+
+public sealed record BridgeToolCallRequest(
+    string ToolName,
+    JsonElement Arguments);

@@ -593,7 +593,8 @@ static async Task<int> RunServiceInstallAsync(
             Path.Combine(paths.InstallRoot, "CipherVault.Cli.exe"),
         GetOption(arguments, "--broker-exe") ??
             Path.Combine(paths.InstallRoot, "CipherVault.Auth.Broker.exe"),
-        GetOption(arguments, "--mcp-exe"),
+        GetOption(arguments, "--mcp-exe") ??
+            Path.Combine(paths.InstallRoot, "CipherVault.Mcp.exe"),
         StartService: !HasFlag(arguments, "--no-start"));
     using var cancellationTokenSource = new CancellationTokenSource();
     Console.CancelKeyPress += (_, eventArguments) =>

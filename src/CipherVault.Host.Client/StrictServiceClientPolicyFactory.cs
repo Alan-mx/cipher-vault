@@ -65,6 +65,35 @@ public static class StrictServiceClientPolicyFactory
             serverPolicy);
     }
 
+    public static BridgePipeClientOptions CreateBridgeOptions(
+        CipherVaultInstallPublicManifest manifest,
+        string pipeName,
+        string clientId,
+        McpAccessMode accessMode,
+        IReadOnlySet<string> requestedScopes,
+        string ownerSid,
+        uint ownerSessionId)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+        var serviceSid = manifest.ServiceSid
+            ?? throw Invalid("Install manifest service SID is required.");
+        return new BridgePipeClientOptions(
+            pipeName,
+            clientId,
+            accessMode,
+            requestedScopes,
+            CreatePolicy(
+                VerifiedProcessKind.McpBridge,
+                ownerSid,
+                ownerSessionId,
+                manifest.AllowedClientImages),
+            CreatePolicy(
+                VerifiedProcessKind.HostService,
+                serviceSid,
+                0,
+                manifest.AllowedServerImages));
+    }
+
     private static ProcessVerificationPolicy CreatePolicy(
         VerifiedProcessKind kind,
         string expectedUserSid,

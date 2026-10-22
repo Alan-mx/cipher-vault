@@ -23,7 +23,8 @@ public sealed class StrictServiceHostTests
             fixture.Paths,
             new StrictServiceHostOptions(
                 EnableAdminPipe: false,
-                EnableBrokerPipe: false));
+                EnableBrokerPipe: false,
+                EnableBridgePipe: false));
         var lifetime = service.Services.GetRequiredService<IHostApplicationLifetime>();
         var started = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -48,7 +49,8 @@ public sealed class StrictServiceHostTests
             fixture.Paths,
             new StrictServiceHostOptions(
                 EnableAdminPipe: false,
-                EnableBrokerPipe: false));
+                EnableBrokerPipe: false,
+                EnableBridgePipe: false));
 
         var exception = Assert.Throws<VaultException>(
             () => StrictServiceHost.Create(configuration, fixture.Paths));
@@ -61,7 +63,8 @@ public sealed class StrictServiceHostTests
             fixture.Paths,
             new StrictServiceHostOptions(
                 EnableAdminPipe: false,
-                EnableBrokerPipe: false));
+                EnableBrokerPipe: false,
+                EnableBridgePipe: false));
     }
 
     [Theory]
