@@ -266,35 +266,6 @@ public sealed class StandaloneHostVaultClient : IHostVaultClient
         return _vault.DisposeAsync();
     }
 
-    public Task<IReadOnlyList<HostClientData>> ListAgentClientsAsync(
-        CancellationToken cancellationToken = default)
-    {
-        throw HostManagementRequired();
-    }
-
-    public Task<HostCreateClientData> CreateAgentClientAsync(
-        string clientId,
-        string accessMode,
-        string authorizationMode,
-        CancellationToken cancellationToken = default)
-    {
-        throw HostManagementRequired();
-    }
-
-    public Task<HostCreateClientData> RotateAgentClientAsync(
-        string clientId,
-        CancellationToken cancellationToken = default)
-    {
-        throw HostManagementRequired();
-    }
-
-    public Task DeleteAgentClientAsync(
-        string clientId,
-        CancellationToken cancellationToken = default)
-    {
-        throw HostManagementRequired();
-    }
-
     public Task StopHostAsync(
         string reason = "user-requested",
         CancellationToken cancellationToken = default)

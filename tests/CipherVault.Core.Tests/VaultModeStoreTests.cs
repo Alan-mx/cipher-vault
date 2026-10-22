@@ -33,13 +33,13 @@ public sealed class VaultModeStoreTests
     }
 
     [Fact]
-    public void CompatibilityModeRejectsAnyVaultMarker()
+    public void DirectAccessRejectsAnyVaultMarker()
     {
         using var fixture = new ModeFixture();
         File.WriteAllText(fixture.ModePath, """{"format":"invalid"}""");
 
         var exception = Assert.Throws<VaultException>(
-            () => VaultModeStore.EnsureCompatibilityAllowed(fixture.VaultPath));
+            () => VaultModeStore.EnsureDirectAccessAllowed(fixture.VaultPath));
 
         Assert.Equal(VaultErrorCode.InvalidInput, exception.Code);
     }

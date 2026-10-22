@@ -69,20 +69,6 @@ try
         "change-password" => await ChangePasswordAsync(service, Require(vaultPath)),
         "rotate-recovery" => await RotateRecoveryAsync(service, Require(vaultPath)),
         "confirm-recovery" => await ConfirmRecoveryAsync(service, Require(vaultPath)),
-        "client-list" => await ListClientsAsync(service, jsonOptions),
-        "client-add" => await CreateClientAsync(
-            service,
-            RequireOption(args, "--id"),
-            GetOption(args, "--access") ?? "readOnly",
-            GetOption(args, "--authorization-mode") ?? "accessGrant",
-            jsonOptions),
-        "client-rotate" => await RotateClientAsync(
-            service,
-            RequireOption(args, "--id"),
-            jsonOptions),
-        "client-delete" => await DeleteClientAsync(
-            service,
-            RequireOption(args, "--id")),
         "host-stop" => await StopHostAsync(service),
         "audit" => await AuditAsync(service, Require(vaultPath), jsonOptions),
         "search" => await SearchAsync(service, Require(vaultPath), RequireOption(args, "--query"), jsonOptions),
@@ -267,65 +253,6 @@ static async Task<int> ConfirmRecoveryAsync(
         vaultPath,
         confirmation);
     Console.WriteLine("Recovery key confirmed.");
-    return 0;
-}
-
-static async Task<int> ListClientsAsync(
-    IHostVaultClient service,
-    JsonSerializerOptions options)
-{
-    var clients = await service.ListAgentClientsAsync();
-    PrintJson(clients, options);
-    return 0;
-}
-
-static async Task<int> CreateClientAsync(
-    IHostVaultClient service,
-    string clientId,
-    string accessMode,
-    string authorizationMode,
-    JsonSerializerOptions options)
-{
-    if (accessMode is not ("readOnly" or "readWrite"))
-    {
-        throw new VaultException(
-            VaultErrorCode.InvalidInput,
-            "--access must be readOnly or readWrite.");
-    }
-    if (authorizationMode is not ("accessGrant" or "staticToken"))
-    {
-        throw new VaultException(
-            VaultErrorCode.InvalidInput,
-            "--authorization-mode must be accessGrant or staticToken.");
-    }
-    var created = await service.CreateAgentClientAsync(
-        clientId,
-        accessMode,
-        authorizationMode);
-    PrintJson(created, options);
-    Console.Error.WriteLine(
-        "Store the token now. It cannot be displayed again.");
-    return 0;
-}
-
-static async Task<int> RotateClientAsync(
-    IHostVaultClient service,
-    string clientId,
-    JsonSerializerOptions options)
-{
-    var rotated = await service.RotateAgentClientAsync(clientId);
-    PrintJson(rotated, options);
-    Console.Error.WriteLine(
-        "Store the new token now. It cannot be displayed again.");
-    return 0;
-}
-
-static async Task<int> DeleteClientAsync(
-    IHostVaultClient service,
-    string clientId)
-{
-    await service.DeleteAgentClientAsync(clientId);
-    Console.WriteLine($"client removed: {clientId}");
     return 0;
 }
 
@@ -655,10 +582,8 @@ static async Task<CliHostSession> CreateHostSessionAsync(
 {
     if (standalone)
     {
-        var configuration = CipherVaultHostConfiguration.Load(
-            CreateHostOverrides(arguments),
-            GetOption(arguments, "--config"));
-        VaultModeStore.EnsureCompatibilityAllowed(configuration.VaultPath);
+        var configuration = CreateStandaloneConfiguration(arguments);
+        VaultModeStore.EnsureDirectAccessAllowed(configuration.VaultPath);
         var ownership = await VaultOwnershipLock.AcquireAsync(
             configuration.VaultPath);
         try
@@ -676,21 +601,6 @@ static async Task<CliHostSession> CreateHostSessionAsync(
             await ownership.DisposeAsync();
             throw;
         }
-    }
-
-    var compatibilityConfigPath = GetOption(arguments, "--config");
-    if (compatibilityConfigPath is not null)
-    {
-        var hostConfiguration = CipherVaultHostConfiguration.Load(
-            CreateHostOverrides(arguments),
-            compatibilityConfigPath);
-        var client = await HttpHostVaultClient.CreateAsync(
-            hostConfiguration,
-            HostAdminClientKind.Cli);
-        return new CliHostSession(
-            hostConfiguration.VaultPath,
-            client,
-            ownership: null);
     }
 
     var paths = CipherVaultServicePaths.Default;
@@ -846,18 +756,17 @@ static string ReadCredential(VaultCredentialType credentialType)
     };
 }
 
-static CipherVaultHostConfigOverrides CreateHostOverrides(string[] arguments)
+static StandaloneConfiguration CreateStandaloneConfiguration(string[] arguments)
 {
-    return new CipherVaultHostConfigOverrides
-    {
-        VaultPath = GetOption(arguments, "--vault"),
-        IdleMinutes = ParseOptionalInteger(
-            GetOption(arguments, "--idle-minutes"),
-            "--idle-minutes"),
-        HardHours = ParseOptionalInteger(
-            GetOption(arguments, "--hard-hours"),
-            "--hard-hours")
-    };
+    var idleMinutes = ParseOptionalInteger(
+        GetOption(arguments, "--idle-minutes"),
+        "--idle-minutes") ?? 15;
+    var hardHours = ParseOptionalInteger(
+        GetOption(arguments, "--hard-hours"),
+        "--hard-hours") ?? 4;
+    return new StandaloneConfiguration(
+        RequireOption(arguments, "--vault"),
+        VaultSessionOptions.FromMinutes(idleMinutes, hardHours));
 }
 
 static int? ParseOptionalInteger(
@@ -911,10 +820,6 @@ static void PrintHelp()
           change-password     --vault <directory>
           rotate-recovery     --vault <directory>
           confirm-recovery    --vault <directory>
-          client-list
-          client-add          --id <client-id> [--access readOnly|readWrite] [--authorization-mode accessGrant|staticToken]
-          client-rotate       --id <client-id>
-          client-delete       --id <client-id>
           host-stop
           audit               --vault <directory>
           search              --vault <directory> --query <text>
@@ -930,10 +835,8 @@ static void PrintHelp()
 
         Session options:
           --manifest <file>        Defaults to %ProgramData%\CipherVault\install-public.json
-          --config <file>          Explicit compatibility Host configuration
+          --vault <directory>      Required Vault path for standalone mode
           --standalone             Explicit direct mode; requires Host to be stopped
-          --idle-minutes <1-1440>  Defaults to 15
-          --hard-hours <1-168>     Defaults to 4 and must cover the idle timeout
         """);
 }
 
@@ -972,3 +875,7 @@ file sealed class CliHostSession : IAsyncDisposable
         }
     }
 }
+
+file sealed record StandaloneConfiguration(
+    string VaultPath,
+    VaultSessionOptions SessionOptions);

@@ -24,13 +24,12 @@ public sealed class ServiceConfigurationTests
         Assert.Equal(dataRoot, config.DataRoot);
         Assert.Equal(vaultPath, config.VaultPath);
         Assert.Equal("stdio-bridge", config.Agent?.StrictTransport);
-        Assert.False(config.Agent?.CompatibilityHttpEnabled);
         Assert.Single(config.ProcessPolicy!.AllowedSignerThumbprints!);
     }
 
     [Theory]
     [InlineData("\"configVersion\": 2")]
-    [InlineData("\"agent\": {\"strictTransport\":\"stdio-bridge\",\"compatibilityHttpEnabled\":true}")]
+    [InlineData("\"agent\": {\"strictTransport\":\"http-compatibility\"}")]
     [InlineData("\"processPolicy\": {\"allowedSignerThumbprints\":[],\"requireSha256\":true}")]
     [InlineData("\"pipes\": {\"admin\":\"same\",\"broker\":\"same\",\"bridge\":\"third\",\"rejectRemoteClients\":true}")]
     [InlineData("\"pipes\": {\"admin\":\"admin\",\"broker\":\"broker\",\"bridge\":\"bridge\",\"rejectRemoteClients\":false}")]
@@ -48,7 +47,7 @@ public sealed class ServiceConfigurationTests
         else if (replacement.StartsWith("\"agent\"", StringComparison.Ordinal))
         {
             json = json.Replace(
-                "\"agent\": { \"strictTransport\": \"stdio-bridge\", \"compatibilityHttpEnabled\": false }",
+                "\"agent\": { \"strictTransport\": \"stdio-bridge\" }",
                 "\"agent\": " + replacement["\"agent\": ".Length..],
                 StringComparison.Ordinal);
         }
@@ -205,14 +204,9 @@ public sealed class ServiceConfigurationTests
               "serviceAccount": "NT SERVICE\\CipherVaultHost",
               "vaultPath": "{{escapedVaultPath}}",
               "dataRoot": "{{escapedDataRoot}}",
-              "host": {
-                "mcpPath": "/mcp",
-                "maxRequestBodyBytes": 4194304,
-                "allowedOrigins": []
-              },
               "pipes": { "admin": "CipherVault.Admin.v1", "broker": "CipherVault.Broker.v1", "bridge": "CipherVault.Bridge.v1", "rejectRemoteClients": true },
               "processPolicy": { "allowedSignerThumbprints": ["{{Thumbprint}}"], "requireSha256": true },
-              "agent": { "strictTransport": "stdio-bridge", "compatibilityHttpEnabled": false }
+              "agent": { "strictTransport": "stdio-bridge" }
             }
             """;
     }

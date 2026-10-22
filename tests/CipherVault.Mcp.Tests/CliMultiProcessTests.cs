@@ -21,7 +21,7 @@ public sealed class CliMultiProcessTests
 
         var result = await RunCliAsync(
             cliPath,
-            fixture.ConfigPath,
+            fixture.VaultPath,
             fixture.FirstJobId);
 
         Assert.Equal(2, result.ExitCode);
@@ -30,7 +30,7 @@ public sealed class CliMultiProcessTests
 
     private static async Task<ProcessResult> RunCliAsync(
         string cliPath,
-        string configPath,
+        string vaultPath,
         Guid jobId)
     {
         var startInfo = new ProcessStartInfo(cliPath)
@@ -43,8 +43,8 @@ public sealed class CliMultiProcessTests
         };
         startInfo.ArgumentList.Add("import-apply");
         startInfo.ArgumentList.Add("--standalone");
-        startInfo.ArgumentList.Add("--config");
-        startInfo.ArgumentList.Add(configPath);
+        startInfo.ArgumentList.Add("--vault");
+        startInfo.ArgumentList.Add(vaultPath);
         startInfo.ArgumentList.Add("--job");
         startInfo.ArgumentList.Add(jobId.ToString("D"));
         foreach (var variable in CipherVaultEnvironmentVariables)
@@ -130,20 +130,17 @@ public sealed class CliMultiProcessTests
         private CliProcessFixture(
             string rootPath,
             string vaultPath,
-            string configPath,
             Guid firstJobId,
             Guid secondJobId)
         {
             RootPath = rootPath;
             VaultPath = vaultPath;
-            ConfigPath = configPath;
             FirstJobId = firstJobId;
             SecondJobId = secondJobId;
         }
 
         public string RootPath { get; }
         public string VaultPath { get; }
-        public string ConfigPath { get; }
         public Guid FirstJobId { get; }
         public Guid SecondJobId { get; }
 
@@ -154,7 +151,6 @@ public sealed class CliMultiProcessTests
                 $"cipher-vault-cli-process-{Guid.NewGuid():N}");
             Directory.CreateDirectory(root);
             var vaultPath = Path.Combine(root, "vault");
-            var configPath = Path.Combine(root, "config.json");
             var firstSource = Path.Combine(root, "source-one");
             var secondSource = Path.Combine(root, "source-two");
             Directory.CreateDirectory(firstSource);
@@ -165,19 +161,6 @@ public sealed class CliMultiProcessTests
             await File.WriteAllTextAsync(
                 Path.Combine(secondSource, "process two.md"),
                 "content from process two");
-            await File.WriteAllTextAsync(
-                configPath,
-                JsonSerializer.Serialize(new
-                {
-                    configVersion = 2,
-                    vaultPath,
-                    session = new
-                    {
-                        idleMinutes = 15,
-                        hardHours = 4
-                    }
-                }));
-
             var service = new VaultService(new AlwaysActiveActivityProvider());
             var succeeded = false;
             try
@@ -201,7 +184,6 @@ public sealed class CliMultiProcessTests
                 return new CliProcessFixture(
                     root,
                     vaultPath,
-                    configPath,
                     firstPreview.JobId,
                     secondPreview.JobId);
             }

@@ -19,7 +19,7 @@ public sealed class CliCrashRecoveryTests
         var cliPath = FindCliExecutable();
         using var interrupted = StartImportProcess(
             cliPath,
-            fixture.ConfigPath,
+            fixture.VaultPath,
             fixture.JobId);
 
         await WaitForFirstImportedDocumentAsync(fixture.Service);
@@ -30,7 +30,7 @@ public sealed class CliCrashRecoveryTests
 
         var retry = await RunImportToCompletionAsync(
             cliPath,
-            fixture.ConfigPath,
+            fixture.VaultPath,
             fixture.JobId);
         Assert.True(
             retry.ExitCode == 0,
@@ -98,10 +98,10 @@ public sealed class CliCrashRecoveryTests
 
     private static ImportProcess StartImportProcess(
         string cliPath,
-        string configPath,
+        string vaultPath,
         Guid jobId)
     {
-        var startInfo = CreateProcessStartInfo(cliPath, configPath, jobId);
+        var startInfo = CreateProcessStartInfo(cliPath, vaultPath, jobId);
         var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Unable to start CipherVault.Cli.exe.");
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
@@ -113,10 +113,10 @@ public sealed class CliCrashRecoveryTests
 
     private static async Task<ProcessResult> RunImportToCompletionAsync(
         string cliPath,
-        string configPath,
+        string vaultPath,
         Guid jobId)
     {
-        using var import = StartImportProcess(cliPath, configPath, jobId);
+        using var import = StartImportProcess(cliPath, vaultPath, jobId);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(180));
         try
         {
@@ -138,7 +138,7 @@ public sealed class CliCrashRecoveryTests
 
     private static ProcessStartInfo CreateProcessStartInfo(
         string cliPath,
-        string configPath,
+        string vaultPath,
         Guid jobId)
     {
         var startInfo = new ProcessStartInfo(cliPath)
@@ -151,8 +151,8 @@ public sealed class CliCrashRecoveryTests
         };
         startInfo.ArgumentList.Add("import-apply");
         startInfo.ArgumentList.Add("--standalone");
-        startInfo.ArgumentList.Add("--config");
-        startInfo.ArgumentList.Add(configPath);
+        startInfo.ArgumentList.Add("--vault");
+        startInfo.ArgumentList.Add(vaultPath);
         startInfo.ArgumentList.Add("--job");
         startInfo.ArgumentList.Add(jobId.ToString("D"));
         foreach (var variable in CipherVaultEnvironmentVariables)
@@ -238,18 +238,18 @@ public sealed class CliCrashRecoveryTests
     {
         private CrashFixture(
             string rootPath,
-            string configPath,
+            string vaultPath,
             Guid jobId,
             VaultService service)
         {
             RootPath = rootPath;
-            ConfigPath = configPath;
+            VaultPath = vaultPath;
             JobId = jobId;
             Service = service;
         }
 
         public string RootPath { get; }
-        public string ConfigPath { get; }
+        public string VaultPath { get; }
         public Guid JobId { get; }
         public VaultService Service { get; }
 
@@ -261,7 +261,6 @@ public sealed class CliCrashRecoveryTests
             Directory.CreateDirectory(root);
             var vaultPath = Path.Combine(root, "vault");
             var sourcePath = Path.Combine(root, "source");
-            var configPath = Path.Combine(root, "config.json");
             Directory.CreateDirectory(sourcePath);
             for (var index = 0; index < ImportFileCount; index++)
             {
@@ -269,19 +268,6 @@ public sealed class CliCrashRecoveryTests
                     Path.Combine(sourcePath, $"document-{index:D4}.md"),
                     $"content {index}{Environment.NewLine}{new string('x', 4096)}");
             }
-            await File.WriteAllTextAsync(
-                configPath,
-                JsonSerializer.Serialize(new
-                {
-                    configVersion = 2,
-                    vaultPath,
-                    session = new
-                    {
-                        idleMinutes = 15,
-                        hardHours = 4
-                    }
-                }));
-
             var service = new VaultService(new AlwaysActiveActivityProvider());
             var succeeded = false;
             try
@@ -299,7 +285,11 @@ public sealed class CliCrashRecoveryTests
                     sourcePath,
                     VaultActorKind.UserCli);
                 succeeded = true;
-                return new CrashFixture(root, configPath, preview.JobId, service);
+                return new CrashFixture(
+                    root,
+                    vaultPath,
+                    preview.JobId,
+                    service);
             }
             finally
             {

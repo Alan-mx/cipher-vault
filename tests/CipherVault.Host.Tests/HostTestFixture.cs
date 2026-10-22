@@ -1,59 +1,39 @@
 using System.IO;
-using System.Net.Http;
 using CipherVault.Core;
-using CipherVault.Core.Configuration;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Session;
 using CipherVault.Host.Security;
-using CipherVault.Host.Client.Security;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.TestHost;
+using CipherVault.Host.Session;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 
 namespace CipherVault.Host.Tests;
 
 internal sealed class HostTestFixture : IAsyncDisposable
 {
-    public const string AdminToken = "test-admin-token";
-    public const string CliAdminToken = "test-admin-cli-token";
     public const string VaultPassword = "host integration password";
-    public const string BaseUrl = "http://127.0.0.1:43127";
 
     private HostTestFixture(
         string root,
         string vaultPath,
-        string configPath,
-        string securityLogDirectory,
         string? recoveryKey,
-        WebApplication app,
-        HttpClient client,
+        HostTestApp app,
         TestCredentialPrompt credentialPrompt,
         TestAccessGrantPrompt accessGrantPrompt)
     {
         Root = root;
         VaultPath = vaultPath;
-        ConfigPath = configPath;
-        SecurityLogDirectory = securityLogDirectory;
         RecoveryKey = recoveryKey;
         App = app;
-        Client = client;
         CredentialPrompt = credentialPrompt;
         AccessGrantPrompt = accessGrantPrompt;
     }
 
     public string Root { get; }
     public string VaultPath { get; }
-    public string ConfigPath { get; }
-    public string SecurityLogDirectory { get; }
     public string? RecoveryKey { get; }
-    public WebApplication App { get; }
-    public HttpClient Client { get; }
+    public HostTestApp App { get; }
     public TestCredentialPrompt CredentialPrompt { get; }
     public TestAccessGrantPrompt AccessGrantPrompt { get; }
-    public IHostApplicationLifetime Lifetime =>
-        App.Services.GetRequiredService<IHostApplicationLifetime>();
 
     public async Task<VaultWriteResult> CreateNoteAsync(
         string title,
@@ -74,90 +54,111 @@ internal sealed class HostTestFixture : IAsyncDisposable
             VaultActorKind.UserUi);
     }
 
-    public static async Task<HostTestFixture> CreateAsync(
-        string[]? allowedOrigins = null,
-        bool initializeVault = true,
-        IReadOnlyList<AgentClientPolicy>? clients = null,
-        bool confirmRecoveryKey = true)
+    public static async Task<HostTestFixture> CreateAsync()
     {
         var root = Path.Combine(
             Path.GetTempPath(),
             $"cipher-vault-host-test-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
         var vaultPath = Path.Combine(root, "vault");
-        string? recoveryKey = null;
-        if (initializeVault)
+        VaultInitializeResult initialized;
+        await using (var initializer = new VaultService(
+                         new AlwaysActiveActivityProvider()))
         {
-            await using var initializer = new VaultService(
-                new AlwaysActiveActivityProvider());
-            var initialized = await initializer.InitializeAsync(vaultPath, VaultPassword);
-            recoveryKey = initialized.RecoveryKey;
-            if (confirmRecoveryKey)
-            {
-                await initializer.ConfirmRecoveryKeyAsync(
-                    vaultPath,
-                    initialized.RecoveryKey,
-                    VaultActorKind.UserUi);
-            }
+            initialized = await initializer.InitializeAsync(vaultPath, VaultPassword);
+            await initializer.ConfirmRecoveryKeyAsync(
+                vaultPath,
+                initialized.RecoveryKey,
+                VaultActorKind.UserUi);
         }
 
-        var builder = WebApplication.CreateBuilder();
-        builder.WebHost.UseTestServer();
-        var configPath = Path.Combine(root, "config.json");
-        var securityLogDirectory = Path.Combine(root, "logs");
-        var configuration = new ResolvedCipherVaultHostConfig(
-            vaultPath,
-            VaultSessionOptions.Default,
-            new HostEndpointOptions(
-                "127.0.0.1",
-                43127,
-                "/mcp",
-                "/admin/v1",
-                4096,
-                new HashSet<string>(
-                    allowedOrigins ?? [],
-                    StringComparer.OrdinalIgnoreCase)),
-            clients ?? [],
-            configPath);
+        var activity = new AlwaysActiveActivityProvider();
+        var vault = new VaultService(activity);
         var credentialPrompt = new TestCredentialPrompt();
         var accessGrantPrompt = new TestAccessGrantPrompt();
-        var app = HostApplication.Configure(
-            builder,
-            configuration,
-            new TestAdminTokenStore(AdminToken),
+        var securityLogDirectory = Path.Combine(root, "logs");
+        var approvals = new ApprovalStore();
+        var adminSessions = new AdminSessionStore();
+        var accessGrants = new AccessGrantService(
+            securityLog: new JsonlSecurityEventLog(securityLogDirectory));
+        var sessions = new HostSessionCoordinator(
+            vault,
+            vaultPath,
             credentialPrompt,
-            accessGrantPrompt,
-            new AlwaysActiveActivityProvider(),
-            new JsonlSecurityEventLog(securityLogDirectory));
-        await app.StartAsync();
+            accessGrants,
+            approvals,
+            adminSessions);
+        var services = new ServiceCollection()
+            .AddSingleton(activity)
+            .AddSingleton(vault)
+            .AddSingleton<IVaultService>(vault)
+            .AddSingleton(credentialPrompt)
+            .AddSingleton<IHostCredentialPrompt>(credentialPrompt)
+            .AddSingleton(accessGrantPrompt)
+            .AddSingleton<IHostAccessGrantPrompt>(accessGrantPrompt)
+            .AddSingleton(approvals)
+            .AddSingleton(adminSessions)
+            .AddSingleton(accessGrants)
+            .AddSingleton(sessions)
+            .AddSingleton<HostVaultGateway>()
+            .BuildServiceProvider();
+        var app = new HostTestApp(services);
+
         return new HostTestFixture(
             root,
             vaultPath,
-            configPath,
-            securityLogDirectory,
-            recoveryKey,
+            initialized.RecoveryKey,
             app,
-            app.GetTestClient(),
             credentialPrompt,
             accessGrantPrompt);
     }
 
-    public static HttpRequestMessage CreateRequest(
-        string path = "/admin/v1/health")
-    {
-        var request = new HttpRequestMessage(HttpMethod.Get, path);
-        request.Headers.Host = "127.0.0.1:43127";
-        return request;
-    }
-
     public async ValueTask DisposeAsync()
     {
-        Client.Dispose();
-        await App.DisposeAsync();
+        var vault = App.Services.GetRequiredService<IVaultService>();
+        await vault.DisposeAsync();
+        if (App.Services is IAsyncDisposable disposable)
+        {
+            await disposable.DisposeAsync();
+        }
         if (Directory.Exists(Root))
         {
-            Directory.Delete(Root, recursive: true);
+            await DeleteDirectoryWithRetryAsync(Root);
         }
+    }
+
+    private static async Task DeleteDirectoryWithRetryAsync(string path)
+    {
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            if (!Directory.Exists(path))
+            {
+                return;
+            }
+            try
+            {
+                Directory.Delete(path, recursive: true);
+                return;
+            }
+            catch (IOException) when (attempt < 49)
+            {
+                await Task.Delay(100);
+            }
+            catch (UnauthorizedAccessException) when (attempt < 49)
+            {
+                await Task.Delay(100);
+            }
+        }
+    }
+
+    internal sealed class HostTestApp
+    {
+        public HostTestApp(IServiceProvider services)
+        {
+            Services = services;
+        }
+
+        public IServiceProvider Services { get; }
     }
 
     internal sealed class TestCredentialPrompt : IHostCredentialPrompt
@@ -229,39 +230,6 @@ internal sealed class HostTestFixture : IAsyncDisposable
                     }
                     : Result;
             return Task.FromResult(result);
-        }
-    }
-
-    private sealed class TestAdminTokenStore(string token) : IAdminTokenStore
-    {
-        public Task<string> GetTokenAsync(
-            CipherVault.Host.Contracts.HostAdminClientKind clientKind,
-            CancellationToken cancellationToken = default)
-        {
-            return Task.FromResult(
-                clientKind == CipherVault.Host.Contracts.HostAdminClientKind.Cli
-                    ? CliAdminToken
-                    : token);
-        }
-
-        public Task<CipherVault.Host.Contracts.HostAdminClientKind?> AuthenticateAsync(
-            string rawToken,
-            CancellationToken cancellationToken = default)
-        {
-            if (string.Equals(rawToken, token, StringComparison.Ordinal))
-            {
-                return Task.FromResult<
-                    CipherVault.Host.Contracts.HostAdminClientKind?>(
-                    CipherVault.Host.Contracts.HostAdminClientKind.Ui);
-            }
-            if (string.Equals(rawToken, CliAdminToken, StringComparison.Ordinal))
-            {
-                return Task.FromResult<
-                    CipherVault.Host.Contracts.HostAdminClientKind?>(
-                    CipherVault.Host.Contracts.HostAdminClientKind.Cli);
-            }
-            return Task.FromResult<
-                CipherVault.Host.Contracts.HostAdminClientKind?>(null);
         }
     }
 

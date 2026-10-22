@@ -125,23 +125,6 @@ public interface IHostVaultClient : IAsyncDisposable
         string recoveryKey,
         CancellationToken cancellationToken = default);
 
-    Task<IReadOnlyList<HostClientData>> ListAgentClientsAsync(
-        CancellationToken cancellationToken = default);
-
-    Task<HostCreateClientData> CreateAgentClientAsync(
-        string clientId,
-        string accessMode,
-        string authorizationMode,
-        CancellationToken cancellationToken = default);
-
-    Task<HostCreateClientData> RotateAgentClientAsync(
-        string clientId,
-        CancellationToken cancellationToken = default);
-
-    Task DeleteAgentClientAsync(
-        string clientId,
-        CancellationToken cancellationToken = default);
-
     Task StopHostAsync(
         string reason = "user-requested",
         CancellationToken cancellationToken = default);

@@ -369,47 +369,6 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
             cancellationToken).ConfigureAwait(false);
     }
 
-    public Task<IReadOnlyList<HostClientData>> ListAgentClientsAsync(
-        CancellationToken cancellationToken = default)
-    {
-        return CallAsync<IReadOnlyList<HostClientData>>(
-            "admin.agent.clients.list",
-            new { },
-            cancellationToken);
-    }
-
-    public Task<HostCreateClientData> CreateAgentClientAsync(
-        string clientId,
-        string accessMode,
-        string authorizationMode,
-        CancellationToken cancellationToken = default)
-    {
-        return CallAsync<HostCreateClientData>(
-            "admin.agent.clients.create",
-            new HostCreateClientRequest(clientId, accessMode, authorizationMode),
-            cancellationToken);
-    }
-
-    public Task<HostCreateClientData> RotateAgentClientAsync(
-        string clientId,
-        CancellationToken cancellationToken = default)
-    {
-        return CallAsync<HostCreateClientData>(
-            "admin.agent.clients.rotate",
-            new { clientId },
-            cancellationToken);
-    }
-
-    public async Task DeleteAgentClientAsync(
-        string clientId,
-        CancellationToken cancellationToken = default)
-    {
-        _ = await CallAsync<JsonElement>(
-            "admin.agent.clients.delete",
-            new { clientId },
-            cancellationToken).ConfigureAwait(false);
-    }
-
     public async Task StopHostAsync(
         string reason = "user-requested",
         CancellationToken cancellationToken = default)

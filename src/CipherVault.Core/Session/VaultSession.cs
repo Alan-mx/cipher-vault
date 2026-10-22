@@ -25,6 +25,7 @@ internal sealed class VaultSession : IAsyncDisposable
         State = VaultSessionState.Locking;
         try
         {
+            Connection.Close();
             Connection.Dispose();
         }
         finally

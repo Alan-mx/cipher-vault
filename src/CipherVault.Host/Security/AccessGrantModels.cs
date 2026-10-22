@@ -118,11 +118,6 @@ public enum AccessGrantRevokeStatus
     Invalid
 }
 
-public static class AccessGrantHeaders
-{
-    public const string Grant = "X-CipherVault-Grant";
-}
-
 public sealed record AccessGrantValidationResult(
     AccessGrantValidationStatus Status,
     AccessGrantContext? Grant,

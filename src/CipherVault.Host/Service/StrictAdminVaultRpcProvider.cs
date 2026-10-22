@@ -292,13 +292,6 @@ public sealed class StrictAdminVaultRpcProvider(
                         auditRequest.Limit,
                         token),
                     cancellationToken).ConfigureAwait(false);
-            case "admin.agent.clients.list":
-            case "admin.agent.clients.create":
-            case "admin.agent.clients.rotate":
-            case "admin.agent.clients.delete":
-                throw new AdminPipeRpcException(
-                    "compatibility_only",
-                    "Agent Token management is unavailable in strict mode.");
             case "admin.maintenance.change_password":
                 await sessions.ChangePasswordAsync(
                     Actor(session),

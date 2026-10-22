@@ -280,35 +280,6 @@ internal sealed class InProcessHostVaultClient : IHostVaultClient
         return _vault.DisposeAsync();
     }
 
-    public Task<IReadOnlyList<HostClientData>> ListAgentClientsAsync(
-        CancellationToken cancellationToken = default)
-    {
-        return Task.FromResult<IReadOnlyList<HostClientData>>([]);
-    }
-
-    public Task<HostCreateClientData> CreateAgentClientAsync(
-        string clientId,
-        string accessMode,
-        string authorizationMode,
-        CancellationToken cancellationToken = default)
-    {
-        throw new NotSupportedException();
-    }
-
-    public Task<HostCreateClientData> RotateAgentClientAsync(
-        string clientId,
-        CancellationToken cancellationToken = default)
-    {
-        throw new NotSupportedException();
-    }
-
-    public Task DeleteAgentClientAsync(
-        string clientId,
-        CancellationToken cancellationToken = default)
-    {
-        throw new NotSupportedException();
-    }
-
     public Task StopHostAsync(
         string reason = "user-requested",
         CancellationToken cancellationToken = default)

@@ -68,18 +68,18 @@ public sealed class StrictServiceHostTests
     }
 
     [Theory]
-    [InlineData("compatibility")]
+    [InlineData("not-strict")]
     [InlineData("mismatched-path")]
     public void InvalidServiceHostConfigurationIsRejected(string scenario)
     {
         using var fixture = new ServiceHostFixture();
         var configuration = CreateConfiguration(fixture.Paths);
         CreateInstallState(fixture.Paths, configuration);
-        if (scenario == "compatibility")
+        if (scenario == "not-strict")
         {
             configuration = configuration with
             {
-                SecurityMode = CipherVaultServiceConfiguration.CompatibilityModeValue
+                SecurityMode = "not-strict"
             };
         }
         else
@@ -142,12 +142,6 @@ public sealed class StrictServiceHostTests
                 IdleMinutes = 15,
                 HardHours = 4
             },
-            Host = new CipherVaultServiceHostConfigFile
-            {
-                McpPath = "/mcp",
-                MaxRequestBodyBytes = 4 * 1024 * 1024,
-                AllowedOrigins = []
-            },
             Pipes = new CipherVaultPipeConfigFile
             {
                 Admin = "CipherVault.Admin.v1",
@@ -162,8 +156,7 @@ public sealed class StrictServiceHostTests
             },
             Agent = new CipherVaultAgentRuntimeConfigFile
             {
-                StrictTransport = "stdio-bridge",
-                CompatibilityHttpEnabled = false
+                StrictTransport = "stdio-bridge"
             }
         };
     }

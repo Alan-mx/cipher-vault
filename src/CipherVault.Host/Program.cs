@@ -1,9 +1,5 @@
-using System.Net;
 using CipherVault.Core.Configuration;
 using CipherVault.Core.Errors;
-using CipherVault.Core.Security;
-using CipherVault.Host;
-using CipherVault.Host.Client.Security;
 using CipherVault.Host.Security;
 using CipherVault.Host.Service;
 using Microsoft.Extensions.Hosting.WindowsServices;
@@ -16,7 +12,9 @@ try
     }
     else
     {
-        await RunCompatibilityHostAsync(args);
+        throw new VaultException(
+            VaultErrorCode.InvalidInput,
+            "CipherVault.Host must run as the strict Windows Service.");
     }
     return 0;
 }
@@ -45,28 +43,6 @@ static async Task RunAsServiceAsync(string[] arguments)
     var configuration = CipherVaultServiceConfiguration.Load(configPath);
     await using var service = StrictServiceHost.Create(configuration, paths);
     await service.RunAsync();
-}
-
-static async Task RunCompatibilityHostAsync(string[] arguments)
-{
-    var configPath = GetOption(arguments, "--config");
-    var configuration = CipherVaultHostConfiguration.Load(
-        CipherVaultHostConfigOverrides.Empty,
-        configPath);
-    VaultModeStore.EnsureCompatibilityAllowed(configuration.VaultPath);
-    using var userInstance = HostUserInstanceLock.Acquire();
-    await using var ownership = await VaultOwnershipLock.AcquireAsync(
-        configuration.VaultPath);
-    var builder = WebApplication.CreateBuilder(arguments);
-    builder.WebHost.ConfigureKestrel(options =>
-        options.Listen(IPAddress.Loopback, configuration.Endpoint.Port));
-    var app = HostApplication.Configure(
-        builder,
-        configuration,
-        new DpapiAdminTokenStore(),
-        new WindowsHostCredentialPrompt(),
-        new WindowsHostAccessGrantPrompt());
-    await app.RunAsync();
 }
 
 static string? GetOption(string[] arguments, string option)

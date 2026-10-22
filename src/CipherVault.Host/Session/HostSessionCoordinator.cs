@@ -16,7 +16,7 @@ public sealed class HostSessionCoordinator
     private readonly object _stateSync = new();
     private readonly SemaphoreSlim _operationGate = new(1, 1);
     private readonly IVaultService _vault;
-    private readonly ResolvedCipherVaultHostConfig _configuration;
+    private readonly string _vaultPath;
     private readonly IHostCredentialPrompt _credentialPrompt;
     private readonly AccessGrantService _accessGrants;
     private readonly ApprovalStore? _approvals;
@@ -32,7 +32,7 @@ public sealed class HostSessionCoordinator
 
     public HostSessionCoordinator(
         IVaultService vault,
-        ResolvedCipherVaultHostConfig configuration,
+        string vaultPath,
         IHostCredentialPrompt credentialPrompt,
         AccessGrantService accessGrants,
         ApprovalStore? approvals = null,
@@ -40,7 +40,7 @@ public sealed class HostSessionCoordinator
         TimeSpan? lockDrainTimeout = null)
     {
         _vault = vault;
-        _configuration = configuration;
+        _vaultPath = vaultPath;
         _credentialPrompt = credentialPrompt;
         _accessGrants = accessGrants;
         _approvals = approvals;
@@ -136,7 +136,7 @@ public sealed class HostSessionCoordinator
             try
             {
                 var unlocked = await _vault.UnlockAsync(
-                    _configuration.VaultPath,
+                    _vaultPath,
                     prompt.Credential,
                     prompt.CredentialType,
                     cancellationToken).ConfigureAwait(false);
@@ -358,7 +358,7 @@ public sealed class HostSessionCoordinator
         var fullPath = Path.GetFullPath(vaultPath);
         if (!string.Equals(
                 fullPath,
-                Path.GetFullPath(_configuration.VaultPath),
+                Path.GetFullPath(_vaultPath),
                 StringComparison.OrdinalIgnoreCase))
         {
             throw new HostException(
@@ -456,7 +456,7 @@ public sealed class HostSessionCoordinator
         var fullTargetPath = Path.GetFullPath(targetPath);
         if (string.Equals(
                 fullTargetPath,
-                Path.GetFullPath(_configuration.VaultPath),
+                Path.GetFullPath(_vaultPath),
                 StringComparison.OrdinalIgnoreCase))
         {
             throw new HostException(
@@ -566,7 +566,7 @@ public sealed class HostSessionCoordinator
                 }
 
                 await vault.ChangePasswordAsync(
-                    _configuration.VaultPath,
+                    _vaultPath,
                     current.Credential,
                     next.Credential,
                     actor,
@@ -603,7 +603,7 @@ public sealed class HostSessionCoordinator
                 }
 
                 return await vault.RotateRecoveryKeyAsync(
-                    _configuration.VaultPath,
+                    _vaultPath,
                     prompt.Credential,
                     actor,
                     token).ConfigureAwait(false);
@@ -644,7 +644,7 @@ public sealed class HostSessionCoordinator
                 }
 
                 await vault.ConfirmRecoveryKeyAsync(
-                    _configuration.VaultPath,
+                    _vaultPath,
                     prompt.Credential,
                     actor,
                     token).ConfigureAwait(false);

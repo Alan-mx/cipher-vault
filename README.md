@@ -121,12 +121,12 @@ WPF 提供日常读写、回收站、版本、备份、导出、导入和审计�
 
 ## MCP strict bridge
 
-MCP 客户端使用 `CipherVault.Mcp.exe --strict`：
+MCP 客户端使用 `CipherVault.Mcp.exe`：
 
 ```toml
 [mcp_servers.cipher_vault]
 command = 'C:\Program Files\CipherVault\CipherVault.Mcp.exe'
-args = ['--strict', '--scopes', 'read,write']
+args = ['--scopes', 'read,write']
 tool_timeout_sec = 120
 default_tools_approval_mode = "prompt"
 ```

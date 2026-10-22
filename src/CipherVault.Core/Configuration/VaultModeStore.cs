@@ -124,7 +124,7 @@ public static class VaultModeStore
         }
     }
 
-    public static void EnsureCompatibilityAllowed(string vaultPath)
+    public static void EnsureDirectAccessAllowed(string vaultPath)
     {
         var fullVaultPath = Path.GetFullPath(vaultPath);
         var modePath = Path.Combine(fullVaultPath, "vault.mode");
@@ -134,7 +134,7 @@ public static class VaultModeStore
         }
         throw new VaultException(
             VaultErrorCode.InvalidInput,
-            "Compatibility mode cannot open a Vault owned by the strict Windows service.");
+            "Direct access is not allowed for a Vault owned by the strict Windows service.");
     }
 
     private static string ReadBoundedText(

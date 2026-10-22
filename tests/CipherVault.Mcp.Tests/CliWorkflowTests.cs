@@ -19,8 +19,8 @@ public sealed class CliWorkflowTests
         var backup = await RunCliAsync(
             cliPath,
             "backup",
-            "--config",
-            fixture.ConfigPath,
+            "--vault",
+            fixture.VaultPath,
             "--to",
             fixture.BackupPath);
         Assert.True(backup.ExitCode == 0, FormatFailure(backup));
@@ -29,8 +29,8 @@ public sealed class CliWorkflowTests
         var export = await RunCliAsync(
             cliPath,
             "export",
-            "--config",
-            fixture.ConfigPath,
+            "--vault",
+            fixture.VaultPath,
             "--to",
             fixture.ExportPath);
         Assert.True(export.ExitCode == 0, FormatFailure(export));
@@ -42,8 +42,8 @@ public sealed class CliWorkflowTests
         var restore = await RunCliAsync(
             cliPath,
             "restore",
-            "--config",
-            fixture.ConfigPath,
+            "--vault",
+            fixture.VaultPath,
             "--backup",
             fixture.BackupPath,
             "--to",
@@ -158,12 +158,10 @@ public sealed class CliWorkflowTests
     {
         private CliWorkflowFixture(
             string rootPath,
-            string vaultPath,
-            string configPath)
+            string vaultPath)
         {
             RootPath = rootPath;
             VaultPath = vaultPath;
-            ConfigPath = configPath;
             BackupPath = Path.Combine(rootPath, "vault.cvbackup");
             ExportPath = Path.Combine(rootPath, "export");
             RestoredPath = Path.Combine(rootPath, "restored");
@@ -171,7 +169,6 @@ public sealed class CliWorkflowTests
 
         public string RootPath { get; }
         public string VaultPath { get; }
-        public string ConfigPath { get; }
         public string BackupPath { get; }
         public string ExportPath { get; }
         public string RestoredPath { get; }
@@ -183,20 +180,6 @@ public sealed class CliWorkflowTests
                 $"cipher-vault-cli-workflow-{Guid.NewGuid():N}");
             Directory.CreateDirectory(root);
             var vaultPath = Path.Combine(root, "vault");
-            var configPath = Path.Combine(root, "config.json");
-            await File.WriteAllTextAsync(
-                configPath,
-                JsonSerializer.Serialize(new
-                {
-                    configVersion = 2,
-                    vaultPath,
-                    session = new
-                    {
-                        idleMinutes = 15,
-                        hardHours = 4
-                    }
-                }));
-
             await using var service = new VaultService(
                 new AlwaysActiveActivityProvider());
             var initialized = await service.InitializeAsync(vaultPath, Password);
@@ -215,7 +198,7 @@ public sealed class CliWorkflowTests
                 "content for CLI backup and export",
                 null,
                 VaultActorKind.UserUi);
-            return new CliWorkflowFixture(root, vaultPath, configPath);
+            return new CliWorkflowFixture(root, vaultPath);
         }
 
         public ValueTask DisposeAsync()

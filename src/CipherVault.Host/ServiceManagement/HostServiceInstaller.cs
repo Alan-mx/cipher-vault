@@ -429,12 +429,6 @@ public sealed class HostServiceInstaller(
                 IdleMinutes = 15,
                 HardHours = 4
             },
-            Host = new CipherVaultServiceHostConfigFile
-            {
-                McpPath = "/mcp",
-                MaxRequestBodyBytes = 4 * 1024 * 1024,
-                AllowedOrigins = []
-            },
             Pipes = FixedPipes(),
             ProcessPolicy = new CipherVaultProcessPolicyConfigFile
             {
@@ -454,7 +448,6 @@ public sealed class HostServiceInstaller(
             Agent = new CipherVaultAgentRuntimeConfigFile
             {
                 StrictTransport = "stdio-bridge",
-                CompatibilityHttpEnabled = false,
                 Bridges =
                 [
                     new CipherVaultStrictBridgeConfigFile
@@ -477,8 +470,7 @@ public sealed class HostServiceInstaller(
                                 .Evidence.SignerSubject
                         }
                     }
-                ],
-                Clients = []
+                ]
             }
         };
     }

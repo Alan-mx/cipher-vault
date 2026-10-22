@@ -22,7 +22,6 @@ public enum HostErrorCode
     LockInProgress,
     SessionLocked,
     Conflict,
-    ConfigMigrationRequired,
     MaintenanceInProgress,
     StorageError
 }

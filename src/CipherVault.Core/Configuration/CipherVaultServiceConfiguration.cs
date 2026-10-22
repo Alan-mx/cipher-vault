@@ -5,8 +5,7 @@ namespace CipherVault.Core.Configuration;
 
 public enum HostSecurityMode
 {
-    Strict,
-    Compatibility
+    Strict
 }
 
 public sealed record CipherVaultServiceConfigFile
@@ -18,17 +17,9 @@ public sealed record CipherVaultServiceConfigFile
     public string? VaultPath { get; init; }
     public string? DataRoot { get; init; }
     public CipherVaultSessionConfigFile? Session { get; init; }
-    public CipherVaultServiceHostConfigFile? Host { get; init; }
     public CipherVaultPipeConfigFile? Pipes { get; init; }
     public CipherVaultProcessPolicyConfigFile? ProcessPolicy { get; init; }
     public CipherVaultAgentRuntimeConfigFile? Agent { get; init; }
-}
-
-public sealed record CipherVaultServiceHostConfigFile
-{
-    public string? McpPath { get; init; }
-    public long? MaxRequestBodyBytes { get; init; }
-    public IReadOnlyList<string>? AllowedOrigins { get; init; }
 }
 
 public sealed record CipherVaultPipeConfigFile
@@ -58,9 +49,7 @@ public sealed record CipherVaultImagePolicyFile
 public sealed record CipherVaultAgentRuntimeConfigFile
 {
     public string? StrictTransport { get; init; }
-    public bool? CompatibilityHttpEnabled { get; init; }
     public IReadOnlyList<CipherVaultStrictBridgeConfigFile>? Bridges { get; init; }
-    public IReadOnlyList<CipherVaultClientConfigFile>? Clients { get; init; }
 }
 
 public sealed record CipherVaultStrictBridgeConfigFile
@@ -156,7 +145,6 @@ public static class CipherVaultServiceConfiguration
     public const string VaultModeFormat = "cipher-vault-mode";
     public const int VaultModeFormatVersion = 1;
     public const string StrictModeValue = "strict";
-    public const string CompatibilityModeValue = "compatibility";
     private const long MaxConfigBytes = 256 * 1024;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -373,8 +361,7 @@ public static class CipherVaultServiceConfiguration
         return value?.Trim().ToLowerInvariant() switch
         {
             StrictModeValue => HostSecurityMode.Strict,
-            CompatibilityModeValue => HostSecurityMode.Compatibility,
-            _ => throw Invalid("securityMode must be strict or compatibility.")
+            _ => throw Invalid("securityMode must be strict.")
         };
     }
 
@@ -432,14 +419,6 @@ public static class CipherVaultServiceConfiguration
                 StringComparison.OrdinalIgnoreCase))
         {
             throw Invalid("agent.strictTransport must be stdio-bridge in strict mode.");
-        }
-        if (agent.CompatibilityHttpEnabled == true)
-        {
-            throw Invalid("agent.compatibilityHttpEnabled must be false in strict mode.");
-        }
-        if (agent.Clients is { Count: > 0 })
-        {
-            throw Invalid("agent.clients is compatibility-only.");
         }
         if (agent.Bridges is not null)
         {

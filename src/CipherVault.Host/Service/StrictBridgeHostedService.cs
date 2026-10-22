@@ -23,15 +23,11 @@ public sealed class StrictBridgeHostedService(
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (configuration.Agent?.CompatibilityHttpEnabled != false)
-        {
-            return;
-        }
         if (!options.EnableBridgePipe)
         {
             return;
         }
-        var bridge = configuration.Agent.Bridges?.FirstOrDefault(item =>
+        var bridge = configuration.Agent?.Bridges?.FirstOrDefault(item =>
             item.Enabled != false &&
             string.Equals(item.Id, "mcp", StringComparison.OrdinalIgnoreCase))
             ?? throw Invalid("Strict MCP bridge policy is missing.");

@@ -4,7 +4,6 @@ using CipherVault.Core.Configuration;
 using CipherVault.Core.Errors;
 using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
-using CipherVault.Host.Http;
 using CipherVault.Host.Security;
 using CipherVault.Host.Session;
 using CipherVault.Ipc;

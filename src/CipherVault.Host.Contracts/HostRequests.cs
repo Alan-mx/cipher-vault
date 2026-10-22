@@ -12,16 +12,6 @@ public sealed record HostLockRequest(
 public sealed record HostInitializeRequest(
     string? VaultPath);
 
-public sealed record HostCreateClientRequest(
-    string? Id,
-    string? AccessMode,
-    string? AuthorizationMode);
-
-public sealed record HostUpdateClientRequest(
-    string? AccessMode,
-    string? AuthorizationMode,
-    bool? Enabled);
-
 public sealed record HostCreateNoteRequest(
     string? Title,
     string? Folder,

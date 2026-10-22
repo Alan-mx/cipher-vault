@@ -10,12 +10,6 @@ public enum McpAccessMode
     ReadWrite
 }
 
-public enum AgentAuthorizationMode
-{
-    AccessGrant,
-    StaticToken
-}
-
 public sealed record CipherVaultSessionConfigFile
 {
     public int? IdleMinutes { get; init; }
@@ -35,15 +29,6 @@ public static class CipherVaultConfiguration
         "credential",
         "credentials"
     ];
-
-    public static string DefaultConfigPath => Path.GetFullPath(Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "CipherVault",
-        "config.json"));
-
-    public static string DefaultVaultPath => Path.GetFullPath(Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        "CipherVault"));
 
     internal static string ReadBoundedText(
         string configPath,
@@ -92,31 +77,6 @@ public static class CipherVaultConfiguration
             : text;
     }
 
-    internal static string ResolveVaultPath(
-        string? commandLineVaultPath,
-        string? environmentVaultPath,
-        string? configVaultPath,
-        string configDirectory,
-        string defaultVaultPath)
-    {
-        var commandLine = GetNonEmpty(commandLineVaultPath);
-        if (commandLine is not null)
-        {
-            return ResolvePathFromCurrentDirectory(commandLine);
-        }
-        var environment = GetNonEmpty(environmentVaultPath);
-        if (environment is not null)
-        {
-            return ResolvePathFromCurrentDirectory(environment);
-        }
-        var configured = GetNonEmpty(configVaultPath);
-        if (configured is not null)
-        {
-            return ResolvePathFromDirectory(configured, configDirectory);
-        }
-        return Path.GetFullPath(defaultVaultPath);
-    }
-
     internal static void ValidateNoSensitiveFields(JsonElement element)
     {
         if (element.ValueKind == JsonValueKind.Object)
@@ -158,23 +118,6 @@ public static class CipherVaultConfiguration
         };
     }
 
-    public static AgentAuthorizationMode? ParseAuthorizationMode(string? value)
-    {
-        var normalized = GetNonEmpty(value);
-        if (normalized is null)
-        {
-            return null;
-        }
-        return normalized.ToLowerInvariant() switch
-        {
-            "accessgrant" => AgentAuthorizationMode.AccessGrant,
-            "statictoken" => AgentAuthorizationMode.StaticToken,
-            _ => throw new VaultException(
-                VaultErrorCode.InvalidInput,
-                "Agent authorizationMode must be accessGrant or staticToken.")
-        };
-    }
-
     internal static int? ParseOptionalInteger(string? value, string fieldName)
     {
         if (value is null)
@@ -193,20 +136,6 @@ public static class CipherVaultConfiguration
     internal static string? GetNonEmpty(string? value)
     {
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-    }
-
-    private static string ResolvePathFromCurrentDirectory(string path)
-    {
-        return Path.GetFullPath(Environment.ExpandEnvironmentVariables(path));
-    }
-
-    private static string ResolvePathFromDirectory(string path, string directory)
-    {
-        var expanded = Environment.ExpandEnvironmentVariables(path);
-        return Path.GetFullPath(
-            Path.IsPathRooted(expanded)
-                ? expanded
-                : Path.Combine(directory, expanded));
     }
 
     private static string NormalizeFieldName(string fieldName)

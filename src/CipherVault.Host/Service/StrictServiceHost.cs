@@ -83,22 +83,6 @@ public sealed class StrictServiceHost : IAsyncDisposable
             var sessionOptions = VaultSessionOptions.FromMinutes(
                 configuration.Session?.IdleMinutes ?? 15,
                 configuration.Session?.HardHours ?? 4);
-            var runtimeConfiguration = new ResolvedCipherVaultHostConfig(
-                vaultPath,
-                sessionOptions,
-                new HostEndpointOptions(
-                    "127.0.0.1",
-                    43127,
-                    configuration.Host?.McpPath ?? "/mcp",
-                    "/admin/v1",
-                    configuration.Host?.MaxRequestBodyBytes ??
-                        4 * 1024 * 1024,
-                    new HashSet<string>(
-                        configuration.Host?.AllowedOrigins ?? [],
-                        StringComparer.OrdinalIgnoreCase)),
-                [],
-                paths.ServiceConfigPath);
-            builder.Services.AddSingleton(runtimeConfiguration);
             builder.Services.AddSingleton<BrokerActivityProvider>();
             builder.Services.AddSingleton<ISystemActivityProvider>(
                 serviceProvider => serviceProvider
@@ -133,7 +117,7 @@ public sealed class StrictServiceHost : IAsyncDisposable
             builder.Services.AddSingleton(serviceProvider =>
                 new HostSessionCoordinator(
                     serviceProvider.GetRequiredService<IVaultService>(),
-                    runtimeConfiguration,
+                    vaultPath,
                     serviceProvider.GetRequiredService<IHostCredentialPrompt>(),
                     serviceProvider.GetRequiredService<AccessGrantService>(),
                     serviceProvider.GetRequiredService<ApprovalStore>(),
