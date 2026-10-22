@@ -130,5 +130,17 @@ public sealed class StrictAdminVaultRpcProviderTests
             CancellationToken.None);
         var catalog = Assert.IsType<VaultCatalogPage>(catalogResult);
         Assert.Empty(catalog.Items);
+        var trashResult = await provider.HandleAsync(
+            session,
+            "admin.trash.list",
+            JsonSerializer.SerializeToElement(
+                new AdminTrashListRequest(
+                    Cursor: null,
+                    Limit: 100),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            CancellationToken.None);
+        var trash = Assert.IsType<VaultTrashPage>(trashResult);
+        var trashed = Assert.Single(trash.Items);
+        Assert.Equal(updated.DocumentId, trashed.DocumentId);
     }
 }

@@ -171,6 +171,20 @@ public sealed class StrictAdminVaultRpcProvider(HostVaultGateway vault)
                         Actor(session),
                         token),
                     cancellationToken).ConfigureAwait(false);
+            case "admin.trash.list":
+                var trashRequest =
+                    PipeRpcCodec.ReadPayload<AdminTrashListRequest>(
+                        new PipeRpcRequest(
+                            PipeProtocol.Version,
+                            Guid.Empty,
+                            method,
+                            payload));
+                return await vault.ExecuteAsync(
+                    (service, token) => service.ListTrashAsync(
+                        trashRequest.Cursor,
+                        trashRequest.Limit,
+                        token),
+                    cancellationToken).ConfigureAwait(false);
             default:
                 throw new AdminPipeRpcException(
                     "unsupported_method",

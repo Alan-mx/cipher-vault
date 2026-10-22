@@ -197,7 +197,7 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
     {
         return CallAsync<VaultTrashPage>(
             "admin.trash.list",
-            new { cursor, limit },
+            new AdminTrashListRequest(cursor, limit),
             cancellationToken);
     }
 
