@@ -291,6 +291,16 @@ public sealed class StrictAdminVaultRpcProvider(
                     Actor(session),
                     cancellationToken).ConfigureAwait(false);
                 return true;
+            case "admin.maintenance.rotate_recovery":
+                var recoveryKey = await sessions.RotateRecoveryKeyAsync(
+                    Actor(session),
+                    cancellationToken).ConfigureAwait(false);
+                return new HostRecoveryRotationData(recoveryKey);
+            case "admin.maintenance.confirm_recovery":
+                await sessions.ConfirmRecoveryKeyAsync(
+                    Actor(session),
+                    cancellationToken).ConfigureAwait(false);
+                return true;
             default:
                 throw new AdminPipeRpcException(
                     "unsupported_method",

@@ -253,5 +253,28 @@ public sealed class StrictAdminVaultRpcProviderTests
         var unlocked = await sessions.UnlockAsync(
             HostCredentialPreference.Password);
         Assert.Equal(VaultSessionState.Unlocked, unlocked.State);
+        fixture.CredentialPrompt.EnqueueResult(
+            new HostCredentialPromptResult(
+                true,
+                newPassword,
+                VaultCredentialType.Password));
+        var rotationResult = await provider.HandleAsync(
+            session,
+            "admin.maintenance.rotate_recovery",
+            JsonSerializer.SerializeToElement(new { }),
+            CancellationToken.None);
+        var rotation = Assert.IsType<HostRecoveryRotationData>(rotationResult);
+        Assert.False(string.IsNullOrWhiteSpace(rotation.RecoveryKey));
+        fixture.CredentialPrompt.EnqueueResult(
+            new HostCredentialPromptResult(
+                true,
+                rotation.RecoveryKey,
+                VaultCredentialType.RecoveryKey));
+        var recoveryConfirmed = await provider.HandleAsync(
+            session,
+            "admin.maintenance.confirm_recovery",
+            JsonSerializer.SerializeToElement(new { }),
+            CancellationToken.None);
+        Assert.Equal(true, recoveryConfirmed);
     }
 }
