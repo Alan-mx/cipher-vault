@@ -17,7 +17,8 @@ public sealed class BrokerPipeHostedService(
     CipherVaultServiceConfigFile configuration,
     CipherVaultServicePaths paths,
     StrictServiceHostOptions options,
-    BrokerConnectionRegistry registry) : BackgroundService
+    BrokerConnectionRegistry registry,
+    BrokerActivityProvider activityProvider) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -66,7 +67,9 @@ public sealed class BrokerPipeHostedService(
             [brokerPolicy],
             ownerSid,
             serviceSid,
-            TimeSpan.FromHours(12));
+            TimeSpan.FromHours(12),
+            RequireInteractiveSession: true,
+            ActivityProvider: activityProvider);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -75,7 +78,11 @@ public sealed class BrokerPipeHostedService(
             {
                 await server.AcceptOnceAsync(
                     registry.Set,
-                    registry.Clear,
+                    connection =>
+                    {
+                        registry.Clear(connection);
+                        activityProvider.Clear();
+                    },
                     stoppingToken).ConfigureAwait(false);
             }
             catch (AdminPipeRpcException exception) when (

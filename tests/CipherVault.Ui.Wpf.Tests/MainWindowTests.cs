@@ -9,6 +9,7 @@ using CipherVault.Core;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Session;
 using CipherVault.Host.Client;
+using CipherVault.Security.Win;
 using CipherVault.Ui.Wpf;
 
 namespace CipherVault.Ui.Wpf.Tests;

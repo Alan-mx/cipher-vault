@@ -37,6 +37,7 @@ public sealed class BrokerPipeTests
         var serviceIdentity = VerifyIdentity(
             (uint)Environment.ProcessId,
             servicePolicy);
+        var activityProvider = new BrokerActivityProvider();
         await using var server = new BrokerPipeServer(
             new BrokerPipeServerOptions(
                 pipeName,
@@ -51,7 +52,8 @@ public sealed class BrokerPipeTests
                 currentUser.Value,
                 currentUser.Value,
                 TimeSpan.FromMinutes(5),
-                RequireInteractiveSession: false));
+                RequireInteractiveSession: false,
+                ActivityProvider: activityProvider));
         var connected = new TaskCompletionSource<BrokerPipeConnection>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var registry = new BrokerConnectionRegistry();
@@ -108,6 +110,10 @@ public sealed class BrokerPipeTests
         Assert.Equal(request.RequestId, result.RequestId);
         Assert.Equal(request.NonceB64Url, result.NonceB64Url);
         Assert.Equal("test-password", result.Credential);
+        await WaitUntilAsync(
+            () => activityProvider.GetSnapshot().SystemIdleTime <
+                TimeSpan.FromDays(1),
+            TimeSpan.FromSeconds(5));
         Assert.Equal("credential-prompt.v1", Assert.Single(
             client.Capabilities.Features));
         var approvals = new ApprovalStore();
@@ -256,6 +262,22 @@ public sealed class BrokerPipeTests
         using var evidence = Assert.IsType<VerifiedProcessEvidence>(
             result.Evidence);
         return evidence.Identity;
+    }
+
+    private static async Task WaitUntilAsync(
+        Func<bool> condition,
+        TimeSpan timeout)
+    {
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        while (!condition())
+        {
+            if (DateTimeOffset.UtcNow >= deadline)
+            {
+                throw new TimeoutException(
+                    "Broker activity report was not received.");
+            }
+            await Task.Delay(25);
+        }
     }
 
     private static CipherVaultImagePolicyFile Image(

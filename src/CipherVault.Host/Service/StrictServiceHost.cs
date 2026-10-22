@@ -1,11 +1,11 @@
 using System.IO;
-using CipherVault.Auth.Win;
 using CipherVault.Core;
 using CipherVault.Core.Configuration;
 using CipherVault.Core.Errors;
 using CipherVault.Core.Security;
 using CipherVault.Core.Session;
 using CipherVault.Host.Security;
+using CipherVault.Security.Win;
 using CipherVault.Host.Session;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -99,11 +99,14 @@ public sealed class StrictServiceHost : IAsyncDisposable
                 [],
                 paths.ServiceConfigPath);
             builder.Services.AddSingleton(runtimeConfiguration);
+            builder.Services.AddSingleton<BrokerActivityProvider>();
             builder.Services.AddSingleton<ISystemActivityProvider>(
-                new ServiceSystemActivityProvider());
-            builder.Services.AddSingleton<IVaultService>(_ => new VaultService(
-                new ServiceSystemActivityProvider(),
-                sessionOptions: sessionOptions));
+                serviceProvider => serviceProvider
+                    .GetRequiredService<BrokerActivityProvider>());
+            builder.Services.AddSingleton<IVaultService>(serviceProvider =>
+                new VaultService(
+                    serviceProvider.GetRequiredService<BrokerActivityProvider>(),
+                    sessionOptions: sessionOptions));
             builder.Services.AddSingleton<BrokerConnectionRegistry>();
             builder.Services.AddSingleton<ApprovalStore>();
             builder.Services.AddSingleton<AdminSessionStore>();
@@ -290,17 +293,6 @@ public sealed class StrictServiceHost : IAsyncDisposable
     private void ThrowIfDisposed()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-    }
-
-    private sealed class ServiceSystemActivityProvider : ISystemActivityProvider
-    {
-        public SystemActivitySnapshot GetSnapshot()
-        {
-            var sessionId = WindowsSystemActivityProvider.GetConsoleSessionId();
-            return sessionId == 0
-                ? new SystemActivitySnapshot(TimeSpan.FromDays(1), true)
-                : WindowsSystemActivityProvider.GetSnapshot(sessionId);
-        }
     }
 
     private sealed class BrokerUnavailableAccessGrantPrompt

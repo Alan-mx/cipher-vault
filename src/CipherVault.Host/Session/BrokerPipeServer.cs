@@ -7,6 +7,7 @@ using CipherVault.Host.Contracts;
 using CipherVault.Host.Security;
 using CipherVault.Ipc;
 using CipherVault.Security.Win;
+using CipherVault.Core.Session;
 
 namespace CipherVault.Host.Session;
 
@@ -20,11 +21,15 @@ public sealed record BrokerPipeServerOptions(
     string OwnerSid,
     string ServiceSid,
     TimeSpan SessionLifetime,
-    bool RequireInteractiveSession = true);
+    bool RequireInteractiveSession = true,
+    BrokerActivityProvider? ActivityProvider = null);
 
 public sealed class BrokerPipeConnection : IAsyncDisposable
 {
+    private static readonly JsonSerializerOptions JsonOptions =
+        new(JsonSerializerDefaults.Web);
     private readonly PipeJsonConnection _connection;
+    private readonly BrokerActivityProvider _activityProvider;
     private readonly ConcurrentDictionary<Guid, TaskCompletionSource<PipeRpcResponse>>
         _pending = new();
     private bool _disposed;
@@ -34,19 +39,33 @@ public sealed class BrokerPipeConnection : IAsyncDisposable
         VerifiedProcessIdentity clientIdentity,
         BrokerCapabilitiesData capabilities,
         Guid processSessionId,
-        DateTimeOffset expiresAt)
+        DateTimeOffset expiresAt,
+        BrokerActivityProvider activityProvider)
     {
         _connection = connection;
         ClientIdentity = clientIdentity;
         Capabilities = capabilities;
         ProcessSessionId = processSessionId;
         ExpiresAt = expiresAt;
+        _activityProvider = activityProvider;
     }
 
     public VerifiedProcessIdentity ClientIdentity { get; }
     public BrokerCapabilitiesData Capabilities { get; }
     public Guid ProcessSessionId { get; }
     public DateTimeOffset ExpiresAt { get; }
+    public SystemActivitySnapshot ActivitySnapshot =>
+        _activityProvider.GetSnapshot();
+
+    public void ReportActivity(BrokerActivityReport report)
+    {
+        if (report.SessionId != ClientIdentity.SessionId)
+        {
+            throw new InvalidDataException(
+                "Broker activity session does not match the verified process.");
+        }
+        _activityProvider.Report(report);
+    }
 
     public async Task<TResponse> CallAsync<TRequest, TResponse>(
         string method,
@@ -104,8 +123,28 @@ public sealed class BrokerPipeConnection : IAsyncDisposable
         {
             while (true)
             {
-                var response = await _connection.ReadAsync<PipeRpcResponse>(
+                var frame = await _connection.ReadAsync<JsonElement>(
                     cancellationToken).ConfigureAwait(false);
+                if (frame.TryGetProperty("method", out var method))
+                {
+                    if (!string.Equals(
+                            method.GetString(),
+                            "broker.activity.report",
+                            StringComparison.Ordinal))
+                    {
+                        throw new InvalidDataException(
+                            "Unsupported Broker notification.");
+                    }
+                    var request = frame.Deserialize<PipeRpcRequest>(JsonOptions)
+                        ?? throw new InvalidDataException(
+                            "Broker activity notification was empty.");
+                    ReportActivity(
+                        PipeRpcCodec.ReadPayload<BrokerActivityReport>(request));
+                    continue;
+                }
+                var response = frame.Deserialize<PipeRpcResponse>(JsonOptions)
+                    ?? throw new InvalidDataException(
+                        "Broker response was empty.");
                 if (_pending.TryRemove(response.RequestId, out var completion))
                 {
                     completion.TrySetResult(response);
@@ -139,6 +178,7 @@ public sealed class BrokerPipeConnection : IAsyncDisposable
             return;
         }
         _disposed = true;
+        _activityProvider.Clear();
         FailPending(new ObjectDisposedException(nameof(BrokerPipeConnection)));
         await _connection.DisposeAsync().ConfigureAwait(false);
     }
@@ -303,7 +343,8 @@ public sealed class BrokerPipeServer : IAsyncDisposable
             clientIdentity,
             capabilities,
             processSessionId,
-            expiresAt);
+            expiresAt,
+            _options.ActivityProvider ?? new BrokerActivityProvider());
         connected(connection);
         try
         {

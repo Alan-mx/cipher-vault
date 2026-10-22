@@ -1,5 +1,4 @@
 using System.Security.Claims;
-using CipherVault.Auth.Win;
 using CipherVault.Core;
 using CipherVault.Core.Backup;
 using CipherVault.Core.Configuration;
@@ -13,6 +12,7 @@ using CipherVault.Host.Http;
 using CipherVault.Host.Mcp;
 using CipherVault.Host.Security;
 using CipherVault.Host.Session;
+using CipherVault.Security.Win;
 using ModelContextProtocol.AspNetCore;
 using ModelContextProtocol.Server;
 

@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using CipherVault.Auth.Win;
+using CipherVault.Security.Win;
 
 namespace CipherVault.Auth.Win.Tests;
 

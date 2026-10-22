@@ -6,6 +6,11 @@ public sealed record BrokerCapabilitiesData(
     string Version,
     IReadOnlyList<string> Features);
 
+public sealed record BrokerActivityReport(
+    uint SessionId,
+    long IdleMilliseconds,
+    bool IsWorkstationLocked);
+
 public sealed record BrokerCredentialPromptRequest(
     Guid RequestId,
     string NonceB64Url,

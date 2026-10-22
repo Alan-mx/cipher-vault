@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Diagnostics;
 using CipherVault.Host.Contracts;
 using CipherVault.Ipc;
 using CipherVault.Security.Win;
@@ -13,8 +14,11 @@ public sealed record BrokerPipeClientOptions(
 
 public sealed class BrokerPipeClientConnection : IAsyncDisposable
 {
+    private static readonly TimeSpan ActivityReportInterval =
+        TimeSpan.FromSeconds(2);
     private static readonly JsonSerializerOptions JsonOptions =
         new(JsonSerializerDefaults.Web);
+    private readonly WindowsSystemActivityProvider _activityProvider = new();
     private VerifiedProcessEvidence? _clientEvidence;
     private VerifiedPipeClientConnection? _verifiedConnection;
     private bool _disposed;
@@ -201,98 +205,66 @@ public sealed class BrokerPipeClientConnection : IAsyncDisposable
         var connection = _verifiedConnection?.Connection
             ?? throw new ObjectDisposedException(
                 nameof(BrokerPipeClientConnection));
-        while (true)
+        using var activityCancellation = CancellationTokenSource
+            .CreateLinkedTokenSource(cancellationToken);
+        var activityTask = ReportActivityLoopAsync(
+            activityCancellation.Token);
+        try
         {
-            PipeRpcRequest request;
-            try
+            while (true)
             {
-                request = await connection.ReadAsync<PipeRpcRequest>(
-                    cancellationToken).ConfigureAwait(false);
-            }
-            catch (EndOfStreamException)
-            {
-                return;
-            }
-            catch (IOException)
-            {
-                return;
-            }
-            catch (OperationCanceledException) when (
-                cancellationToken.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (ObjectDisposedException) when (
-                cancellationToken.IsCancellationRequested)
-            {
-                return;
-            }
-
-            PipeRpcResponse response;
-            if (!string.Equals(
-                    request.ProtocolVersion,
-                    PipeProtocol.Version,
-                    StringComparison.Ordinal))
-            {
-                response = PipeRpcCodec.Failure(
-                    request.RequestId,
-                    "protocol_mismatch",
-                    "Broker pipe protocol version is unsupported.");
-            }
-            else if (string.Equals(
-                         request.Method,
-                         "broker.credential.request",
-                         StringComparison.Ordinal))
-            {
+                PipeRpcRequest request;
                 try
                 {
-                    var promptRequest = PipeRpcCodec
-                        .ReadPayload<BrokerCredentialPromptRequest>(request);
-                    var promptResult = await credentialPrompt(
-                            promptRequest,
-                            cancellationToken)
-                        .ConfigureAwait(false);
-                    response = PipeRpcCodec.Success(
-                        request.RequestId,
-                        promptResult);
+                    request = await connection.ReadAsync<PipeRpcRequest>(
+                        cancellationToken).ConfigureAwait(false);
                 }
-                catch (OperationCanceledException)
+                catch (EndOfStreamException)
                 {
-                    throw;
+                    return;
                 }
-                catch (Exception exception)
+                catch (IOException)
+                {
+                    return;
+                }
+                catch (OperationCanceledException) when (
+                    cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (ObjectDisposedException) when (
+                    cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                PipeRpcResponse response;
+                if (!string.Equals(
+                        request.ProtocolVersion,
+                        PipeProtocol.Version,
+                        StringComparison.Ordinal))
                 {
                     response = PipeRpcCodec.Failure(
                         request.RequestId,
-                        "credential_prompt_failed",
-                        exception.Message);
+                        "protocol_mismatch",
+                        "Broker pipe protocol version is unsupported.");
                 }
-            }
-            else if (string.Equals(
-                         request.Method,
-                         "broker.transfer",
-                         StringComparison.Ordinal))
-            {
-                if (transferPrompt is null)
-                {
-                    response = PipeRpcCodec.Failure(
-                        request.RequestId,
-                        "transfer_unavailable",
-                        "Broker file transfer is unavailable.");
-                }
-                else
+                else if (string.Equals(
+                             request.Method,
+                             "broker.credential.request",
+                             StringComparison.Ordinal))
                 {
                     try
                     {
-                        var transferRequest = PipeRpcCodec
-                            .ReadPayload<BrokerTransferRequest>(request);
-                        var transferResult = await transferPrompt(
-                                transferRequest,
+                        var promptRequest = PipeRpcCodec
+                            .ReadPayload<BrokerCredentialPromptRequest>(request);
+                        var promptResult = await credentialPrompt(
+                                promptRequest,
                                 cancellationToken)
                             .ConfigureAwait(false);
                         response = PipeRpcCodec.Success(
                             request.RequestId,
-                            transferResult);
+                            promptResult);
                     }
                     catch (OperationCanceledException)
                     {
@@ -302,60 +274,140 @@ public sealed class BrokerPipeClientConnection : IAsyncDisposable
                     {
                         response = PipeRpcCodec.Failure(
                             request.RequestId,
-                            "transfer_failed",
+                            "credential_prompt_failed",
                             exception.Message);
                     }
                 }
-            }
-            else if (string.Equals(
-                         request.Method,
-                         "broker.approval.request",
-                         StringComparison.Ordinal))
-            {
-                if (approvalPrompt is null)
+                else if (string.Equals(
+                             request.Method,
+                             "broker.transfer",
+                             StringComparison.Ordinal))
                 {
-                    response = PipeRpcCodec.Failure(
-                        request.RequestId,
-                        "approval_unavailable",
-                        "Broker approval UI is unavailable.");
-                }
-                else
-                {
-                    try
-                    {
-                        var approvalRequest = PipeRpcCodec
-                            .ReadPayload<BrokerApprovalRequest>(request);
-                        var approvalDecision = await approvalPrompt(
-                                approvalRequest,
-                                cancellationToken)
-                            .ConfigureAwait(false);
-                        response = PipeRpcCodec.Success(
-                            request.RequestId,
-                            approvalDecision);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        throw;
-                    }
-                    catch (Exception exception)
+                    if (transferPrompt is null)
                     {
                         response = PipeRpcCodec.Failure(
                             request.RequestId,
-                            "approval_prompt_failed",
-                            exception.Message);
+                            "transfer_unavailable",
+                            "Broker file transfer is unavailable.");
+                    }
+                    else
+                    {
+                        try
+                        {
+                            var transferRequest = PipeRpcCodec
+                                .ReadPayload<BrokerTransferRequest>(request);
+                            var transferResult = await transferPrompt(
+                                    transferRequest,
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+                            response = PipeRpcCodec.Success(
+                                request.RequestId,
+                                transferResult);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            throw;
+                        }
+                        catch (Exception exception)
+                        {
+                            response = PipeRpcCodec.Failure(
+                                request.RequestId,
+                                "transfer_failed",
+                                exception.Message);
+                        }
                     }
                 }
+                else if (string.Equals(
+                             request.Method,
+                             "broker.approval.request",
+                             StringComparison.Ordinal))
+                {
+                    if (approvalPrompt is null)
+                    {
+                        response = PipeRpcCodec.Failure(
+                            request.RequestId,
+                            "approval_unavailable",
+                            "Broker approval UI is unavailable.");
+                    }
+                    else
+                    {
+                        try
+                        {
+                            var approvalRequest = PipeRpcCodec
+                                .ReadPayload<BrokerApprovalRequest>(request);
+                            var approvalDecision = await approvalPrompt(
+                                    approvalRequest,
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+                            response = PipeRpcCodec.Success(
+                                request.RequestId,
+                                approvalDecision);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            throw;
+                        }
+                        catch (Exception exception)
+                        {
+                            response = PipeRpcCodec.Failure(
+                                request.RequestId,
+                                "approval_prompt_failed",
+                                exception.Message);
+                        }
+                    }
+                }
+                else
+                {
+                    response = PipeRpcCodec.Failure(
+                        request.RequestId,
+                        "unsupported_method",
+                        $"Unsupported Broker method: {request.Method}");
+                }
+                await connection.WriteAsync(response, cancellationToken)
+                    .ConfigureAwait(false);
             }
-            else
-            {
-                response = PipeRpcCodec.Failure(
-                    request.RequestId,
-                    "unsupported_method",
-                    $"Unsupported Broker method: {request.Method}");
-            }
-            await connection.WriteAsync(response, cancellationToken)
-                .ConfigureAwait(false);
         }
+        finally
+        {
+            activityCancellation.Cancel();
+            try
+            {
+                await activityTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+    }
+
+    private async Task ReportActivityLoopAsync(
+        CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            await ReportActivityAsync(cancellationToken)
+                .ConfigureAwait(false);
+            await Task.Delay(
+                ActivityReportInterval,
+                cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task ReportActivityAsync(
+        CancellationToken cancellationToken)
+    {
+        var snapshot = _activityProvider.GetSnapshot();
+        var sessionId = (uint)Process.GetCurrentProcess().SessionId;
+        var report = new BrokerActivityReport(
+            sessionId,
+            (long)snapshot.SystemIdleTime.TotalMilliseconds,
+            snapshot.IsWorkstationLocked);
+        var connection = _verifiedConnection?.Connection
+            ?? throw new ObjectDisposedException(
+                nameof(BrokerPipeClientConnection));
+        await connection.WriteAsync(
+            PipeRpcCodec.CreateRequest("broker.activity.report", report),
+            cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()

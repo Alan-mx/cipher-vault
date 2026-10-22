@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using CipherVault.Core.Session;
 
-namespace CipherVault.Auth.Win;
+namespace CipherVault.Security.Win;
 
 public sealed class WindowsSystemActivityProvider : ISystemActivityProvider
 {
