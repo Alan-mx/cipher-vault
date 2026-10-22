@@ -194,5 +194,12 @@ public sealed class StrictAdminVaultRpcProviderTests
             CancellationToken.None);
         var verification = Assert.IsType<VaultIntegrityReport>(verifyResult);
         Assert.True(verification.Valid);
+        var rebuildResult = await provider.HandleAsync(
+            session,
+            "admin.maintenance.rebuild_index",
+            JsonSerializer.SerializeToElement(new { }),
+            CancellationToken.None);
+        var rebuiltRows = Assert.IsType<int>(rebuildResult);
+        Assert.True(rebuiltRows > 0);
     }
 }

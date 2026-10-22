@@ -257,6 +257,12 @@ public sealed class StrictAdminVaultRpcProvider(HostVaultGateway vault)
                 return await vault.ExecuteAsync(
                     (service, token) => service.VerifyVaultAsync(token),
                     cancellationToken).ConfigureAwait(false);
+            case "admin.maintenance.rebuild_index":
+                return await vault.ExecuteMaintenanceAsync(
+                    (service, token) => service.RebuildSearchIndexAsync(
+                        Actor(session),
+                        token),
+                    cancellationToken).ConfigureAwait(false);
             default:
                 throw new AdminPipeRpcException(
                     "unsupported_method",
