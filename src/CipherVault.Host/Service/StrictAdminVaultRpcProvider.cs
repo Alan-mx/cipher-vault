@@ -9,6 +9,7 @@ using CipherVault.Host.Contracts;
 using CipherVault.Host.Security;
 using CipherVault.Host.Session;
 using CipherVault.Ipc;
+using Microsoft.Extensions.Hosting;
 
 namespace CipherVault.Host.Service;
 
@@ -18,7 +19,8 @@ public sealed class StrictAdminVaultRpcProvider(
     ApprovalStore approvals,
     IApprovalPrompt approvalPrompt,
     TransferCoordinator transfers,
-    ITransferPrompt transferPrompt) : IDisposable
+    ITransferPrompt transferPrompt,
+    IHostApplicationLifetime? applicationLifetime = null) : IDisposable
 {
     private readonly ConcurrentDictionary<Guid, TransferWorkspace> _importWorkspaces =
         new();
@@ -805,11 +807,52 @@ public sealed class StrictAdminVaultRpcProvider(
                         restored.VaultId,
                         restored.AuditRecorded);
                 }
+            case "admin.service.stop":
+                {
+                    var stopRequest = PipeRpcCodec.ReadPayload<HostStopRequest>(
+                        new PipeRpcRequest(
+                            PipeProtocol.Version,
+                            Guid.Empty,
+                            method,
+                            payload));
+                    var reason = string.IsNullOrWhiteSpace(stopRequest.Reason)
+                        ? "user-requested"
+                        : stopRequest.Reason.Trim();
+                    if (reason.Length > 200)
+                    {
+                        throw new AdminPipeRpcException(
+                            "invalid_input",
+                            "Stop reason is too long.");
+                    }
+                    var locked = await sessions.LockAsync(
+                        reason,
+                        cancellationToken).ConfigureAwait(false);
+                    if (locked.State != VaultSessionState.Locked)
+                    {
+                        throw new AdminPipeRpcException(
+                            "lock_in_progress",
+                            "Vault lock is still in progress.");
+                    }
+                    _ = StopAfterResponseAsync(
+                        applicationLifetime
+                            ?? throw new AdminPipeRpcException(
+                                "unsupported_method",
+                                "Host application lifetime is unavailable."));
+                    return true;
+                }
             default:
                 throw new AdminPipeRpcException(
                     "unsupported_method",
                     $"Unsupported Admin method: {method}");
         }
+    }
+
+    private static async Task StopAfterResponseAsync(
+        IHostApplicationLifetime applicationLifetime)
+    {
+        await Task.Delay(TimeSpan.FromMilliseconds(100))
+            .ConfigureAwait(false);
+        applicationLifetime.StopApplication();
     }
 
     private static VaultActorKind Actor(AdminSession session)

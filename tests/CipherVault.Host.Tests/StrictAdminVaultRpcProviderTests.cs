@@ -11,11 +11,49 @@ using CipherVault.Host.Security;
 using CipherVault.Host.Service;
 using CipherVault.Host.Session;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace CipherVault.Host.Tests;
 
 public sealed class StrictAdminVaultRpcProviderTests
 {
+    [Fact]
+    public async Task StopLocksVaultAndSignalsApplicationStop()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var sessions = fixture.App.Services.GetRequiredService<
+            HostSessionCoordinator>();
+        await sessions.UnlockAsync(HostCredentialPreference.Password);
+        var lifetime = new TestHostApplicationLifetime();
+        var paths = CipherVaultServicePaths.Create(
+            Path.Combine(fixture.Root, "ProgramFiles"),
+            Path.Combine(fixture.Root, "ProgramData"),
+            Path.Combine(fixture.Root, "LocalAppData"));
+        var provider = new StrictAdminVaultRpcProvider(
+            fixture.App.Services.GetRequiredService<HostVaultGateway>(),
+            sessions,
+            new ApprovalStore(),
+            new TestApprovalPrompt(new ApprovalStore()),
+            new TransferCoordinator(paths),
+            new TestTransferPrompt(),
+            lifetime);
+        var session = CreateAdminSession();
+
+        var result = await provider.HandleAsync(
+            session,
+            "admin.service.stop",
+            JsonSerializer.SerializeToElement(
+                new HostStopRequest("test-stop"),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            CancellationToken.None);
+
+        Assert.Equal(true, result);
+        await lifetime.Stopping.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(
+            VaultSessionState.Locked,
+            (await sessions.GetSnapshotAsync()).State);
+    }
+
     [Fact]
     public async Task CreateNoteExecutesThroughVaultGateway()
     {
@@ -404,6 +442,54 @@ public sealed class StrictAdminVaultRpcProviderTests
                 request,
                 approved: true,
                 brokerProcessSessionId: Guid.NewGuid()));
+        }
+    }
+
+    private static AdminSession CreateAdminSession()
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new AdminSession(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            new VerifiedProcessIdentity(
+                VerifiedProcessKind.AdminUi,
+                (uint)Environment.ProcessId,
+                now.AddMinutes(-1),
+                WindowsIdentity.GetCurrent().User!.Value,
+                "S-1-5-5-0-1",
+                1,
+                Environment.ProcessPath!,
+                new string('a', 64),
+                SignerThumbprint: null,
+                SignerSubject: null,
+                IntegrityLevel: 0x2000),
+            WindowsIdentity.GetCurrent().User!.Value,
+            "S-1-5-80-1",
+            now,
+            now,
+            now.AddMinutes(15),
+            now.AddHours(4),
+            VaultSessionId: null,
+            State: AdminSessionState.Active,
+            RevocationReason: null);
+    }
+
+    private sealed class TestHostApplicationLifetime : IHostApplicationLifetime
+    {
+        private readonly CancellationTokenSource _stopping = new();
+        private readonly CancellationTokenSource _stopped = new();
+        public TaskCompletionSource Stopping { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public CancellationToken ApplicationStarted => CancellationToken.None;
+        public CancellationToken ApplicationStopping => _stopping.Token;
+        public CancellationToken ApplicationStopped => _stopped.Token;
+
+        public void StopApplication()
+        {
+            _stopping.Cancel();
+            _stopped.Cancel();
+            Stopping.TrySetResult();
         }
     }
 
