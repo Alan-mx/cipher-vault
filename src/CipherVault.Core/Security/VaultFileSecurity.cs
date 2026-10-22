@@ -11,19 +11,38 @@ public static class VaultFileSecurity
     {
         if (OperatingSystem.IsWindows())
         {
-            ProtectDirectoryWindows(path);
+            ProtectDirectoryWindows(path, TrustedIdentities());
+        }
+    }
+
+    public static void ProtectDirectoryForSids(
+        string path,
+        IEnumerable<SecurityIdentifier> fullControlSids,
+        bool includeAdministrators = true,
+        bool includeSystem = true)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            ProtectDirectoryWindows(
+                path,
+                NormalizeIdentities(
+                    fullControlSids,
+                    includeAdministrators,
+                    includeSystem));
         }
     }
 
     [SupportedOSPlatform("windows")]
-    private static void ProtectDirectoryWindows(string path)
+    private static void ProtectDirectoryWindows(
+        string path,
+        IReadOnlyCollection<SecurityIdentifier> identities)
     {
         try
         {
             var info = new DirectoryInfo(path);
             var security = new DirectorySecurity();
             security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
-            AddDirectoryRules(security);
+            AddDirectoryRules(security, identities);
             info.SetAccessControl(security);
         }
         catch (Exception exception) when (exception is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
@@ -39,19 +58,38 @@ public static class VaultFileSecurity
     {
         if (OperatingSystem.IsWindows())
         {
-            ProtectFileWindows(path);
+            ProtectFileWindows(path, TrustedIdentities());
+        }
+    }
+
+    public static void ProtectFileForSids(
+        string path,
+        IEnumerable<SecurityIdentifier> fullControlSids,
+        bool includeAdministrators = true,
+        bool includeSystem = true)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            ProtectFileWindows(
+                path,
+                NormalizeIdentities(
+                    fullControlSids,
+                    includeAdministrators,
+                    includeSystem));
         }
     }
 
     [SupportedOSPlatform("windows")]
-    private static void ProtectFileWindows(string path)
+    private static void ProtectFileWindows(
+        string path,
+        IReadOnlyCollection<SecurityIdentifier> identities)
     {
         try
         {
             var info = new FileInfo(path);
             var security = new FileSecurity();
             security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
-            AddFileRules(security);
+            AddFileRules(security, identities);
             info.SetAccessControl(security);
         }
         catch (Exception exception) when (exception is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
@@ -63,10 +101,62 @@ public static class VaultFileSecurity
         }
     }
 
-    [SupportedOSPlatform("windows")]
-    private static void AddDirectoryRules(DirectorySecurity security)
+    public static void SetDirectoryOwner(string path, SecurityIdentifier owner)
     {
-        foreach (var identity in TrustedIdentities())
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+        try
+        {
+            var info = new DirectoryInfo(path);
+            var security = info.GetAccessControl();
+            security.SetOwner(owner);
+            info.SetAccessControl(security);
+        }
+        catch (Exception exception) when (
+            exception is UnauthorizedAccessException or
+            IOException or
+            PlatformNotSupportedException)
+        {
+            throw new VaultException(
+                VaultErrorCode.StorageError,
+                "Unable to set Vault directory owner.",
+                exception);
+        }
+    }
+
+    public static void SetFileOwner(string path, SecurityIdentifier owner)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+        try
+        {
+            var info = new FileInfo(path);
+            var security = info.GetAccessControl();
+            security.SetOwner(owner);
+            info.SetAccessControl(security);
+        }
+        catch (Exception exception) when (
+            exception is UnauthorizedAccessException or
+            IOException or
+            PlatformNotSupportedException)
+        {
+            throw new VaultException(
+                VaultErrorCode.StorageError,
+                "Unable to set Vault file owner.",
+                exception);
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void AddDirectoryRules(
+        DirectorySecurity security,
+        IReadOnlyCollection<SecurityIdentifier> identities)
+    {
+        foreach (var identity in identities)
         {
             security.AddAccessRule(new FileSystemAccessRule(
                 identity,
@@ -78,9 +168,11 @@ public static class VaultFileSecurity
     }
 
     [SupportedOSPlatform("windows")]
-    private static void AddFileRules(FileSecurity security)
+    private static void AddFileRules(
+        FileSecurity security,
+        IReadOnlyCollection<SecurityIdentifier> identities)
     {
-        foreach (var identity in TrustedIdentities())
+        foreach (var identity in identities)
         {
             security.AddAccessRule(new FileSystemAccessRule(
                 identity,
@@ -103,5 +195,40 @@ public static class VaultFileSecurity
             new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
             new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null)
         ];
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static IReadOnlyCollection<SecurityIdentifier> NormalizeIdentities(
+        IEnumerable<SecurityIdentifier> fullControlSids,
+        bool includeAdministrators,
+        bool includeSystem)
+    {
+        ArgumentNullException.ThrowIfNull(fullControlSids);
+        var identities = fullControlSids
+            .Where(identity => identity is not null)
+            .GroupBy(identity => identity.Value, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => group.First(),
+                StringComparer.OrdinalIgnoreCase);
+        if (includeSystem)
+        {
+            var systemSid = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+            identities[systemSid.Value] = systemSid;
+        }
+        if (includeAdministrators)
+        {
+            var administratorsSid = new SecurityIdentifier(
+                WellKnownSidType.BuiltinAdministratorsSid,
+                null);
+            identities[administratorsSid.Value] = administratorsSid;
+        }
+        if (identities.Count == 0)
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "At least one access identity is required.");
+        }
+        return identities.Values.ToArray();
     }
 }
