@@ -701,6 +701,106 @@ public sealed class StrictAdminVaultRpcProvider(
                             cancellationToken).ConfigureAwait(false);
                     }
                 }
+            case "admin.maintenance.restore_new":
+                {
+                    var restoreBackupRequest =
+                        PipeRpcCodec.ReadPayload<HostRestoreNewRequest>(
+                            new PipeRpcRequest(
+                                PipeProtocol.Version,
+                                Guid.Empty,
+                                method,
+                                payload));
+                    if (string.IsNullOrWhiteSpace(restoreBackupRequest.BackupPath) ||
+                        string.IsNullOrWhiteSpace(restoreBackupRequest.TargetPath))
+                    {
+                        throw new AdminPipeRpcException(
+                            "invalid_input",
+                            "Backup and restore target hints are required.");
+                    }
+                    var restoreSnapshot = await sessions
+                        .GetSnapshotAsync(cancellationToken)
+                        .ConfigureAwait(false);
+                    if (restoreSnapshot.SessionId is null)
+                    {
+                        throw new AdminPipeRpcException(
+                            "session_locked",
+                            "Vault must be unlocked for restore.");
+                    }
+                    var restoreOperation = approvals.Prepare(
+                        ApprovalOperationKind.RestoreBackup,
+                        session.ProcessSessionId,
+                        restoreSnapshot.SessionId,
+                        JsonSerializer.SerializeToElement(restoreBackupRequest));
+                    var restoreApproval = approvals.CreateRequest(
+                        restoreOperation,
+                        "恢复 Vault 备份",
+                        $"从备份恢复到新资料库目录，建议保存到 {restoreBackupRequest.TargetPath}。");
+                    var restoreDecision = await approvalPrompt.RequestAsync(
+                        restoreApproval,
+                        cancellationToken).ConfigureAwait(false);
+                    if (!restoreDecision.Approved)
+                    {
+                        throw new AdminPipeRpcException(
+                            "approval_denied",
+                            restoreDecision.DenialReason ?? "User denied restore.");
+                    }
+                    ConsumeApproval(
+                        approvals,
+                        restoreOperation,
+                        session,
+                        restoreSnapshot.SessionId.Value,
+                        ApprovalOperationKind.RestoreBackup);
+                    using var restoreWorkspace = transfers.CreateWorkspace(
+                        HostTransferDirection.Import,
+                        HostTransferPayloadKind.File,
+                        session.Client.UserSid,
+                        session.Client.LogonSid,
+                        "vault.cvbackup");
+                    var importTransfer = await transferPrompt.TransferAsync(
+                        new HostTransferRequest(
+                            restoreWorkspace.TransferId,
+                            HostTransferDirection.Import,
+                            HostTransferPayloadKind.File,
+                            restoreWorkspace.PayloadPath,
+                            restoreBackupRequest.BackupPath,
+                            restoreOperation.ExpiresAt),
+                        cancellationToken).ConfigureAwait(false);
+                    if (!importTransfer.Completed)
+                    {
+                        throw new AdminPipeRpcException(
+                            importTransfer.ErrorCode ?? "transfer_failed",
+                            "Backup import into staging did not complete.");
+                    }
+                    transfers.EnsureNoReparsePoints(restoreWorkspace.PayloadPath);
+                    var restoredPath = Path.Combine(
+                        restoreWorkspace.RootPath,
+                        "restored");
+                    var restored = await sessions.RestoreBackupToNewAsync(
+                        restoreWorkspace.PayloadPath,
+                        restoredPath,
+                        Actor(session),
+                        cancellationToken).ConfigureAwait(false);
+                    var exportTransfer = await transferPrompt.TransferAsync(
+                        new HostTransferRequest(
+                            restoreWorkspace.TransferId,
+                            HostTransferDirection.Export,
+                            HostTransferPayloadKind.Directory,
+                            restoredPath,
+                            restoreBackupRequest.TargetPath,
+                            restoreOperation.ExpiresAt),
+                        cancellationToken).ConfigureAwait(false);
+                    if (!exportTransfer.Completed ||
+                        string.IsNullOrWhiteSpace(exportTransfer.FinalPath))
+                    {
+                        throw new AdminPipeRpcException(
+                            exportTransfer.ErrorCode ?? "transfer_failed",
+                            "Restored Vault export did not complete.");
+                    }
+                    return new VaultRestoreBackupResult(
+                        exportTransfer.FinalPath,
+                        restored.VaultId,
+                        restored.AuditRecorded);
+                }
             default:
                 throw new AdminPipeRpcException(
                     "unsupported_method",

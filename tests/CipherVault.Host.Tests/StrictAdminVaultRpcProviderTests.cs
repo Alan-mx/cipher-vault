@@ -368,6 +368,26 @@ public sealed class StrictAdminVaultRpcProviderTests
         var imported = Assert.IsType<VaultImportResult>(commitResult);
         Assert.Equal(1, imported.Imported);
         Assert.Equal(5, approvalPrompt.RequestCount);
+        var restorePath = Path.Combine(
+            fixture.Root,
+            "restored-vault");
+        fixture.CredentialPrompt.EnqueueResult(
+            new HostCredentialPromptResult(
+                true,
+                newPassword,
+                VaultCredentialType.Password));
+        var backupRestoreResult = await provider.HandleAsync(
+            session,
+            "admin.maintenance.restore_new",
+            JsonSerializer.SerializeToElement(
+                new HostRestoreNewRequest(backupPath, restorePath),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            CancellationToken.None);
+        var restoredVault = Assert.IsType<VaultRestoreBackupResult>(
+            backupRestoreResult);
+        Assert.Equal(Path.GetFullPath(restorePath), restoredVault.VaultPath);
+        Assert.True(Directory.Exists(restorePath));
+        Assert.Equal(6, approvalPrompt.RequestCount);
     }
 
     private sealed class TestApprovalPrompt(ApprovalStore store)
@@ -397,6 +417,27 @@ public sealed class StrictAdminVaultRpcProviderTests
                 request.PayloadKind == HostTransferPayloadKind.Directory)
             {
                 CopyDirectory(request.SuggestedPath, request.StagingPath);
+                return Task.FromResult(new HostTransferResult(
+                    request.TransferId,
+                    true,
+                    Path.GetFullPath(request.StagingPath),
+                    null));
+            }
+            if (request.Direction == HostTransferDirection.Import &&
+                request.PayloadKind == HostTransferPayloadKind.File)
+            {
+                if (!File.Exists(request.SuggestedPath))
+                {
+                    return Task.FromResult(new HostTransferResult(
+                        request.TransferId,
+                        false,
+                        null,
+                        "transfer_invalid"));
+                }
+                File.Copy(
+                    request.SuggestedPath,
+                    request.StagingPath,
+                    overwrite: false);
                 return Task.FromResult(new HostTransferResult(
                     request.TransferId,
                     true,
