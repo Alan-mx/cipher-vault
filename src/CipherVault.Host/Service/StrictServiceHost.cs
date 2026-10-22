@@ -104,9 +104,14 @@ public sealed class StrictServiceHost : IAsyncDisposable
                 new ServiceSystemActivityProvider(),
                 sessionOptions: sessionOptions));
             builder.Services.AddSingleton<BrokerConnectionRegistry>();
+            builder.Services.AddSingleton<ApprovalStore>();
             builder.Services.AddSingleton<IHostCredentialPrompt>(
                 serviceProvider => new BrokerCredentialPrompt(
                     serviceProvider.GetRequiredService<BrokerConnectionRegistry>()));
+            builder.Services.AddSingleton<IApprovalPrompt>(
+                serviceProvider => new BrokerApprovalPrompt(
+                    serviceProvider.GetRequiredService<BrokerConnectionRegistry>(),
+                    serviceProvider.GetRequiredService<ApprovalStore>()));
             builder.Services.AddSingleton<IHostAccessGrantPrompt>(
                 new BrokerUnavailableAccessGrantPrompt());
             builder.Services.AddSingleton<ISecurityEventLog>(

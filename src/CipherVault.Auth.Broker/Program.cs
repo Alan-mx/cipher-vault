@@ -78,6 +78,7 @@ public static class Program
                         cancellationTokenSource.Token);
                 await connection.RunAsync(
                     PromptForCredentialAsync,
+                    PromptForApprovalAsync,
                     cancellationTokenSource.Token);
             }
             catch (OperationCanceledException) when (
@@ -127,6 +128,21 @@ public static class Program
                 ? "recoveryKey"
                 : "password",
             result.Confirmed ? null : "user-denied");
+    }
+
+    private static async Task<BrokerApprovalDecision> PromptForApprovalAsync(
+        BrokerApprovalRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await WindowsOperationApprovalPrompt.RequestAsync(
+            request.DisplayTitle,
+            request.DisplayDetails,
+            cancellationToken);
+        return new BrokerApprovalDecision(
+            request.ApprovalId,
+            request.NonceB64Url,
+            result.Approved,
+            result.Approved ? null : "user-denied");
     }
 
     private static string? GetOption(string[] args, string option)

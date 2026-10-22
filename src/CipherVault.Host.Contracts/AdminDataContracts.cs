@@ -53,3 +53,6 @@ public sealed record AdminRestoreRevisionRequest(
 public sealed record AdminAuditListRequest(
     string? Cursor,
     int Limit);
+
+public sealed record AdminPurgeNoteRequest(
+    Guid DocumentId);

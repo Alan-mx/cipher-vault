@@ -1,9 +1,11 @@
 using System.Diagnostics;
 using System.Security.Principal;
+using System.Text.Json;
 using CipherVault.Core.Configuration;
 using CipherVault.Host.Client;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Security;
+using CipherVault.Host.Service;
 using CipherVault.Host.Session;
 using CipherVault.Ipc;
 using CipherVault.Security.Win;
@@ -52,10 +54,15 @@ public sealed class BrokerPipeTests
                 RequireInteractiveSession: false));
         var connected = new TaskCompletionSource<BrokerPipeConnection>(
             TaskCreationOptions.RunContinuationsAsynchronously);
+        var registry = new BrokerConnectionRegistry();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var acceptTask = server.AcceptOnceAsync(
-            connection => connected.TrySetResult(connection),
-            _ => { },
+            connection =>
+            {
+                registry.Set(connection);
+                connected.TrySetResult(connection);
+            },
+            registry.Clear,
             timeout.Token);
 
         await using var client = await BrokerPipeClientConnection.ConnectAsync(
@@ -75,6 +82,11 @@ public sealed class BrokerPipeTests
                     CredentialType: "password",
                     DenialReason: null));
             },
+            (request, _) => Task.FromResult(new BrokerApprovalDecision(
+                request.ApprovalId,
+                request.NonceB64Url,
+                Approved: true,
+                DenialReason: null)),
             timeout.Token);
         var connection = await connected.Task.WaitAsync(timeout.Token);
         var expiresAt = DateTimeOffset.UtcNow.AddMinutes(1);
@@ -98,6 +110,25 @@ public sealed class BrokerPipeTests
         Assert.Equal("test-password", result.Credential);
         Assert.Equal("credential-prompt.v1", Assert.Single(
             client.Capabilities.Features));
+        var approvals = new ApprovalStore();
+        using var approvalParameters = JsonDocument.Parse(
+            $$"""{"documentId":"{{Guid.NewGuid():D}}"}""");
+        var operation = approvals.Prepare(
+            ApprovalOperationKind.PurgeNote,
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            approvalParameters.RootElement);
+        var approvalRequest = approvals.CreateRequest(
+            operation,
+            "永久删除",
+            "永久删除测试文档");
+        var approvalPrompt = new BrokerApprovalPrompt(
+            registry,
+            approvals);
+        var approvalDecision = await approvalPrompt.RequestAsync(
+            approvalRequest,
+            timeout.Token);
+        Assert.True(approvalDecision.Approved);
 
         timeout.Cancel();
         await readTask;

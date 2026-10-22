@@ -1,5 +1,6 @@
 using System.Text.Json;
 using CipherVault.Core.Documents;
+using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Security;
 using CipherVault.Host.Session;
@@ -9,7 +10,9 @@ namespace CipherVault.Host.Service;
 
 public sealed class StrictAdminVaultRpcProvider(
     HostVaultGateway vault,
-    HostSessionCoordinator sessions)
+    HostSessionCoordinator sessions,
+    ApprovalStore approvals,
+    IApprovalPrompt approvalPrompt)
 {
     public async Task<object> HandleAsync(
         AdminSession session,
@@ -301,6 +304,68 @@ public sealed class StrictAdminVaultRpcProvider(
                     Actor(session),
                     cancellationToken).ConfigureAwait(false);
                 return true;
+            case "admin.trash.purge":
+                var purgeRequest = PipeRpcCodec.ReadPayload<AdminPurgeNoteRequest>(
+                    new PipeRpcRequest(
+                        PipeProtocol.Version,
+                        Guid.Empty,
+                        method,
+                        payload));
+                if (purgeRequest.DocumentId == Guid.Empty)
+                {
+                    throw new AdminPipeRpcException(
+                        "invalid_input",
+                        "Purge request is invalid.");
+                }
+                var snapshot = await sessions.GetSnapshotAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                if (snapshot.SessionId is null ||
+                    snapshot.State is not (
+                        VaultSessionState.Unlocked or
+                        VaultSessionState.Expiring))
+                {
+                    throw new AdminPipeRpcException(
+                        "session_locked",
+                        "Vault must be unlocked for purge.");
+                }
+                var purgeParameters = JsonSerializer.SerializeToElement(
+                    new { documentId = purgeRequest.DocumentId });
+                var operation = approvals.Prepare(
+                    ApprovalOperationKind.PurgeNote,
+                    session.ProcessSessionId,
+                    snapshot.SessionId,
+                    purgeParameters);
+                var request = approvals.CreateRequest(
+                    operation,
+                    "永久删除文档",
+                    $"永久删除文档 {purgeRequest.DocumentId}。此操作无法撤销。");
+                var decision = await approvalPrompt.RequestAsync(
+                    request,
+                    cancellationToken).ConfigureAwait(false);
+                if (!decision.Approved)
+                {
+                    throw new AdminPipeRpcException(
+                        "approval_denied",
+                        decision.DenialReason ?? "User denied purge.");
+                }
+                var consumed = approvals.Consume(
+                    operation.OperationId,
+                    ApprovalOperationKind.PurgeNote,
+                    session.ProcessSessionId,
+                    snapshot.SessionId,
+                    operation.ParametersHash);
+                if (consumed.Status != ApprovalConsumeStatus.Consumed)
+                {
+                    throw new AdminPipeRpcException(
+                        consumed.ReasonCode ?? "approval_invalid",
+                        "Purge approval could not be consumed.");
+                }
+                return await vault.ExecuteAsync(
+                    (service, token) => service.PurgeNoteAsync(
+                        purgeRequest.DocumentId,
+                        Actor(session),
+                        token),
+                    cancellationToken).ConfigureAwait(false);
             default:
                 throw new AdminPipeRpcException(
                     "unsupported_method",

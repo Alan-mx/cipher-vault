@@ -33,16 +33,19 @@ public sealed class BrokerPipeConnection : IAsyncDisposable
         PipeJsonConnection connection,
         VerifiedProcessIdentity clientIdentity,
         BrokerCapabilitiesData capabilities,
+        Guid processSessionId,
         DateTimeOffset expiresAt)
     {
         _connection = connection;
         ClientIdentity = clientIdentity;
         Capabilities = capabilities;
+        ProcessSessionId = processSessionId;
         ExpiresAt = expiresAt;
     }
 
     public VerifiedProcessIdentity ClientIdentity { get; }
     public BrokerCapabilitiesData Capabilities { get; }
+    public Guid ProcessSessionId { get; }
     public DateTimeOffset ExpiresAt { get; }
 
     public async Task<TResponse> CallAsync<TRequest, TResponse>(
@@ -258,9 +261,10 @@ public sealed class BrokerPipeServer : IAsyncDisposable
                 "broker_handshake_mismatch");
         }
         var expiresAt = DateTimeOffset.UtcNow + _options.SessionLifetime;
+        var processSessionId = Guid.NewGuid();
         await pipeConnection.WriteAsync(
             new PipeAuthenticateResponse(
-                Guid.NewGuid(),
+                processSessionId,
                 AdminSessionId: null,
                 clientIdentity.UserSid,
                 clientIdentity.SessionId,
@@ -298,6 +302,7 @@ public sealed class BrokerPipeServer : IAsyncDisposable
             pipeConnection,
             clientIdentity,
             capabilities,
+            processSessionId,
             expiresAt);
         connected(connection);
         try

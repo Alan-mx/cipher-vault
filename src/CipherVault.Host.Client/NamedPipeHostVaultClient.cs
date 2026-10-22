@@ -221,7 +221,7 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
     {
         return CallAsync<VaultPurgeResult>(
             "admin.trash.purge",
-            new { documentId },
+            new AdminPurgeNoteRequest(documentId),
             cancellationToken);
     }
 

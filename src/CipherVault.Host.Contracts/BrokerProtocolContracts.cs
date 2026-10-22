@@ -18,3 +18,18 @@ public sealed record BrokerCredentialPromptResult(
     string? Credential,
     string CredentialType,
     string? DenialReason);
+
+public sealed record BrokerApprovalRequest(
+    Guid ApprovalId,
+    string NonceB64Url,
+    string OperationKind,
+    string DisplayTitle,
+    string DisplayDetails,
+    string ParametersHash,
+    DateTimeOffset ExpiresAt);
+
+public sealed record BrokerApprovalDecision(
+    Guid ApprovalId,
+    string NonceB64Url,
+    bool Approved,
+    string? DenialReason);

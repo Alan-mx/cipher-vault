@@ -73,6 +73,13 @@ public sealed record ApprovalConsumeResult(
     PreparedOperation? Operation,
     string? ReasonCode);
 
+public interface IApprovalPrompt
+{
+    Task<HostApprovalDecision> RequestAsync(
+        HostApprovalRequest request,
+        CancellationToken cancellationToken = default);
+}
+
 public static class CanonicalJson
 {
     public static string Normalize(JsonElement value)

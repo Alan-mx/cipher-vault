@@ -156,6 +156,23 @@ public sealed class BrokerPipeClientConnection : IAsyncDisposable
             Task<BrokerCredentialPromptResult>> credentialPrompt,
         CancellationToken cancellationToken = default)
     {
+        await RunAsync(
+            credentialPrompt,
+            approvalPrompt: null,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task RunAsync(
+        Func<
+            BrokerCredentialPromptRequest,
+            CancellationToken,
+            Task<BrokerCredentialPromptResult>> credentialPrompt,
+        Func<
+            BrokerApprovalRequest,
+            CancellationToken,
+            Task<BrokerApprovalDecision>>? approvalPrompt,
+        CancellationToken cancellationToken = default)
+    {
         ArgumentNullException.ThrowIfNull(credentialPrompt);
         ThrowIfDisposed();
         var connection = _verifiedConnection?.Connection
@@ -226,6 +243,45 @@ public sealed class BrokerPipeClientConnection : IAsyncDisposable
                         request.RequestId,
                         "credential_prompt_failed",
                         exception.Message);
+                }
+            }
+            else if (string.Equals(
+                         request.Method,
+                         "broker.approval.request",
+                         StringComparison.Ordinal))
+            {
+                if (approvalPrompt is null)
+                {
+                    response = PipeRpcCodec.Failure(
+                        request.RequestId,
+                        "approval_unavailable",
+                        "Broker approval UI is unavailable.");
+                }
+                else
+                {
+                    try
+                    {
+                        var approvalRequest = PipeRpcCodec
+                            .ReadPayload<BrokerApprovalRequest>(request);
+                        var approvalDecision = await approvalPrompt(
+                                approvalRequest,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                        response = PipeRpcCodec.Success(
+                            request.RequestId,
+                            approvalDecision);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception exception)
+                    {
+                        response = PipeRpcCodec.Failure(
+                            request.RequestId,
+                            "approval_prompt_failed",
+                            exception.Message);
+                    }
                 }
             }
             else

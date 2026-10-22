@@ -192,3 +192,62 @@ public sealed class BrokerCredentialPrompt(BrokerConnectionRegistry registry)
         };
     }
 }
+
+public sealed class BrokerApprovalPrompt(
+    BrokerConnectionRegistry registry,
+    ApprovalStore approvals) : IApprovalPrompt
+{
+    public async Task<HostApprovalDecision> RequestAsync(
+        HostApprovalRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var broker = registry.GetRequired();
+        try
+        {
+            var result = await broker.CallAsync<
+                    BrokerApprovalRequest,
+                    BrokerApprovalDecision>(
+                    "broker.approval.request",
+                    new BrokerApprovalRequest(
+                        request.ApprovalId,
+                        request.NonceB64Url,
+                        request.Kind.ToString(),
+                        request.DisplayTitle,
+                        request.DisplayDetails,
+                        request.ParametersHash,
+                        request.ExpiresAt),
+                    request.ExpiresAt,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (result.ApprovalId != request.ApprovalId ||
+                !PipeHandshakeTranscript.FixedTimeEquals(
+                    result.NonceB64Url,
+                    request.NonceB64Url))
+            {
+                throw new AdminPipeRpcException(
+                    "approval_response_mismatch",
+                    "Broker approval response did not match the request.");
+            }
+            return approvals.Decide(
+                request,
+                result.Approved,
+                broker.ProcessSessionId,
+                result.DenialReason);
+        }
+        catch (AdminPipeRpcException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is TimeoutException or
+            IOException or
+            InvalidDataException or
+            ObjectDisposedException)
+        {
+            throw new AdminPipeRpcException(
+                "approval_broker_unavailable",
+                "The interactive Auth Broker is unavailable for approval.");
+        }
+    }
+}

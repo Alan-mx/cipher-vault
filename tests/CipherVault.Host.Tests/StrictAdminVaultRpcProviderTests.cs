@@ -20,9 +20,13 @@ public sealed class StrictAdminVaultRpcProviderTests
         var sessions = fixture.App.Services.GetRequiredService<
             HostSessionCoordinator>();
         await sessions.UnlockAsync(HostCredentialPreference.Password);
+        var approvals = new ApprovalStore();
+        var approvalPrompt = new TestApprovalPrompt(approvals);
         var provider = new StrictAdminVaultRpcProvider(
             fixture.App.Services.GetRequiredService<HostVaultGateway>(),
-            sessions);
+            sessions,
+            approvals,
+            approvalPrompt);
         var now = DateTimeOffset.UtcNow;
         var session = new AdminSession(
             Guid.NewGuid(),
@@ -276,5 +280,43 @@ public sealed class StrictAdminVaultRpcProviderTests
             JsonSerializer.SerializeToElement(new { }),
             CancellationToken.None);
         Assert.Equal(true, recoveryConfirmed);
+        var deleteBeforePurge = await provider.HandleAsync(
+            session,
+            "admin.notes.delete",
+            JsonSerializer.SerializeToElement(
+                new AdminTrashNoteRequest(
+                    restored.DocumentId,
+                    new HostTrashNoteRequest(
+                        restoredRevision.Revision)),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            CancellationToken.None);
+        _ = Assert.IsType<VaultDeleteResult>(deleteBeforePurge);
+        var purgeResult = await provider.HandleAsync(
+            session,
+            "admin.trash.purge",
+            JsonSerializer.SerializeToElement(
+                new AdminPurgeNoteRequest(restored.DocumentId),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            CancellationToken.None);
+        var purged = Assert.IsType<VaultPurgeResult>(purgeResult);
+        Assert.True(purged.Purged);
+        Assert.Equal(1, approvalPrompt.RequestCount);
+    }
+
+    private sealed class TestApprovalPrompt(ApprovalStore store)
+        : IApprovalPrompt
+    {
+        public int RequestCount { get; private set; }
+
+        public Task<HostApprovalDecision> RequestAsync(
+            HostApprovalRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            RequestCount++;
+            return Task.FromResult(store.Decide(
+                request,
+                approved: true,
+                brokerProcessSessionId: Guid.NewGuid()));
+        }
     }
 }
