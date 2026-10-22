@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\CipherVault.Core\CipherVault.Core.csproj" />
+    <ProjectReference Include="..\CipherVault.Ipc\CipherVault.Ipc.csproj" />
   </ItemGroup>
 
 </Project>

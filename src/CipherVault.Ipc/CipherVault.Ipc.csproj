@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CipherVault.Host.Contracts\CipherVault.Host.Contracts.csproj" />
+    <ProjectReference Include="..\CipherVault.Security.Win\CipherVault.Security.Win.csproj" />
+  </ItemGroup>
+
+</Project>
