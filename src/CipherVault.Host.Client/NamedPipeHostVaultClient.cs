@@ -184,11 +184,9 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
     {
         return CallAsync<VaultDeleteResult>(
             "admin.notes.delete",
-            new
-            {
+            new AdminTrashNoteRequest(
                 documentId,
-                request = new HostTrashNoteRequest(expectedRevision)
-            },
+                new HostTrashNoteRequest(expectedRevision)),
             cancellationToken);
     }
 

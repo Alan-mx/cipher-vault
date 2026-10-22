@@ -27,3 +27,7 @@ public sealed record AdminAppendNoteRequest(
 public sealed record AdminUpdateNoteRequest(
     Guid DocumentId,
     HostUpdateNoteRequest Request);
+
+public sealed record AdminTrashNoteRequest(
+    Guid DocumentId,
+    HostTrashNoteRequest Request);

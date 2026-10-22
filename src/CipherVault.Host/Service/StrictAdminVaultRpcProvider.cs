@@ -149,6 +149,28 @@ public sealed class StrictAdminVaultRpcProvider(HostVaultGateway vault)
                         Actor(session),
                         token),
                     cancellationToken).ConfigureAwait(false);
+            case "admin.notes.delete":
+                var deleteRequest =
+                    PipeRpcCodec.ReadPayload<AdminTrashNoteRequest>(
+                        new PipeRpcRequest(
+                            PipeProtocol.Version,
+                            Guid.Empty,
+                            method,
+                            payload));
+                if (deleteRequest.DocumentId == Guid.Empty ||
+                    deleteRequest.Request.ExpectedRevision < 1)
+                {
+                    throw new AdminPipeRpcException(
+                        "invalid_input",
+                        "Delete request is invalid.");
+                }
+                return await vault.ExecuteAsync(
+                    (service, token) => service.DeleteNoteAsync(
+                        deleteRequest.DocumentId,
+                        deleteRequest.Request.ExpectedRevision,
+                        Actor(session),
+                        token),
+                    cancellationToken).ConfigureAwait(false);
             default:
                 throw new AdminPipeRpcException(
                     "unsupported_method",

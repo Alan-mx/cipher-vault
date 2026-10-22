@@ -106,5 +106,29 @@ public sealed class StrictAdminVaultRpcProviderTests
         var read = Assert.IsType<VaultReadResult>(readResult);
         Assert.Equal("Updated strict pipe note", read.Title);
         Assert.Equal("Updated through strict pipe.", read.Content);
+        var deleteResult = await provider.HandleAsync(
+            session,
+            "admin.notes.delete",
+            JsonSerializer.SerializeToElement(
+                new AdminTrashNoteRequest(
+                    updated.DocumentId,
+                    new HostTrashNoteRequest(updated.Revision)),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            CancellationToken.None);
+        var deleted = Assert.IsType<VaultDeleteResult>(deleteResult);
+        Assert.Equal(updated.DocumentId, deleted.DocumentId);
+        Assert.Equal(3, deleted.Revision);
+        var catalogResult = await provider.HandleAsync(
+            session,
+            "admin.catalog.list",
+            JsonSerializer.SerializeToElement(
+                new AdminCatalogListRequest(
+                    Folder: null,
+                    Cursor: null,
+                    Limit: 100),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            CancellationToken.None);
+        var catalog = Assert.IsType<VaultCatalogPage>(catalogResult);
+        Assert.Empty(catalog.Items);
     }
 }
