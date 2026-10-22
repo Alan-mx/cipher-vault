@@ -19,11 +19,9 @@ public sealed class VaultOwnershipLock : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var fullPath = Path.GetFullPath(vaultPath).TrimEnd(
-            Path.DirectorySeparatorChar,
-            Path.AltDirectorySeparatorChar);
+        var lockIdentity = VaultPathIdentity.GetLockIdentity(vaultPath);
         var hash = Convert.ToHexString(
-            SHA256.HashData(Encoding.UTF8.GetBytes(fullPath.ToUpperInvariant())))[..32];
+            SHA256.HashData(Encoding.UTF8.GetBytes(lockIdentity)))[..32];
         var lockDirectory = Path.Combine(
             Path.GetTempPath(),
             "CipherVault",

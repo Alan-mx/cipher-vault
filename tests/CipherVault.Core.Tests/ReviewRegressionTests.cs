@@ -286,8 +286,25 @@ public sealed class ReviewRegressionTests
     [Fact]
     public void BackupArchiveAndEntryLimitsRejectOversizedInput()
     {
-        Assert.Throws<VaultException>(() =>
+        Assert.True(
+            BackupService.MaxArchiveBytes >=
+            BackupService.MaxDatabaseBytes + (BackupService.MaxMetadataBytes * 2));
+        BackupService.ValidateArchiveLength(BackupService.MaxDatabaseBytes);
+        BackupService.ValidateCreatedDatabaseLength(BackupService.MaxDatabaseBytes);
+        BackupService.ValidateCreatedArchiveLength(BackupService.MaxArchiveBytes);
+
+        var restoreException = Assert.Throws<VaultException>(() =>
             BackupService.ValidateArchiveLength(BackupService.MaxArchiveBytes + 1));
+        Assert.Equal(VaultErrorCode.CorruptVault, restoreException.Code);
+
+        var createException = Assert.Throws<VaultException>(() =>
+            BackupService.ValidateCreatedArchiveLength(BackupService.MaxArchiveBytes + 1));
+        Assert.Equal(VaultErrorCode.StorageError, createException.Code);
+
+        var databaseException = Assert.Throws<VaultException>(() =>
+            BackupService.ValidateCreatedDatabaseLength(BackupService.MaxDatabaseBytes + 1));
+        Assert.Equal(VaultErrorCode.StorageError, databaseException.Code);
+
         Assert.Throws<VaultException>(() =>
             BackupService.ValidateEntryLength(
                 "manifest.json",

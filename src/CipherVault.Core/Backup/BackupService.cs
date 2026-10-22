@@ -17,9 +17,11 @@ internal static class BackupService
     private const string DatabaseName = "vault.db";
     private const string KeysName = "vault.keys";
     private const string BackupFormat = "cipher-vault-backup";
-    internal const long MaxArchiveBytes = 1024L * 1024 * 1024;
     internal const long MaxDatabaseBytes = 2L * 1024 * 1024 * 1024;
     internal const long MaxMetadataBytes = 1024 * 1024;
+    private const long ArchiveOverheadAllowanceBytes = 64L * 1024 * 1024;
+    internal const long MaxArchiveBytes =
+        MaxDatabaseBytes + (MaxMetadataBytes * 2) + ArchiveOverheadAllowanceBytes;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true
@@ -55,6 +57,7 @@ internal static class BackupService
                 snapshotPath,
                 session.DbKey,
                 cancellationToken).ConfigureAwait(false);
+            ValidateCreatedDatabaseLength(new FileInfo(snapshotPath).Length);
             await SqlCipherVaultStore.VerifyAsync(
                 temporaryDirectory,
                 new UnlockedKeyMaterial(
@@ -96,6 +99,7 @@ internal static class BackupService
                 AddFile(archive, snapshotPath, DatabaseName);
                 AddFile(archive, Path.Combine(temporaryDirectory, KeysName), KeysName);
             }
+            ValidateCreatedArchiveLength(new FileInfo(temporaryArchive).Length);
             VaultFileSecurity.ProtectFile(temporaryArchive);
             File.Move(temporaryArchive, fullBackupPath);
             VaultFileSecurity.ProtectFile(fullBackupPath);
@@ -260,6 +264,26 @@ internal static class BackupService
             throw new VaultException(
                 VaultErrorCode.CorruptVault,
                 "Backup archive size is invalid.");
+        }
+    }
+
+    internal static void ValidateCreatedArchiveLength(long length)
+    {
+        if (length <= 0 || length > MaxArchiveBytes)
+        {
+            throw new VaultException(
+                VaultErrorCode.StorageError,
+                "Backup archive exceeds the supported size.");
+        }
+    }
+
+    internal static void ValidateCreatedDatabaseLength(long length)
+    {
+        if (length <= 0 || length > MaxDatabaseBytes)
+        {
+            throw new VaultException(
+                VaultErrorCode.StorageError,
+                "Backup database exceeds the supported size.");
         }
     }
 
