@@ -201,5 +201,16 @@ public sealed class StrictAdminVaultRpcProviderTests
             CancellationToken.None);
         var rebuiltRows = Assert.IsType<int>(rebuildResult);
         Assert.True(rebuiltRows > 0);
+        var auditResult = await provider.HandleAsync(
+            session,
+            "admin.maintenance.audit",
+            JsonSerializer.SerializeToElement(
+                new AdminAuditListRequest(
+                    Cursor: null,
+                    Limit: 100),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            CancellationToken.None);
+        var audit = Assert.IsType<VaultAuditPage>(auditResult);
+        Assert.NotEmpty(audit.Items);
     }
 }

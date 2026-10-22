@@ -49,3 +49,7 @@ public sealed record AdminRestoreRevisionRequest(
     Guid DocumentId,
     Guid RevisionId,
     HostRestoreRevisionRequest Request);
+
+public sealed record AdminAuditListRequest(
+    string? Cursor,
+    int Limit);

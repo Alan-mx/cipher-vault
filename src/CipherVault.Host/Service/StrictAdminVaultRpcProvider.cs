@@ -263,6 +263,20 @@ public sealed class StrictAdminVaultRpcProvider(HostVaultGateway vault)
                         Actor(session),
                         token),
                     cancellationToken).ConfigureAwait(false);
+            case "admin.maintenance.audit":
+                var auditRequest =
+                    PipeRpcCodec.ReadPayload<AdminAuditListRequest>(
+                        new PipeRpcRequest(
+                            PipeProtocol.Version,
+                            Guid.Empty,
+                            method,
+                            payload));
+                return await vault.ExecuteAsync(
+                    (service, token) => service.GetAuditPageAsync(
+                        auditRequest.Cursor,
+                        auditRequest.Limit,
+                        token),
+                    cancellationToken).ConfigureAwait(false);
             default:
                 throw new AdminPipeRpcException(
                     "unsupported_method",

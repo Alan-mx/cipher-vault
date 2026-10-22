@@ -330,7 +330,7 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
     {
         return CallAsync<VaultAuditPage>(
             "admin.maintenance.audit",
-            new { cursor, limit },
+            new AdminAuditListRequest(cursor, limit),
             cancellationToken);
     }
 
