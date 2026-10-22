@@ -184,34 +184,15 @@ public sealed class AdminPipeHostedService(
                 return Task.CompletedTask;
             });
 
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            await using var server = new AdminPipeServer(serverOptions);
-            try
+        await StrictPipeAcceptLoop.RunAsync(
+            async token =>
             {
+                await using var server = new AdminPipeServer(serverOptions);
                 using var clientConnection = sessions.EnterClient();
-                _ = await server.AcceptOnceAsync(stoppingToken)
-                    .ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (
-                stoppingToken.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception)
-            {
-                try
-                {
-                    await Task.Delay(
-                        TimeSpan.FromMilliseconds(100),
-                        stoppingToken).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    return;
-                }
-            }
-        }
+                _ = await server.AcceptOnceAsync(token).ConfigureAwait(false);
+            },
+            TimeSpan.FromMilliseconds(100),
+            stoppingToken).ConfigureAwait(false);
     }
 
     public static ProcessVerificationPolicy CreateServicePolicy(

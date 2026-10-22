@@ -1,5 +1,8 @@
+using System.Buffers.Binary;
 using System.Diagnostics;
+using System.IO.Pipes;
 using System.Security.Principal;
+using System.Text;
 using System.Text.Json;
 using CipherVault.Core.Configuration;
 using CipherVault.Host.Client;
@@ -140,6 +143,79 @@ public sealed class BrokerPipeTests
         await readTask;
         await client.DisposeAsync();
         await acceptTask;
+        Assert.False(registry.IsAvailable);
+        Assert.Equal(
+            TimeSpan.FromDays(1),
+            activityProvider.GetSnapshot().SystemIdleTime);
+    }
+
+    [Fact]
+    public async Task InvalidBrokerConnectionDoesNotRegister()
+    {
+        var pipeName = "CipherVault.Broker.InvalidTest." + Guid.NewGuid().ToString("N");
+        var currentUser = WindowsIdentity.GetCurrent().User!;
+        var currentSession = (uint)Process.GetCurrentProcess().SessionId;
+        var imagePath = Environment.ProcessPath!;
+        var imageHash = WindowsProcessIdentityVerifier.ComputeFileSha256(imagePath);
+        var servicePolicy = Policy(
+            VerifiedProcessKind.HostService,
+            currentUser.Value,
+            currentSession,
+            imagePath,
+            imageHash);
+        var brokerPolicy = Policy(
+            VerifiedProcessKind.AuthBroker,
+            currentUser.Value,
+            currentSession,
+            imagePath,
+            imageHash);
+        var serviceIdentity = VerifyIdentity(
+            (uint)Environment.ProcessId,
+            servicePolicy);
+        var activityProvider = new BrokerActivityProvider();
+        await using var server = new BrokerPipeServer(
+            new BrokerPipeServerOptions(
+                pipeName,
+                PipeSecurityFactory.Create(
+                    [currentUser],
+                    includeAdministrators: false,
+                    includeSystem: false),
+                Guid.NewGuid().ToString("D"),
+                "1.0.0-test",
+                serviceIdentity,
+                [brokerPolicy],
+                currentUser.Value,
+                currentUser.Value,
+                TimeSpan.FromMinutes(5),
+                RequireInteractiveSession: false,
+                ActivityProvider: activityProvider));
+        var registry = new BrokerConnectionRegistry();
+        var connectedCount = 0;
+        var disconnectedCount = 0;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var acceptTask = server.AcceptOnceAsync(
+            connection =>
+            {
+                connectedCount++;
+                registry.Set(connection);
+            },
+            connection =>
+            {
+                disconnectedCount++;
+                registry.Clear(connection);
+            },
+            timeout.Token);
+
+        await WriteInvalidHandshakeAsync(pipeName);
+
+        await Assert.ThrowsAnyAsync<Exception>(
+            () => acceptTask.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(0, connectedCount);
+        Assert.Equal(0, disconnectedCount);
+        Assert.False(registry.IsAvailable);
+        Assert.Equal(
+            TimeSpan.FromDays(1),
+            activityProvider.GetSnapshot().SystemIdleTime);
     }
 
     [Fact]
@@ -262,6 +338,22 @@ public sealed class BrokerPipeTests
         using var evidence = Assert.IsType<VerifiedProcessEvidence>(
             result.Evidence);
         return evidence.Identity;
+    }
+
+    private static async Task WriteInvalidHandshakeAsync(string pipeName)
+    {
+        await using var raw = new NamedPipeClientStream(
+            ".",
+            pipeName,
+            PipeDirection.InOut,
+            PipeOptions.Asynchronous);
+        await raw.ConnectAsync(5000);
+        var payload = Encoding.UTF8.GetBytes("{}");
+        var length = new byte[4];
+        BinaryPrimitives.WriteInt32LittleEndian(length, payload.Length);
+        await raw.WriteAsync(length);
+        await raw.WriteAsync(payload);
+        await raw.FlushAsync();
     }
 
     private static async Task WaitUntilAsync(

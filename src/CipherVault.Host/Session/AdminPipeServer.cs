@@ -66,6 +66,12 @@ public sealed class AdminPipeServer : IAsyncDisposable
         await using var connection = new PipeJsonConnection(_server);
         using var clientEvidence = VerifyClientProcess();
         var clientIdentity = clientEvidence.Identity;
+        if (clientIdentity.SessionId == 0)
+        {
+            throw new ProcessIdentityRejectedException(
+                ProcessVerificationStatus.IdentityMismatch,
+                "admin_session_required");
+        }
 
         var clientHello = await connection.ReadAsync<PipeHelloRequest>(cancellationToken)
             .ConfigureAwait(false);

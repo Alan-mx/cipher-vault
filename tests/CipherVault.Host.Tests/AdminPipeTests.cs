@@ -1,5 +1,8 @@
+using System.Buffers.Binary;
 using System.Diagnostics;
+using System.IO.Pipes;
 using System.Security.Principal;
+using System.Text;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Session;
 using CipherVault.Host.Client;
@@ -202,6 +205,126 @@ public sealed class AdminPipeTests
         Assert.Equal(
             AdminSessionState.Revoked,
             Assert.Single(server.Sessions.List()).State);
+    }
+
+    [Fact]
+    public async Task AcceptLoopContinuesAfterFailedHandshake()
+    {
+        var pipeName = "CipherVault.Admin.LoopTest." + Guid.NewGuid().ToString("N");
+        var currentUser = WindowsIdentity.GetCurrent().User!;
+        var currentSession = (uint)Process.GetCurrentProcess().SessionId;
+        var imagePath = Environment.ProcessPath!;
+        var imageHash = WindowsProcessIdentityVerifier.ComputeFileSha256(imagePath);
+        var servicePolicy = Policy(
+            VerifiedProcessKind.HostService,
+            currentUser.Value,
+            currentSession,
+            imagePath,
+            imageHash);
+        var clientPolicy = Policy(
+            VerifiedProcessKind.AdminUi,
+            currentUser.Value,
+            currentSession,
+            imagePath,
+            imageHash);
+        var serviceIdentity = VerifyIdentity(
+            (uint)Environment.ProcessId,
+            servicePolicy);
+        var expectedStatus = new AdminPipeStatusData(
+            "1.0.0-test",
+            PipeProtocol.Version,
+            "strict",
+            BrokerAvailable: false,
+            new HostSessionStatusData(
+                "locked",
+                SessionId: null,
+                StartedAt: null,
+                LastUserActivityAt: null,
+                IdleExpiresAt: null,
+                HardExpiresAt: null,
+                LockReason: null,
+                ActiveLeases: 0,
+                ConnectedClients: 0,
+                RecoveryVerified: false));
+        var options = new AdminPipeServerOptions(
+            pipeName,
+            PipeSecurityFactory.Create(
+                [currentUser],
+                includeAdministrators: false,
+                includeSystem: false),
+            Guid.NewGuid().ToString("D"),
+            "strict",
+            "1.0.0-test",
+            serviceIdentity,
+            [clientPolicy],
+            currentUser.Value,
+            currentUser.Value,
+            TimeSpan.FromMinutes(15),
+            TimeSpan.FromHours(4),
+            (_, _) => Task.FromResult(expectedStatus));
+        using var stopping = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var attempts = 0;
+        var loopTask = StrictPipeAcceptLoop.RunAsync(
+            async token =>
+            {
+                Interlocked.Increment(ref attempts);
+                await using var server = new AdminPipeServer(options);
+                _ = await server.AcceptOnceAsync(token);
+            },
+            TimeSpan.FromMilliseconds(50),
+            stopping.Token);
+
+        await WriteInvalidHandshakeAsync(pipeName);
+        await WaitUntilAsync(
+            () => Volatile.Read(ref attempts) >= 1,
+            TimeSpan.FromSeconds(5));
+        await Task.Delay(150);
+
+        await using var client = await NamedPipeHostVaultClient.CreateAsync(
+            new AdminPipeClientOptions(
+                pipeName,
+                clientPolicy,
+                servicePolicy));
+        var status = await client.GetStatusAsync();
+
+        Assert.Equal(VaultSessionState.Locked, status.State);
+        Assert.Null(status.SessionId);
+        Assert.False(status.BrokerAvailable);
+        Assert.True(Volatile.Read(ref attempts) >= 2);
+        stopping.Cancel();
+        await loopTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    private static async Task WriteInvalidHandshakeAsync(string pipeName)
+    {
+        await using var raw = new NamedPipeClientStream(
+            ".",
+            pipeName,
+            PipeDirection.InOut,
+            PipeOptions.Asynchronous);
+        await raw.ConnectAsync(5000);
+        var payload = Encoding.UTF8.GetBytes("{}");
+        var length = new byte[4];
+        BinaryPrimitives.WriteInt32LittleEndian(length, payload.Length);
+        await raw.WriteAsync(length);
+        await raw.WriteAsync(payload);
+        await raw.FlushAsync();
+    }
+
+    private static async Task WaitUntilAsync(
+        Func<bool> condition,
+        TimeSpan timeout)
+    {
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        while (!condition())
+        {
+            if (DateTimeOffset.UtcNow >= deadline)
+            {
+                throw new TimeoutException(
+                    "Expected Admin pipe accept attempt did not happen.");
+            }
+            await Task.Delay(25);
+        }
     }
 
     private static ProcessVerificationPolicy Policy(
