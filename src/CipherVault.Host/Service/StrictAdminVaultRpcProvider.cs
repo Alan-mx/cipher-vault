@@ -277,6 +277,13 @@ public sealed class StrictAdminVaultRpcProvider(HostVaultGateway vault)
                         auditRequest.Limit,
                         token),
                     cancellationToken).ConfigureAwait(false);
+            case "admin.agent.clients.list":
+            case "admin.agent.clients.create":
+            case "admin.agent.clients.rotate":
+            case "admin.agent.clients.delete":
+                throw new AdminPipeRpcException(
+                    "compatibility_only",
+                    "Agent Token management is unavailable in strict mode.");
             default:
                 throw new AdminPipeRpcException(
                     "unsupported_method",

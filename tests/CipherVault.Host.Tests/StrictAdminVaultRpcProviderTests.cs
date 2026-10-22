@@ -212,5 +212,13 @@ public sealed class StrictAdminVaultRpcProviderTests
             CancellationToken.None);
         var audit = Assert.IsType<VaultAuditPage>(auditResult);
         Assert.NotEmpty(audit.Items);
+        var compatibilityOnly = await Assert.ThrowsAsync<
+            AdminPipeRpcException>(
+            () => provider.HandleAsync(
+                session,
+                "admin.agent.clients.list",
+                JsonSerializer.SerializeToElement(new { }),
+                CancellationToken.None));
+        Assert.Equal("compatibility_only", compatibilityOnly.Code);
     }
 }
