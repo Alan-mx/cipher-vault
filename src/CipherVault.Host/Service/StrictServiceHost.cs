@@ -105,6 +105,7 @@ public sealed class StrictServiceHost : IAsyncDisposable
                 sessionOptions: sessionOptions));
             builder.Services.AddSingleton<BrokerConnectionRegistry>();
             builder.Services.AddSingleton<ApprovalStore>();
+            builder.Services.AddSingleton<AdminSessionStore>();
             builder.Services.AddSingleton<TransferCoordinator>();
             builder.Services.AddSingleton<IHostCredentialPrompt>(
                 serviceProvider => new BrokerCredentialPrompt(
@@ -125,7 +126,14 @@ public sealed class StrictServiceHost : IAsyncDisposable
                 new AccessGrantService(
                     securityLog:
                         serviceProvider.GetRequiredService<ISecurityEventLog>()));
-            builder.Services.AddSingleton<HostSessionCoordinator>();
+            builder.Services.AddSingleton(serviceProvider =>
+                new HostSessionCoordinator(
+                    serviceProvider.GetRequiredService<IVaultService>(),
+                    runtimeConfiguration,
+                    serviceProvider.GetRequiredService<IHostCredentialPrompt>(),
+                    serviceProvider.GetRequiredService<AccessGrantService>(),
+                    serviceProvider.GetRequiredService<ApprovalStore>(),
+                    serviceProvider.GetRequiredService<AdminSessionStore>()));
             builder.Services.AddSingleton(serviceProvider =>
                 new StrictAdminStatusProvider(
                     serviceProvider

@@ -43,9 +43,10 @@ public sealed class AdminPipeServer : IAsyncDisposable
                 "At least one Admin client process policy is required.",
                 nameof(options));
         }
-        _sessions = new AdminSessionStore(
-            idleLifetime: options.SessionIdleLifetime,
-            hardLifetime: options.SessionHardLifetime);
+        _sessions = options.AdminSessions ??
+            new AdminSessionStore(
+                idleLifetime: options.SessionIdleLifetime,
+                hardLifetime: options.SessionHardLifetime);
         _server = NamedPipeServerFactory.Create(options.PipeName, options.Security);
     }
 

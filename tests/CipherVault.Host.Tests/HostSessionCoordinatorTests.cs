@@ -1,8 +1,10 @@
 using CipherVault.Core;
+using CipherVault.Core.Configuration;
 using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Security;
 using CipherVault.Host.Session;
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace CipherVault.Host.Tests;
@@ -21,6 +23,71 @@ public sealed class HostSessionCoordinatorTests
         Assert.Equal("test-lock", snapshot.LockReason);
         Assert.Equal(0, snapshot.ActiveLeases);
         Assert.Equal(0, snapshot.ConnectedClients);
+    }
+
+    [Fact]
+    public async Task LockRevokesApprovalsAndAdminSessions()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var coordinator = fixture.App.Services.GetRequiredService<HostSessionCoordinator>();
+        var approvals = fixture.App.Services.GetRequiredService<ApprovalStore>();
+        var adminSessions = fixture.App.Services.GetRequiredService<AdminSessionStore>();
+        var grants = fixture.App.Services.GetRequiredService<AccessGrantService>();
+        var operation = approvals.Prepare(
+            ApprovalOperationKind.PurgeNote,
+            Guid.NewGuid(),
+            vaultSessionId: null,
+            JsonDocument.Parse("{}").RootElement.Clone());
+        var adminSession = adminSessions.Create(
+            new VerifiedProcessIdentity(
+                VerifiedProcessKind.AdminUi,
+                123,
+                DateTimeOffset.UtcNow,
+                "S-1-5-1",
+                "S-1-5-2",
+                1,
+                "C:\\Program Files\\CipherVault\\CipherVault.Ui.Wpf.exe",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                SignerThumbprint: null,
+                SignerSubject: null,
+                IntegrityLevel: 0),
+            "S-1-5-1",
+            "S-1-5-2");
+
+        Assert.Equal(AdminSessionState.Active, adminSession.State);
+        await coordinator.UnlockAsync(HostCredentialPreference.Password);
+        var snapshot = await coordinator.GetSnapshotAsync();
+        var issued = await grants.RequestAsync(
+            "bridge",
+            Guid.NewGuid(),
+            McpAccessMode.ReadOnly,
+            AccessGrantScope.Read,
+            new AccessGrantVaultGeneration(
+                snapshot.SessionId!.Value,
+                snapshot.HardExpiresAt!.Value),
+            (_, _) => Task.FromResult(new AccessGrantApprovalResult(
+                true,
+                AccessGrantScope.Read)),
+            AgentClientIdentityKind.VerifiedBridgeProcess,
+            Guid.NewGuid());
+        Assert.Equal(AccessGrantRequestStatus.Approved, issued.Status);
+        Assert.Single(grants.List());
+
+        await coordinator.LockAsync("test-lock");
+
+        Assert.Empty(grants.List());
+        var consumed = approvals.Consume(
+            operation.OperationId,
+            ApprovalOperationKind.PurgeNote,
+            operation.ProcessSessionId,
+            operation.VaultSessionId,
+            operation.ParametersHash);
+        Assert.Equal(ApprovalConsumeStatus.NotApproved, consumed.Status);
+        Assert.Null(consumed.Operation);
+        Assert.Equal(
+            AdminSessionState.Revoked,
+            adminSessions.List().Single(item =>
+                item.SessionId == adminSession.SessionId).State);
     }
 
     [Fact]

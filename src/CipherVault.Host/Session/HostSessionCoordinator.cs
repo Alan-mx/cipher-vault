@@ -19,6 +19,8 @@ public sealed class HostSessionCoordinator
     private readonly ResolvedCipherVaultHostConfig _configuration;
     private readonly IHostCredentialPrompt _credentialPrompt;
     private readonly AccessGrantService _accessGrants;
+    private readonly ApprovalStore? _approvals;
+    private readonly AdminSessionStore? _adminSessions;
     private readonly TimeSpan _lockDrainTimeout;
     private VaultSessionState _state = VaultSessionState.Locked;
     private string? _lockReason;
@@ -33,12 +35,16 @@ public sealed class HostSessionCoordinator
         ResolvedCipherVaultHostConfig configuration,
         IHostCredentialPrompt credentialPrompt,
         AccessGrantService accessGrants,
+        ApprovalStore? approvals = null,
+        AdminSessionStore? adminSessions = null,
         TimeSpan? lockDrainTimeout = null)
     {
         _vault = vault;
         _configuration = configuration;
         _credentialPrompt = credentialPrompt;
         _accessGrants = accessGrants;
+        _approvals = approvals;
+        _adminSessions = adminSessions;
         _lockDrainTimeout = lockDrainTimeout ?? DefaultLockDrainTimeout;
     }
 
@@ -68,6 +74,8 @@ public sealed class HostSessionCoordinator
         {
             await _accessGrants.RevokeAllAsync("vault-locked")
                 .ConfigureAwait(false);
+            _approvals?.RevokeAll();
+            _adminSessions?.RevokeAll("vault-locked");
         }
         lock (_stateSync)
         {
@@ -97,6 +105,8 @@ public sealed class HostSessionCoordinator
             {
                 await _accessGrants.RevokeAllAsync("vault-relocked")
                     .ConfigureAwait(false);
+                _approvals?.RevokeAll();
+                _adminSessions?.RevokeAll("vault-relocked");
             }
             if (current.State is VaultSessionState.Unlocked or VaultSessionState.Expiring)
             {
@@ -156,6 +166,8 @@ public sealed class HostSessionCoordinator
         try
         {
             await _accessGrants.RevokeAllAsync(reason).ConfigureAwait(false);
+            _approvals?.RevokeAll();
+            _adminSessions?.RevokeAll(reason);
 
             Task drainedTask;
             lock (_stateSync)

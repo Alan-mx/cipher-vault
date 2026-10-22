@@ -48,6 +48,8 @@ public static class HostApplication
         builder.Services.AddSingleton<IVaultService>(_ => new VaultService(
             activityProvider ?? new WindowsSystemActivityProvider(),
             sessionOptions: configuration.SessionOptions));
+        builder.Services.AddSingleton<ApprovalStore>();
+        builder.Services.AddSingleton<AdminSessionStore>();
         builder.Services.AddSingleton<HostSessionCoordinator>();
         builder.Services.AddSingleton<HostVaultGateway>();
         builder.Services.AddHttpContextAccessor();

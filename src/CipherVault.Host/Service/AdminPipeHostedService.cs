@@ -100,7 +100,8 @@ public sealed class AdminPipeHostedService(
     StrictAdminLockProvider lockProvider,
     StrictAdminUnlockProvider unlockProvider,
     StrictAdminInitializeProvider initializeProvider,
-    StrictAdminVaultRpcProvider vaultRpcProvider) : BackgroundService
+    StrictAdminVaultRpcProvider vaultRpcProvider,
+    AdminSessionStore adminSessions) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -173,7 +174,8 @@ public sealed class AdminPipeHostedService(
                     session,
                     method,
                     payload,
-                    cancellationToken));
+                    cancellationToken),
+            adminSessions);
 
         while (!stoppingToken.IsCancellationRequested)
         {
