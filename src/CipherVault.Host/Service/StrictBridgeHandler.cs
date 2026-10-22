@@ -66,7 +66,6 @@ public sealed class StrictBridgeHandler(
                     prompt.ApprovedScopes,
                     prompt.Approved ? null : "user-denied");
             },
-            AgentClientIdentityKind.VerifiedBridgeProcess,
             session.ProcessSessionId,
             cancellationToken).ConfigureAwait(false);
         if (outcome.IssuedGrant is null)
@@ -81,7 +80,6 @@ public sealed class StrictBridgeHandler(
             record.ClientInstanceId,
             record.Scopes,
             record.VaultSessionId!.Value,
-            record.IdentityKind,
             record.VerifiedProcessSessionId);
         return new BridgeIssuedGrant(
             new BridgeGrantData(

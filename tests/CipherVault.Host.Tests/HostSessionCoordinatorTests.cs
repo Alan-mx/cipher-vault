@@ -68,7 +68,6 @@ public sealed class HostSessionCoordinatorTests
             (_, _) => Task.FromResult(new AccessGrantApprovalResult(
                 true,
                 AccessGrantScope.Read)),
-            AgentClientIdentityKind.VerifiedBridgeProcess,
             Guid.NewGuid());
         Assert.Equal(AccessGrantRequestStatus.Approved, issued.Status);
         Assert.Single(grants.List());

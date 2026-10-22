@@ -13,6 +13,7 @@ public sealed class AccessGrantServiceTests
         var now = DateTimeOffset.Parse("2026-10-21T10:00:00Z");
         var time = new MutableTimeProvider(now);
         var service = new AccessGrantService(timeProvider: time);
+        var processSessionId = Guid.NewGuid();
 
         var outcome = await service.RequestAsync(
             "agent",
@@ -23,7 +24,8 @@ public sealed class AccessGrantServiceTests
             (_, _) => Task.FromResult(
                 new AccessGrantApprovalResult(
                     true,
-                    AccessGrantScope.Read | AccessGrantScope.Write)));
+                    AccessGrantScope.Read | AccessGrantScope.Write)),
+            processSessionId);
 
         Assert.Equal(AccessGrantRequestStatus.Approved, outcome.Status);
         var issued = Assert.IsType<IssuedAccessGrant>(outcome.IssuedGrant);
@@ -45,6 +47,7 @@ public sealed class AccessGrantServiceTests
         var service = new AccessGrantService(
             timeProvider: new MutableTimeProvider(now));
         var clientInstanceId = Guid.NewGuid();
+        var processSessionId = Guid.NewGuid();
         var handlerStarted = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var approval = new TaskCompletionSource<AccessGrantApprovalResult>(
@@ -66,7 +69,8 @@ public sealed class AccessGrantServiceTests
             McpAccessMode.ReadOnly,
             AccessGrantScope.Read,
             Generation(now, TimeSpan.FromHours(1)),
-            Handler);
+            Handler,
+            processSessionId);
         await handlerStarted.Task;
         var second = service.RequestAsync(
             "agent",
@@ -74,7 +78,8 @@ public sealed class AccessGrantServiceTests
             McpAccessMode.ReadOnly,
             AccessGrantScope.Read,
             Generation(now, TimeSpan.FromHours(1)),
-            Handler);
+            Handler,
+            processSessionId);
 
         approval.SetResult(new AccessGrantApprovalResult(
             true,
@@ -93,6 +98,7 @@ public sealed class AccessGrantServiceTests
         var time = new MutableTimeProvider(now);
         var service = new AccessGrantService(timeProvider: time);
         var generation = Generation(now, TimeSpan.FromHours(1));
+        var processSessionId = Guid.NewGuid();
 
         var denied = await service.RequestAsync(
             "agent",
@@ -100,7 +106,8 @@ public sealed class AccessGrantServiceTests
             McpAccessMode.ReadOnly,
             AccessGrantScope.Read,
             generation,
-            (_, _) => Task.FromResult(new AccessGrantApprovalResult(false)));
+            (_, _) => Task.FromResult(new AccessGrantApprovalResult(false)),
+            processSessionId);
         Assert.Equal(AccessGrantRequestStatus.Denied, denied.Status);
 
         var cooled = await service.RequestAsync(
@@ -110,7 +117,8 @@ public sealed class AccessGrantServiceTests
             AccessGrantScope.Read,
             generation,
             (_, _) => throw new InvalidOperationException(
-                "Approval must not run during cooldown."));
+                "Approval must not run during cooldown."),
+            processSessionId);
         Assert.Equal(AccessGrantRequestStatus.Cooldown, cooled.Status);
 
         time.Advance(TimeSpan.FromSeconds(31));
@@ -122,7 +130,8 @@ public sealed class AccessGrantServiceTests
             generation,
             (_, _) => Task.FromResult(new AccessGrantApprovalResult(
                 true,
-                AccessGrantScope.Read)));
+                AccessGrantScope.Read)),
+            processSessionId);
         Assert.Equal(AccessGrantRequestStatus.Approved, approved.Status);
     }
 
@@ -173,10 +182,8 @@ public sealed class AccessGrantServiceTests
             (_, _) => Task.FromResult(new AccessGrantApprovalResult(
                 true,
                 AccessGrantScope.Read)),
-            AgentClientIdentityKind.VerifiedBridgeProcess,
             processSessionId);
         var issued = Assert.IsType<IssuedAccessGrant>(outcome.IssuedGrant);
-        Assert.Equal(AgentClientIdentityKind.VerifiedBridgeProcess, issued.Record.IdentityKind);
         Assert.Equal(processSessionId, issued.Record.VerifiedProcessSessionId);
 
         var validation = await service.ValidateAsync(
@@ -185,8 +192,7 @@ public sealed class AccessGrantServiceTests
             generation);
 
         Assert.Equal(AccessGrantValidationStatus.Valid, validation.Status);
-        Assert.Equal(AgentClientIdentityKind.VerifiedBridgeProcess, validation.Grant!.IdentityKind);
-        Assert.Equal(processSessionId, validation.Grant.VerifiedProcessSessionId);
+        Assert.Equal(processSessionId, validation.Grant!.VerifiedProcessSessionId);
         Assert.True(service.RecordUse(validation.Grant));
         Assert.False(service.RecordUse(validation.Grant with
         {
@@ -211,8 +217,7 @@ public sealed class AccessGrantServiceTests
                 (_, _) => Task.FromResult(new AccessGrantApprovalResult(
                     true,
                     AccessGrantScope.Read)),
-                AgentClientIdentityKind.VerifiedBridgeProcess,
-                verifiedProcessSessionId: null));
+                Guid.Empty));
 
         Assert.Contains("process session", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -260,7 +265,8 @@ public sealed class AccessGrantServiceTests
             "agent",
             issued.Record.ClientInstanceId,
             AccessGrantScope.Read,
-            generation.SessionId)));
+            generation.SessionId,
+            issued.Record.VerifiedProcessSessionId)));
         Assert.Equal(
             AccessGrantValidationStatus.Expired,
             (await service.ValidateAsync(
@@ -325,6 +331,7 @@ public sealed class AccessGrantServiceTests
             TaskCreationOptions.RunContinuationsAsynchronously);
         var approval = new TaskCompletionSource<AccessGrantApprovalResult>(
             TaskCreationOptions.RunContinuationsAsynchronously);
+        var processSessionId = Guid.NewGuid();
 
         var request = service.RequestAsync(
             "agent",
@@ -336,7 +343,8 @@ public sealed class AccessGrantServiceTests
             {
                 handlerStarted.TrySetResult();
                 return await approval.Task;
-            });
+            },
+            processSessionId);
         await handlerStarted.Task;
 
         Assert.Equal(1, await service.RevokeAllAsync("vault-locked"));
@@ -515,7 +523,6 @@ public sealed class AccessGrantServiceTests
                     true,
                     AccessGrantScope.Read);
             },
-            AgentClientIdentityKind.VerifiedBridgeProcess,
             processA);
         await handlerStarted.Task;
 
@@ -554,7 +561,8 @@ public sealed class AccessGrantServiceTests
             generation,
             (_, _) => Task.FromResult(new AccessGrantApprovalResult(
                 true,
-                scopes)));
+                scopes)),
+            Guid.NewGuid());
         Assert.Equal(AccessGrantRequestStatus.Approved, outcome.Status);
         return Assert.IsType<IssuedAccessGrant>(outcome.IssuedGrant);
     }
@@ -585,7 +593,6 @@ public sealed class AccessGrantServiceTests
             (_, _) => Task.FromResult(new AccessGrantApprovalResult(
                 true,
                 scopes)),
-            AgentClientIdentityKind.VerifiedBridgeProcess,
             processSessionId);
         Assert.Equal(AccessGrantRequestStatus.Approved, outcome.Status);
         return Assert.IsType<IssuedAccessGrant>(outcome.IssuedGrant);
@@ -599,7 +606,6 @@ public sealed class AccessGrantServiceTests
             record.ClientInstanceId,
             record.Scopes,
             record.VaultSessionId!.Value,
-            record.IdentityKind,
             record.VerifiedProcessSessionId);
     }
 

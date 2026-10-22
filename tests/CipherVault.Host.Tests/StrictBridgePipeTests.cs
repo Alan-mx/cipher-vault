@@ -603,7 +603,6 @@ public sealed class StrictBridgePipeTests
                         result.Approved,
                         result.ApprovedScopes);
                 },
-                AgentClientIdentityKind.VerifiedBridgeProcess,
                 session.ProcessSessionId,
                 cancellationToken);
             var issued = outcome.IssuedGrant
@@ -628,7 +627,6 @@ public sealed class StrictBridgePipeTests
                     record.ClientInstanceId,
                     record.Scopes,
                     record.VaultSessionId!.Value,
-                    record.IdentityKind,
                     record.VerifiedProcessSessionId));
         }
 

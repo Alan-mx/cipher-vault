@@ -94,35 +94,17 @@ public sealed class AccessGrantService : IDisposable
         AccessGrantVaultGeneration vaultGeneration,
         Func<AccessGrantApprovalRequest, CancellationToken, Task<AccessGrantApprovalResult>>
             approvalHandler,
-        CancellationToken cancellationToken = default)
-    {
-        return await RequestAsync(
-            clientId,
-            clientInstanceId,
-            tokenAccessMode,
-            requestedScopes,
-            vaultGeneration,
-            approvalHandler,
-            AgentClientIdentityKind.CompatibilityToken,
-            verifiedProcessSessionId: null,
-            cancellationToken).ConfigureAwait(false);
-    }
-
-    public async Task<AccessGrantRequestOutcome> RequestAsync(
-        string clientId,
-        Guid clientInstanceId,
-        McpAccessMode tokenAccessMode,
-        AccessGrantScope requestedScopes,
-        AccessGrantVaultGeneration vaultGeneration,
-        Func<AccessGrantApprovalRequest, CancellationToken, Task<AccessGrantApprovalResult>>
-            approvalHandler,
-        AgentClientIdentityKind identityKind,
-        Guid? verifiedProcessSessionId,
+        Guid verifiedProcessSessionId,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(clientId);
         ArgumentNullException.ThrowIfNull(approvalHandler);
-        ValidateIdentity(identityKind, verifiedProcessSessionId);
+        if (verifiedProcessSessionId == Guid.Empty)
+        {
+            throw new ArgumentException(
+                "Bridge grants require a process session id.",
+                nameof(verifiedProcessSessionId));
+        }
 
         var allowed = AccessGrantScopes.Ceiling(tokenAccessMode);
         var effectiveRequest = AccessGrantScopes.Normalize(requestedScopes) & allowed;
@@ -182,14 +164,12 @@ public sealed class AccessGrantService : IDisposable
                         HardExpiresAt: null,
                         VaultSessionId: null,
                         DenialReason: null,
-                        IdentityKind: identityKind,
                         VerifiedProcessSessionId: verifiedProcessSessionId),
                     vaultGeneration);
                 _pendingSlots[slot] = pending;
                 isOwner = true;
             }
-            else if (pending.Record.IdentityKind != identityKind ||
-                     pending.Record.VerifiedProcessSessionId != verifiedProcessSessionId)
+            else if (pending.Record.VerifiedProcessSessionId != verifiedProcessSessionId)
             {
                 return new AccessGrantRequestOutcome(
                     AccessGrantRequestStatus.Conflict,
@@ -405,7 +385,6 @@ public sealed class AccessGrantService : IDisposable
                         matched.ClientInstanceId,
                         matched.Scopes,
                         matched.VaultSessionId.Value,
-                        matched.IdentityKind,
                         matched.VerifiedProcessSessionId),
                     ReasonCode: null,
                     Record: matched);
@@ -424,7 +403,6 @@ public sealed class AccessGrantService : IDisposable
             if (!_grants.TryGetValue(grant.GrantId, out var record) ||
                 record.State != AccessGrantState.Active ||
                 record.VaultSessionId != grant.VaultSessionId ||
-                record.IdentityKind != grant.IdentityKind ||
                 record.VerifiedProcessSessionId != grant.VerifiedProcessSessionId ||
                 record.HardExpiresAt is null ||
                 record.IdleExpiresAt is null)
@@ -464,8 +442,6 @@ public sealed class AccessGrantService : IDisposable
         lock (_sync)
         {
             if (!_grants.TryGetValue(grant.GrantId, out var record) ||
-                record.IdentityKind != AgentClientIdentityKind.VerifiedBridgeProcess ||
-                grant.IdentityKind != AgentClientIdentityKind.VerifiedBridgeProcess ||
                 !string.Equals(
                     record.ClientId,
                     grant.ClientId,
@@ -621,8 +597,6 @@ public sealed class AccessGrantService : IDisposable
         {
             foreach (var pending in _pendingSlots.Values
                          .Where(item =>
-                             item.Record.IdentityKind ==
-                                 AgentClientIdentityKind.VerifiedBridgeProcess &&
                              item.Record.VerifiedProcessSessionId ==
                                  verifiedProcessSessionId)
                          .ToArray())
@@ -636,8 +610,6 @@ public sealed class AccessGrantService : IDisposable
 
             foreach (var record in _grants.Values
                          .Where(item =>
-                             item.IdentityKind ==
-                                 AgentClientIdentityKind.VerifiedBridgeProcess &&
                              item.VerifiedProcessSessionId ==
                                  verifiedProcessSessionId)
                          .ToArray())
@@ -1062,24 +1034,4 @@ public sealed class AccessGrantService : IDisposable
         public CancellationTokenSource? Cancellation { get; set; }
     }
 
-    private static void ValidateIdentity(
-        AgentClientIdentityKind identityKind,
-        Guid? verifiedProcessSessionId)
-    {
-        if (identityKind == AgentClientIdentityKind.VerifiedBridgeProcess &&
-            (verifiedProcessSessionId is null ||
-             verifiedProcessSessionId == Guid.Empty))
-        {
-            throw new ArgumentException(
-                "Verified bridge grants require a process session id.",
-                nameof(verifiedProcessSessionId));
-        }
-        if (identityKind == AgentClientIdentityKind.CompatibilityToken &&
-            verifiedProcessSessionId is not null)
-        {
-            throw new ArgumentException(
-                "Compatibility grants cannot bind a process session id.",
-                nameof(verifiedProcessSessionId));
-        }
-    }
 }
