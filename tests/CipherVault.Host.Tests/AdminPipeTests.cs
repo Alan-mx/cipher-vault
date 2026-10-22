@@ -93,6 +93,7 @@ public sealed class AdminPipeTests
         Assert.Null(status.SessionId);
         Assert.Equal("startup", status.LockReason);
         Assert.True(status.RecoveryVerified);
+        Assert.True(status.BrokerAvailable);
         var locked = await client.LockAsync("test-lock");
         Assert.Equal("test-lock", locked.LockReason);
         var unlockException = await Assert.ThrowsAsync<PipeRpcException>(

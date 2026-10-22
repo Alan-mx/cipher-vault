@@ -64,7 +64,8 @@ internal static class HostHttpResponses
         {
             VaultErrorCode.InvalidInput => StatusCodes.Status400BadRequest,
             VaultErrorCode.NotFound => StatusCodes.Status404NotFound,
-            VaultErrorCode.InvalidCredential => StatusCodes.Status403Forbidden,
+            VaultErrorCode.InvalidCredential or VaultErrorCode.AccessDenied =>
+                StatusCodes.Status403Forbidden,
             VaultErrorCode.Conflict or VaultErrorCode.AlreadyExists =>
                 StatusCodes.Status409Conflict,
             VaultErrorCode.SessionLocked or VaultErrorCode.SessionExpired =>
@@ -80,6 +81,7 @@ internal static class HostHttpResponses
             VaultErrorCode.InvalidInput => HostErrorCode.InvalidInput,
             VaultErrorCode.NotFound => HostErrorCode.NotFound,
             VaultErrorCode.InvalidCredential => HostErrorCode.InvalidCredential,
+            VaultErrorCode.AccessDenied => HostErrorCode.AccessDenied,
             VaultErrorCode.Conflict => HostErrorCode.Conflict,
             VaultErrorCode.AlreadyExists => HostErrorCode.AlreadyExists,
             VaultErrorCode.SessionLocked or VaultErrorCode.SessionExpired =>

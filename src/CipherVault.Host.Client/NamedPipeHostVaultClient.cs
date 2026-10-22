@@ -77,7 +77,9 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
             "admin.status",
             new { },
             cancellationToken).ConfigureAwait(false);
-        return ToSessionStatus(data.Session);
+        return ToSessionStatus(
+            data.Session,
+            data.BrokerAvailable);
     }
 
     public Task<VaultCatalogPage> ListCatalogAsync(
@@ -479,6 +481,13 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
 
     private static VaultSessionStatus ToSessionStatus(HostSessionStatusData status)
     {
+        return ToSessionStatus(status, brokerAvailable: false);
+    }
+
+    private static VaultSessionStatus ToSessionStatus(
+        HostSessionStatusData status,
+        bool brokerAvailable)
+    {
         return new VaultSessionStatus(
             Enum.Parse<VaultSessionState>(status.State, ignoreCase: true),
             status.SessionId,
@@ -487,7 +496,8 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
             status.IdleExpiresAt,
             status.HardExpiresAt,
             status.LockReason,
-            status.RecoveryVerified);
+            status.RecoveryVerified,
+            brokerAvailable);
     }
 
     private static string ToCredentialPreference(VaultCredentialType credentialType)

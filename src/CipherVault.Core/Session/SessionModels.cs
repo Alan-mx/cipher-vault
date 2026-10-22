@@ -75,7 +75,8 @@ public sealed record VaultSessionStatus(
     DateTimeOffset? IdleExpiresAt,
     DateTimeOffset? HardExpiresAt,
     string? LockReason,
-    bool RecoveryVerified = false);
+    bool RecoveryVerified = false,
+    bool BrokerAvailable = false);
 
 public sealed record SystemActivitySnapshot(
     TimeSpan SystemIdleTime,

@@ -152,6 +152,11 @@ public sealed class BrokerPipeTests
             AllowedClientImages =
             [
                 Image(
+                    "AdminUi",
+                    @"C:\Program Files\CipherVault\CipherVault.Ui.Wpf.exe",
+                    sha256,
+                    thumbprint),
+                Image(
                     "AuthBroker",
                     @"C:\Program Files\CipherVault\CipherVault.Auth.Broker.exe",
                     sha256,
@@ -170,6 +175,20 @@ public sealed class BrokerPipeTests
         Assert.Equal(VerifiedProcessKind.HostService, options.ServerPolicy.ExpectedKind);
         Assert.Equal("S-1-5-80-1", options.ServerPolicy.ExpectedUserSid);
         Assert.Equal(0u, options.ServerPolicy.ExpectedSessionId);
+
+        var adminOptions =
+            StrictServiceClientPolicyFactory.CreateAdminOptions(
+                manifest,
+                "CipherVault.Admin.v1",
+                manifest.OwnerSid!,
+                ownerSessionId: 7,
+                VerifiedProcessKind.AdminUi);
+        Assert.Equal(
+            VerifiedProcessKind.AdminUi,
+            adminOptions.ClientPolicy.ExpectedKind);
+        Assert.Equal(
+            VerifiedProcessKind.HostService,
+            adminOptions.ServerPolicy.ExpectedKind);
     }
 
     private static ProcessVerificationPolicy Policy(

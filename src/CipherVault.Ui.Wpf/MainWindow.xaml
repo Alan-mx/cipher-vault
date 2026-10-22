@@ -42,7 +42,7 @@
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="资料库文件夹" VerticalAlignment="Center" Margin="0,0,12,0" />
                         <TextBox x:Name="VaultPathTextBox" Grid.Column="1" MinHeight="32" Padding="8,4" VerticalContentAlignment="Center" />
-                        <Button Grid.Column="2" Content="初始化" MinWidth="100" Margin="12,0,0,0" Padding="12,5" Click="InitializeButton_Click" />
+                        <Button x:Name="InitializeButton" Grid.Column="2" Content="初始化" MinWidth="100" Margin="12,0,0,0" Padding="12,5" Click="InitializeButton_Click" />
                     </Grid>
                     <Grid Grid.Row="2" Margin="0,0,0,12">
                         <Grid.ColumnDefinitions>

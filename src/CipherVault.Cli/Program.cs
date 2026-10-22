@@ -140,6 +140,20 @@ static async Task<int> StatusAsync(
     JsonSerializerOptions options)
 {
     var fullPath = Path.GetFullPath(vaultPath);
+    if (service is NamedPipeHostVaultClient)
+    {
+        var sessionStatus = await service.GetStatusAsync();
+        PrintJson(
+            new
+            {
+                initialized = (bool?)null,
+                managedByService = true,
+                vaultPath = fullPath,
+                session = sessionStatus
+            },
+            options);
+        return 0;
+    }
     var initialized =
         File.Exists(Path.Combine(fullPath, "vault.db")) &&
         File.Exists(Path.Combine(fullPath, "vault.keys"));
@@ -663,13 +677,57 @@ static async Task<CliHostSession> CreateHostSessionAsync(
         }
     }
 
-    var hostConfiguration = CipherVaultHostConfiguration.Load(
-        CreateHostOverrides(arguments),
-        GetOption(arguments, "--config"));
-    var client = await HttpHostVaultClient.CreateAsync(
-        hostConfiguration,
-        HostAdminClientKind.Cli);
-    return new CliHostSession(hostConfiguration.VaultPath, client, ownership: null);
+    var compatibilityConfigPath = GetOption(arguments, "--config");
+    if (compatibilityConfigPath is not null)
+    {
+        var hostConfiguration = CipherVaultHostConfiguration.Load(
+            CreateHostOverrides(arguments),
+            compatibilityConfigPath);
+        var client = await HttpHostVaultClient.CreateAsync(
+            hostConfiguration,
+            HostAdminClientKind.Cli);
+        return new CliHostSession(
+            hostConfiguration.VaultPath,
+            client,
+            ownership: null);
+    }
+
+    var paths = CipherVaultServicePaths.Default;
+    var manifestPath = GetOption(arguments, "--manifest") ??
+        paths.PublicManifestPath;
+    var manifest = CipherVaultServiceConfiguration.LoadInstallManifest(
+        manifestPath);
+    var currentUser = WindowsIdentity.GetCurrent().User
+        ?? throw new VaultException(
+            VaultErrorCode.StorageError,
+            "Unable to resolve the current Windows user.");
+    if (!string.Equals(
+            currentUser.Value,
+            manifest.OwnerSid,
+            StringComparison.OrdinalIgnoreCase))
+    {
+        throw new VaultException(
+            VaultErrorCode.AccessDenied,
+            "The current Windows user is not the CipherVault owner.");
+    }
+    var adminPipe = manifest.Pipes?.Admin;
+    if (string.IsNullOrWhiteSpace(adminPipe))
+    {
+        throw new VaultException(
+            VaultErrorCode.InvalidInput,
+            "Install manifest Admin pipe is required.");
+    }
+    using var brokerProcess = StrictServiceBrokerLauncher.EnsureStarted(
+        manifest,
+        manifestPath);
+    var options = StrictServiceClientPolicyFactory.CreateAdminOptions(
+        manifest,
+        adminPipe,
+        currentUser.Value,
+        (uint)System.Diagnostics.Process.GetCurrentProcess().SessionId,
+        VerifiedProcessKind.AdminCli);
+    var strictClient = await NamedPipeHostVaultClient.CreateAsync(options);
+    return new CliHostSession(paths.VaultPath, strictClient, ownership: null);
 }
 
 static bool HasFlag(string[] arguments, string flag)
@@ -870,7 +928,8 @@ static void PrintHelp()
           rebuild-index       --vault <directory>
 
         Session options:
-          --config <file>          Defaults to %LOCALAPPDATA%\CipherVault\config.json
+          --manifest <file>        Defaults to %ProgramData%\CipherVault\install-public.json
+          --config <file>          Explicit compatibility Host configuration
           --standalone             Explicit direct mode; requires Host to be stopped
           --idle-minutes <1-1440>  Defaults to 15
           --hard-hours <1-168>     Defaults to 4 and must cover the idle timeout

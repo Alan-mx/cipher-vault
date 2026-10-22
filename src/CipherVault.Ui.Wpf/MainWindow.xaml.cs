@@ -41,18 +41,51 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        ResolvedCipherVaultHostConfig configuration;
+        string vaultPath;
         try
         {
             var arguments = Environment.GetCommandLineArgs();
-            configuration = CipherVaultHostConfiguration.Load(
-                CreateCommandLineOverrides(arguments),
-                GetOption(arguments, "--config"));
-            _service = HttpHostVaultClient.CreateAsync(
-                    configuration,
-                    HostAdminClientKind.Ui)
+            var paths = CipherVaultServicePaths.Default;
+            var manifestPath = GetOption(arguments, "--manifest") ??
+                paths.PublicManifestPath;
+            var manifest = CipherVaultServiceConfiguration.LoadInstallManifest(
+                manifestPath);
+            var currentUser = System.Security.Principal.WindowsIdentity
+                .GetCurrent().User
+                ?? throw new VaultException(
+                    VaultErrorCode.StorageError,
+                    "无法获取当前 Windows 用户身份。");
+            if (!string.Equals(
+                    currentUser.Value,
+                    manifest.OwnerSid,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new VaultException(
+                    VaultErrorCode.AccessDenied,
+                    "当前 Windows 用户不是此 CipherVault 的 Owner。");
+            }
+            var adminPipe = manifest.Pipes?.Admin;
+            var brokerPipe = manifest.Pipes?.Broker;
+            if (string.IsNullOrWhiteSpace(adminPipe) ||
+                string.IsNullOrWhiteSpace(brokerPipe))
+            {
+                throw new VaultException(
+                    VaultErrorCode.InvalidInput,
+                    "安装清单中的 pipe 配置无效。");
+            }
+            using var brokerProcess = StrictServiceBrokerLauncher.EnsureStarted(
+                manifest,
+                manifestPath);
+            var options = StrictServiceClientPolicyFactory.CreateAdminOptions(
+                manifest,
+                adminPipe,
+                currentUser.Value,
+                (uint)System.Diagnostics.Process.GetCurrentProcess().SessionId,
+                VerifiedProcessKind.AdminUi);
+            _service = NamedPipeHostVaultClient.CreateAsync(options)
                 .GetAwaiter()
                 .GetResult();
+            vaultPath = paths.VaultPath;
         }
         catch (Exception exception)
         {
@@ -62,20 +95,9 @@ public partial class MainWindow : Window
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
             _startupFailed = true;
-            configuration = new ResolvedCipherVaultHostConfig(
-                CipherVaultConfiguration.DefaultVaultPath,
-                VaultSessionOptions.Default,
-                new HostEndpointOptions(
-                    "127.0.0.1",
-                    43127,
-                    "/mcp",
-                    "/admin/v1",
-                    4 * 1024 * 1024,
-                    new HashSet<string>(StringComparer.OrdinalIgnoreCase)),
-                [],
-                CipherVaultConfiguration.DefaultConfigPath);
+            vaultPath = CipherVaultServicePaths.Default.VaultPath;
         }
-        _configuredVaultPath = configuration.VaultPath;
+        _configuredVaultPath = vaultPath;
         InitializeWindow();
     }
 
@@ -769,6 +791,17 @@ public partial class MainWindow : Window
             var status = await _service.GetStatusAsync();
             if (status.State == VaultSessionState.Locked)
             {
+                if (_service is NamedPipeHostVaultClient)
+                {
+                    StatusText.Text = GetStateText(status.State);
+                    UnlockButton.IsEnabled = status.BrokerAvailable;
+                    InitializeButton.IsEnabled = status.BrokerAvailable;
+                    SessionDetailText.Text = status.BrokerAvailable
+                        ? "资料库由 strict 服务管理。请点击“解锁”，凭据将由本地授权程序收集。"
+                        : "正在等待本地授权程序连接 strict 服务。";
+                    ClearSensitiveUi();
+                    return;
+                }
                 switch (GetVaultPathState(VaultPathTextBox.Text.Trim()))
                 {
                     case VaultPathState.Missing:
@@ -804,6 +837,8 @@ public partial class MainWindow : Window
             }
             else
             {
+                UnlockButton.IsEnabled = true;
+                InitializeButton.IsEnabled = true;
                 StatusText.Text = GetStateText(status.State);
                 var idleRemaining = FormatRemaining(status.IdleExpiresAt, DateTimeOffset.UtcNow);
                 var hardRemaining = FormatRemaining(status.HardExpiresAt, DateTimeOffset.UtcNow);
@@ -1061,38 +1096,6 @@ public partial class MainWindow : Window
             VaultSessionState.Locking => "锁定中",
             _ => "未知状态"
         };
-    }
-
-    private static CipherVaultHostConfigOverrides CreateCommandLineOverrides(
-        string[] arguments)
-    {
-        return new CipherVaultHostConfigOverrides
-        {
-            VaultPath = GetOption(arguments, "--vault"),
-            IdleMinutes = ParseOptionalInteger(
-                GetOption(arguments, "--idle-minutes"),
-                "--idle-minutes"),
-            HardHours = ParseOptionalInteger(
-                GetOption(arguments, "--hard-hours"),
-                "--hard-hours")
-        };
-    }
-
-    private static int? ParseOptionalInteger(
-        string? value,
-        string option)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return null;
-        }
-        if (!int.TryParse(value, out var parsed))
-        {
-            throw new VaultException(
-                VaultErrorCode.InvalidInput,
-                $"{option} 必须是整数。");
-        }
-        return parsed;
     }
 
     private static string? GetOption(

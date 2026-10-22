@@ -6,6 +6,38 @@ namespace CipherVault.Host.Client;
 
 public static class StrictServiceClientPolicyFactory
 {
+    public static AdminPipeClientOptions CreateAdminOptions(
+        CipherVaultInstallPublicManifest manifest,
+        string pipeName,
+        string ownerSid,
+        uint ownerSessionId,
+        VerifiedProcessKind clientKind)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+        ArgumentException.ThrowIfNullOrWhiteSpace(pipeName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(ownerSid);
+        if (clientKind is not (
+                VerifiedProcessKind.AdminUi or
+                VerifiedProcessKind.AdminCli))
+        {
+            throw Invalid("Admin client kind must be UI or CLI.");
+        }
+        var serviceSid = manifest.ServiceSid
+            ?? throw Invalid("Install manifest service SID is required.");
+        return new AdminPipeClientOptions(
+            pipeName,
+            CreatePolicy(
+                clientKind,
+                ownerSid,
+                ownerSessionId,
+                manifest.AllowedClientImages),
+            CreatePolicy(
+                VerifiedProcessKind.HostService,
+                serviceSid,
+                expectedSessionId: 0,
+                manifest.AllowedServerImages));
+    }
+
     public static BrokerPipeClientOptions CreateBrokerOptions(
         CipherVaultInstallPublicManifest manifest,
         string pipeName,

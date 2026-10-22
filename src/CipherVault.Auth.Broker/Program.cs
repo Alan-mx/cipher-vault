@@ -34,6 +34,14 @@ public static class Program
         {
             return 1;
         }
+        using var instanceMutex = new Mutex(
+            initiallyOwned: true,
+            $@"Local\CipherVault.AuthBroker.{manifest.InstallId:N}",
+            out var createdNew);
+        if (!createdNew)
+        {
+            return 0;
+        }
         var pipeName = manifest.Pipes?.Broker;
         if (string.IsNullOrWhiteSpace(pipeName))
         {

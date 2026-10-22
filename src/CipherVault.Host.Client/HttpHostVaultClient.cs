@@ -656,6 +656,7 @@ public sealed class HttpHostVaultClient : IHostVaultClient
             "not_found" => VaultErrorCode.NotFound,
             "invalid_credential" or "invalid_token" =>
                 VaultErrorCode.InvalidCredential,
+            "access_denied" => VaultErrorCode.AccessDenied,
             "conflict" => VaultErrorCode.Conflict,
             "session_locked" => VaultErrorCode.SessionLocked,
             "maintenance_in_progress" => VaultErrorCode.Conflict,

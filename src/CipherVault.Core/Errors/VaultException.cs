@@ -6,6 +6,7 @@ public enum VaultErrorCode
     AlreadyExists,
     NotFound,
     InvalidCredential,
+    AccessDenied,
     Conflict,
     CorruptVault,
     SessionLocked,
