@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Security.Principal;
+using CipherVault.Core.Session;
 using CipherVault.Host.Client;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Security;
@@ -11,6 +12,86 @@ namespace CipherVault.Host.Tests;
 
 public sealed class AdminPipeTests
 {
+    [Fact]
+    public async Task NamedPipeHostVaultClientReturnsStatusFromAdminPipe()
+    {
+        var pipeName = "CipherVault.Admin.ClientTest." + Guid.NewGuid().ToString("N");
+        var currentUser = WindowsIdentity.GetCurrent().User!;
+        var currentSession = (uint)Process.GetCurrentProcess().SessionId;
+        var imagePath = Environment.ProcessPath!;
+        var imageHash = WindowsProcessIdentityVerifier.ComputeFileSha256(imagePath);
+        var servicePolicy = Policy(
+            VerifiedProcessKind.HostService,
+            currentUser.Value,
+            currentSession,
+            imagePath,
+            imageHash);
+        var clientPolicy = Policy(
+            VerifiedProcessKind.AdminUi,
+            currentUser.Value,
+            currentSession,
+            imagePath,
+            imageHash);
+        var serviceIdentity = VerifyIdentity(
+            (uint)Environment.ProcessId,
+            servicePolicy);
+        var expectedSession = new HostSessionStatusData(
+            "locked",
+            SessionId: null,
+            StartedAt: null,
+            LastUserActivityAt: null,
+            IdleExpiresAt: null,
+            HardExpiresAt: null,
+            LockReason: "startup",
+            ActiveLeases: 0,
+            ConnectedClients: 1,
+            RecoveryVerified: true);
+        var security = PipeSecurityFactory.Create(
+            [currentUser],
+            includeAdministrators: false,
+            includeSystem: false);
+        await using var server = new AdminPipeServer(
+            new AdminPipeServerOptions(
+                pipeName,
+                security,
+                Guid.NewGuid().ToString("D"),
+                "strict",
+                "1.0.0-test",
+                serviceIdentity,
+                [clientPolicy],
+                currentUser.Value,
+                currentUser.Value,
+                TimeSpan.FromMinutes(15),
+                TimeSpan.FromHours(4),
+                (_, _) => Task.FromResult(
+                    new AdminPipeStatusData(
+                        "1.0.0-test",
+                        PipeProtocol.Version,
+                        "strict",
+                        BrokerAvailable: true,
+                        expectedSession))));
+        var acceptTask = server.AcceptOnceAsync();
+
+        await using var client = await NamedPipeHostVaultClient.CreateAsync(
+            new AdminPipeClientOptions(
+                pipeName,
+                clientPolicy,
+                servicePolicy));
+        var status = await client.GetStatusAsync();
+
+        Assert.Equal(VaultSessionState.Locked, status.State);
+        Assert.Null(status.SessionId);
+        Assert.Equal("startup", status.LockReason);
+        Assert.True(status.RecoveryVerified);
+
+        await client.DisposeAsync();
+        var session = await acceptTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.NotNull(session);
+        Assert.Equal(
+            AdminSessionState.Revoked,
+            Assert.Single(server.Sessions.List()).State);
+    }
+
     [Fact]
     public async Task AdminPipeHandshakeReturnsStatusAndRevokesOnDisconnect()
     {
