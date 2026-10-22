@@ -153,7 +153,19 @@ public sealed class AdminPipeHostedServiceTests
             "S-1-5-21-1",
             fixture.InstallRoot);
         Assert.Equal(VerifiedProcessKind.AuthBroker, broker.ExpectedKind);
+        Assert.Equal("S-1-5-21-1", broker.ExpectedUserSid);
+        Assert.Null(broker.ExpectedSessionId);
+        Assert.True(broker.RequireSignature);
         Assert.Single(broker.AllowedImages);
+        var bridge = AdminPipeHostedService.CreateBridgePolicy(
+            configuration,
+            "S-1-5-21-1",
+            fixture.InstallRoot);
+        Assert.Equal(VerifiedProcessKind.McpBridge, bridge.ExpectedKind);
+        Assert.Equal("S-1-5-21-1", bridge.ExpectedUserSid);
+        Assert.Null(bridge.ExpectedSessionId);
+        Assert.True(bridge.RequireSignature);
+        Assert.Single(bridge.AllowedImages);
     }
 
     [Fact]
@@ -226,6 +238,7 @@ public sealed class AdminPipeHostedServiceTests
             UiPath = CreateImage("CipherVault.Ui.Wpf.exe");
             CliPath = CreateImage("CipherVault.Cli.exe");
             BrokerPath = CreateImage("CipherVault.Auth.Broker.exe");
+            McpPath = CreateImage("CipherVault.Mcp.exe");
         }
 
         public string Root { get; }
@@ -238,6 +251,7 @@ public sealed class AdminPipeHostedServiceTests
 
         public string CliPath { get; }
         public string BrokerPath { get; }
+        public string McpPath { get; }
 
         public CipherVaultServiceConfigFile CreateConfiguration(
             bool includeUi = true,
@@ -246,7 +260,8 @@ public sealed class AdminPipeHostedServiceTests
             var images = new List<CipherVaultImagePolicyFile>
             {
                 Image("HostService", HostPath),
-                Image("AuthBroker", BrokerPath)
+                Image("AuthBroker", BrokerPath),
+                Image("McpBridge", McpPath)
             };
             if (includeUi)
             {

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Security.Principal;
 using System.Text.Json;
@@ -418,6 +419,56 @@ public sealed class StrictAdminVaultRpcProviderTests
     }
 
     [Fact]
+    public async Task ImportPreviewRejectsJunctionInStaging()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var sessions = fixture.App.Services.GetRequiredService<
+            HostSessionCoordinator>();
+        await sessions.UnlockAsync(HostCredentialPreference.Password);
+        var approvals = new ApprovalStore();
+        var paths = CipherVaultServicePaths.Create(
+            Path.Combine(fixture.Root, "ProgramFiles"),
+            Path.Combine(fixture.Root, "ProgramData"),
+            Path.Combine(fixture.Root, "LocalAppData"));
+        using var transfers = new TransferCoordinator(paths);
+        var source = Path.Combine(fixture.Root, "import-source");
+        Directory.CreateDirectory(source);
+        File.WriteAllText(
+            Path.Combine(source, "imported.md"),
+            "# Imported\n\nJunction staging.");
+        var outside = Path.Combine(fixture.Root, "outside");
+        Directory.CreateDirectory(outside);
+        var sentinel = Path.Combine(outside, "sentinel.txt");
+        File.WriteAllText(sentinel, "must survive");
+        var transferPrompt = new TestTransferPrompt
+        {
+            AfterImportDirectoryCopy = stagingPath => CreateJunction(
+                Path.Combine(stagingPath, "escape"),
+                outside)
+        };
+        using var provider = new StrictAdminVaultRpcProvider(
+            fixture.App.Services.GetRequiredService<HostVaultGateway>(),
+            sessions,
+            approvals,
+            new TestApprovalPrompt(approvals),
+            transfers,
+            transferPrompt);
+        var session = CreateAdminSession();
+
+        var exception = await Assert.ThrowsAsync<AdminPipeRpcException>(() =>
+            provider.HandleAsync(
+                session,
+                "admin.maintenance.import_preview",
+                JsonSerializer.SerializeToElement(
+                    new HostImportPreviewRequest(source),
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                CancellationToken.None));
+
+        Assert.Equal("transfer_invalid", exception.Code);
+        Assert.True(File.Exists(sentinel));
+    }
+
+    [Fact]
     public async Task ImportCommitAfterWorkspaceExpiryReturnsNotFound()
     {
         await using var fixture = await HostTestFixture.CreateAsync();
@@ -789,8 +840,38 @@ public sealed class StrictAdminVaultRpcProviderTests
             RevocationReason: null);
     }
 
+    private static void CreateJunction(string linkPath, string targetPath)
+    {
+        var startInfo = new ProcessStartInfo("cmd.exe")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        startInfo.ArgumentList.Add("/d");
+        startInfo.ArgumentList.Add("/c");
+        startInfo.ArgumentList.Add("mklink");
+        startInfo.ArgumentList.Add("/J");
+        startInfo.ArgumentList.Add(linkPath);
+        startInfo.ArgumentList.Add(targetPath);
+
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("cmd.exe could not be started.");
+        var standardOutput = process.StandardOutput.ReadToEnd();
+        var standardError = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"Junction creation failed: {standardOutput}{standardError}");
+        }
+    }
+
     private sealed class TestTransferPrompt : ITransferPrompt
     {
+        public Action<string>? AfterImportDirectoryCopy { get; init; }
+
         public Task<HostTransferResult> TransferAsync(
             HostTransferRequest request,
             CancellationToken cancellationToken = default)
@@ -799,6 +880,7 @@ public sealed class StrictAdminVaultRpcProviderTests
                 request.PayloadKind == HostTransferPayloadKind.Directory)
             {
                 CopyDirectory(request.SuggestedPath, request.StagingPath);
+                AfterImportDirectoryCopy?.Invoke(request.StagingPath);
                 return Task.FromResult(new HostTransferResult(
                     request.TransferId,
                     true,

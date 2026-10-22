@@ -51,6 +51,35 @@ public sealed class StrictBridgePipeTests
     }
 
     [Fact]
+    public async Task BridgeServerRejectsClientWhenOwnerSidDiffers()
+    {
+        var handler = new RecordingBridgeHandler();
+        var pipeName = "CipherVault.Bridge.Test." + Guid.NewGuid().ToString("N");
+        var baseOptions = CreateBridgeOptions(pipeName, handler);
+        var options = baseOptions with
+        {
+            OwnerSid = "S-1-5-21-9999999999-9999999999-9999999999-9999"
+        };
+        await using var server = new BridgePipeServer(options);
+        var acceptTask = server.AcceptOnceAsync();
+        var connectTask = BridgePipeClientConnection.ConnectAsync(
+            new BridgePipeClientOptions(
+                pipeName,
+                options.ClientId,
+                options.AccessMode,
+                new HashSet<string>(StringComparer.Ordinal) { "read" },
+                options.AllowedClientPolicy,
+                CurrentProcessServicePolicy(
+                    WindowsIdentity.GetCurrent().User!.Value)));
+
+        var rejected = await Assert.ThrowsAsync<ProcessIdentityRejectedException>(
+            () => acceptTask.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal("bridge_owner_mismatch", rejected.ReasonCode);
+        await Assert.ThrowsAnyAsync<Exception>(
+            () => connectTask.WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
     public async Task ActiveGrantIsRevokedWhenBridgeDisconnects()
     {
         using var grants = new AccessGrantService();

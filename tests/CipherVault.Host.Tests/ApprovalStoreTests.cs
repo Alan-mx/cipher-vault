@@ -69,6 +69,50 @@ public sealed class ApprovalStoreTests
     }
 
     [Fact]
+    public void ApprovalRejectsDifferentProcessAndVaultSessions()
+    {
+        var time = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var store = new ApprovalStore(time);
+        using var parameters = JsonDocument.Parse("""{"documentId":"abc"}""");
+        var processSessionId = Guid.NewGuid();
+        var vaultSessionId = Guid.NewGuid();
+        var operation = store.Prepare(
+            ApprovalOperationKind.PurgeNote,
+            processSessionId,
+            vaultSessionId,
+            parameters.RootElement);
+        var request = store.CreateRequest(operation, "永久删除", "删除 abc");
+        store.Decide(
+            request,
+            approved: true,
+            brokerProcessSessionId: Guid.NewGuid());
+
+        var wrongProcess = store.Consume(
+            operation.OperationId,
+            ApprovalOperationKind.PurgeNote,
+            Guid.NewGuid(),
+            vaultSessionId,
+            operation.ParametersHash);
+        Assert.Equal(ApprovalConsumeStatus.IdentityMismatch, wrongProcess.Status);
+
+        var wrongVault = store.Consume(
+            operation.OperationId,
+            ApprovalOperationKind.PurgeNote,
+            processSessionId,
+            Guid.NewGuid(),
+            operation.ParametersHash);
+        Assert.Equal(ApprovalConsumeStatus.IdentityMismatch, wrongVault.Status);
+
+        var consumed = store.Consume(
+            operation.OperationId,
+            ApprovalOperationKind.PurgeNote,
+            processSessionId,
+            vaultSessionId,
+            operation.ParametersHash);
+        Assert.Equal(ApprovalConsumeStatus.Consumed, consumed.Status);
+    }
+
+    [Fact]
     public void ExpiredApprovalCannotBeConsumed()
     {
         var time = new ManualTimeProvider(DateTimeOffset.UtcNow);

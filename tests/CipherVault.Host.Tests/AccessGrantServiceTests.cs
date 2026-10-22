@@ -485,6 +485,40 @@ public sealed class AccessGrantServiceTests
     }
 
     [Fact]
+    public async Task UseBridgeGrantRejectsDifferentInstanceAndVaultSession()
+    {
+        var now = DateTimeOffset.Parse("2026-10-21T10:00:00Z");
+        var service = new AccessGrantService(
+            timeProvider: new MutableTimeProvider(now));
+        var generation = Generation(now, TimeSpan.FromHours(1));
+        var issued = await ApproveBridgeAsync(
+            service,
+            now,
+            AccessGrantScope.Read,
+            generation,
+            Guid.NewGuid());
+        var context = Context(issued.Record);
+
+        var wrongInstance = service.UseBridgeGrant(context with
+        {
+            ClientInstanceId = Guid.NewGuid()
+        });
+        Assert.Equal(AccessGrantValidationStatus.Revoked, wrongInstance.Status);
+        Assert.Equal("access_grant_revoked", wrongInstance.ReasonCode);
+        Assert.Equal(
+            AccessGrantValidationStatus.Valid,
+            service.UseBridgeGrant(context).Status);
+
+        var wrongVault = service.UseBridgeGrant(context with
+        {
+            VaultSessionId = Guid.NewGuid()
+        });
+        Assert.Equal(AccessGrantValidationStatus.Revoked, wrongVault.Status);
+        Assert.Equal("access_grant_revoked", wrongVault.ReasonCode);
+        Assert.Empty(service.List());
+    }
+
+    [Fact]
     public async Task PeekBridgeGrantDoesNotRefreshIdleExpiry()
     {
         var now = DateTimeOffset.Parse("2026-10-21T10:00:00Z");
