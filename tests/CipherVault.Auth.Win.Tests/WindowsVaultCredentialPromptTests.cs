@@ -1,3 +1,4 @@
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using CipherVault.Auth.Win;
@@ -39,6 +40,60 @@ public sealed class WindowsVaultCredentialPromptTests
         Assert.True(CryptographicOperations.FixedTimeEquals(rawKey, parsed));
     }
 
+    [Fact]
+    public async Task FileTransferPromptClosesWhenRequestExpires()
+    {
+        if (!ShouldRunInteractiveUiTests())
+        {
+            return;
+        }
+
+        using var uiLock = UiAutomationLock.Acquire();
+        const string title = "保存 CipherVault 备份";
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-transfer-prompt-{Guid.NewGuid():N}");
+        var request = new FileTransferPromptRequest(
+            Guid.NewGuid(),
+            "export",
+            "file",
+            Path.Combine(root, "staging.cvbackup"),
+            Path.Combine(root, "backup.cvbackup"),
+            DateTimeOffset.UtcNow.AddSeconds(2));
+        var prompt = WindowsFileTransferPrompt.RequestAsync(request);
+        _ = await WaitForWindowAsync(title);
+
+        var result = await prompt.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.False(result.Completed);
+        Assert.Equal("transfer_expired", result.ErrorCode);
+        await WaitForWindowToCloseAsync(title);
+    }
+
+    [Fact]
+    public async Task OperationApprovalPromptClosesWhenCancelled()
+    {
+        if (!ShouldRunInteractiveUiTests())
+        {
+            return;
+        }
+
+        using var uiLock = UiAutomationLock.Acquire();
+        var title = $"CipherVault Approval Timeout Test {Guid.NewGuid():N}";
+        using var cancellation = new CancellationTokenSource(
+            TimeSpan.FromSeconds(1));
+        var prompt = WindowsOperationApprovalPrompt.RequestAsync(
+            title,
+            "This prompt should close when its request expires.",
+            cancellation.Token);
+        _ = await WaitForWindowAsync(title);
+
+        var result = await prompt.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.False(result.Approved);
+        await WaitForWindowToCloseAsync(title);
+    }
+
     private static bool ShouldRunInteractiveUiTests()
     {
         if (!OperatingSystem.IsWindows() || !Environment.UserInteractive)
@@ -75,6 +130,20 @@ public sealed class WindowsVaultCredentialPromptTests
             await Task.Delay(25);
         }
         throw new TimeoutException($"Window '{title}' did not appear.");
+    }
+
+    private static async Task WaitForWindowToCloseAsync(string title)
+    {
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (NativeMethods.FindWindow(null, title) == IntPtr.Zero)
+            {
+                return;
+            }
+            await Task.Delay(25);
+        }
+        throw new TimeoutException($"Window '{title}' did not close.");
     }
 
     private static void FocusWindow(IntPtr window)

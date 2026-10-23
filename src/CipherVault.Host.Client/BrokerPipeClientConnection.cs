@@ -258,13 +258,25 @@ public sealed class BrokerPipeClientConnection : IAsyncDisposable
                     {
                         var promptRequest = PipeRpcCodec
                             .ReadPayload<BrokerCredentialPromptRequest>(request);
+                        using var promptCancellation =
+                            CreateRequestCancellation(
+                                promptRequest.ExpiresAt,
+                                cancellationToken);
                         var promptResult = await credentialPrompt(
                                 promptRequest,
-                                cancellationToken)
+                                promptCancellation.Token)
                             .ConfigureAwait(false);
                         response = PipeRpcCodec.Success(
                             request.RequestId,
                             promptResult);
+                    }
+                    catch (OperationCanceledException) when (
+                        !cancellationToken.IsCancellationRequested)
+                    {
+                        response = PipeRpcCodec.Failure(
+                            request.RequestId,
+                            "credential_prompt_expired",
+                            "Credential prompt expired.");
                     }
                     catch (OperationCanceledException)
                     {
@@ -296,13 +308,25 @@ public sealed class BrokerPipeClientConnection : IAsyncDisposable
                         {
                             var transferRequest = PipeRpcCodec
                                 .ReadPayload<BrokerTransferRequest>(request);
+                            using var promptCancellation =
+                                CreateRequestCancellation(
+                                    transferRequest.ExpiresAt,
+                                    cancellationToken);
                             var transferResult = await transferPrompt(
                                     transferRequest,
-                                    cancellationToken)
+                                    promptCancellation.Token)
                                 .ConfigureAwait(false);
                             response = PipeRpcCodec.Success(
                                 request.RequestId,
                                 transferResult);
+                        }
+                        catch (OperationCanceledException) when (
+                            !cancellationToken.IsCancellationRequested)
+                        {
+                            response = PipeRpcCodec.Failure(
+                                request.RequestId,
+                                "transfer_prompt_expired",
+                                "File transfer prompt expired.");
                         }
                         catch (OperationCanceledException)
                         {
@@ -335,13 +359,25 @@ public sealed class BrokerPipeClientConnection : IAsyncDisposable
                         {
                             var approvalRequest = PipeRpcCodec
                                 .ReadPayload<BrokerApprovalRequest>(request);
+                            using var promptCancellation =
+                                CreateRequestCancellation(
+                                    approvalRequest.ExpiresAt,
+                                    cancellationToken);
                             var approvalDecision = await approvalPrompt(
                                     approvalRequest,
-                                    cancellationToken)
+                                    promptCancellation.Token)
                                 .ConfigureAwait(false);
                             response = PipeRpcCodec.Success(
                                 request.RequestId,
                                 approvalDecision);
+                        }
+                        catch (OperationCanceledException) when (
+                            !cancellationToken.IsCancellationRequested)
+                        {
+                            response = PipeRpcCodec.Failure(
+                                request.RequestId,
+                                "approval_prompt_expired",
+                                "Operation approval prompt expired.");
                         }
                         catch (OperationCanceledException)
                         {
@@ -391,6 +427,24 @@ public sealed class BrokerPipeClientConnection : IAsyncDisposable
                 ActivityReportInterval,
                 cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private static CancellationTokenSource CreateRequestCancellation(
+        DateTimeOffset expiresAt,
+        CancellationToken cancellationToken)
+    {
+        var result = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken);
+        var remaining = expiresAt - DateTimeOffset.UtcNow;
+        if (remaining <= TimeSpan.Zero)
+        {
+            result.Cancel();
+        }
+        else
+        {
+            result.CancelAfter(remaining);
+        }
+        return result;
     }
 
     private async Task ReportActivityAsync(

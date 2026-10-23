@@ -24,13 +24,13 @@ public static class WindowsFileTransferPrompt
         FileTransferPromptRequest request,
         CancellationToken cancellationToken = default)
     {
+        if (request.ExpiresAt <= DateTimeOffset.UtcNow)
+        {
+            return Task.FromResult(Expired(request));
+        }
         if (cancellationToken.IsCancellationRequested)
         {
-            return Task.FromResult(new FileTransferPromptResult(
-                request.TransferId,
-                false,
-                null,
-                "transfer_cancelled"));
+            return Task.FromResult(Cancelled(request));
         }
         var application = WindowsPromptApplication.Get();
         var completion = new TaskCompletionSource<FileTransferPromptResult>(
@@ -61,29 +61,28 @@ public static class WindowsFileTransferPrompt
     {
         if (request.ExpiresAt <= DateTimeOffset.UtcNow)
         {
-            return new FileTransferPromptResult(
-                request.TransferId,
-                false,
-                null,
-                "transfer_expired");
+            return Expired(request);
         }
         if (cancellationToken.IsCancellationRequested)
         {
             return Cancelled(request);
         }
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken);
+        deadline.CancelAfter(request.ExpiresAt - DateTimeOffset.UtcNow);
         var direction = request.Direction.ToLowerInvariant();
         var payloadKind = request.PayloadKind.ToLowerInvariant();
         if (direction == "export")
         {
             return payloadKind == "file"
-                ? ExportFile(request, cancellationToken)
-                : ExportDirectory(request, cancellationToken);
+                ? ExportFile(request, deadline.Token)
+                : ExportDirectory(request, deadline.Token);
         }
         if (direction == "import")
         {
             return payloadKind == "file"
-                ? ImportFile(request, cancellationToken)
-                : ImportDirectory(request, cancellationToken);
+                ? ImportFile(request, deadline.Token)
+                : ImportDirectory(request, deadline.Token);
         }
         return new FileTransferPromptResult(
             request.TransferId,
@@ -103,6 +102,9 @@ public static class WindowsFileTransferPrompt
             InitialDirectory = Path.GetDirectoryName(request.SuggestedPath),
             OverwritePrompt = false
         };
+        using var closeScope = new WindowsDialogCloseScope(
+            dialog.Title,
+            cancellationToken);
         if (dialog.ShowDialog() != true ||
             cancellationToken.IsCancellationRequested)
         {
@@ -125,6 +127,9 @@ public static class WindowsFileTransferPrompt
             Title = "选择 CipherVault 导出位置",
             InitialDirectory = Path.GetDirectoryName(request.SuggestedPath)
         };
+        using var closeScope = new WindowsDialogCloseScope(
+            dialog.Title,
+            cancellationToken);
         if (dialog.ShowDialog() != true ||
             cancellationToken.IsCancellationRequested)
         {
@@ -153,6 +158,9 @@ public static class WindowsFileTransferPrompt
                 : Path.GetDirectoryName(request.SuggestedPath),
             CheckFileExists = true
         };
+        using var closeScope = new WindowsDialogCloseScope(
+            dialog.Title,
+            cancellationToken);
         if (dialog.ShowDialog() != true ||
             cancellationToken.IsCancellationRequested)
         {
@@ -177,6 +185,9 @@ public static class WindowsFileTransferPrompt
                 ? request.SuggestedPath
                 : null
         };
+        using var closeScope = new WindowsDialogCloseScope(
+            dialog.Title,
+            cancellationToken);
         if (dialog.ShowDialog() != true ||
             cancellationToken.IsCancellationRequested)
         {
@@ -252,11 +263,25 @@ public static class WindowsFileTransferPrompt
     private static FileTransferPromptResult Cancelled(
         FileTransferPromptRequest request)
     {
+        if (request.ExpiresAt <= DateTimeOffset.UtcNow)
+        {
+            return Expired(request);
+        }
         return new FileTransferPromptResult(
             request.TransferId,
             false,
             null,
             "transfer_cancelled");
+    }
+
+    private static FileTransferPromptResult Expired(
+        FileTransferPromptRequest request)
+    {
+        return new FileTransferPromptResult(
+            request.TransferId,
+            false,
+            null,
+            "transfer_expired");
     }
 
     private static FileTransferPromptResult Completed(
@@ -269,4 +294,5 @@ public static class WindowsFileTransferPrompt
             Path.GetFullPath(path),
             null);
     }
+
 }

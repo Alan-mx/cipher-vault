@@ -33,6 +33,7 @@ public sealed class BrokerPipeConnection : IAsyncDisposable
     private readonly BrokerActivityProvider _activityProvider;
     private readonly ConcurrentDictionary<Guid, TaskCompletionSource<PipeRpcResponse>>
         _pending = new();
+    private int _faulted;
     private bool _disposed;
 
     internal BrokerPipeConnection(
@@ -55,8 +56,13 @@ public sealed class BrokerPipeConnection : IAsyncDisposable
     public BrokerCapabilitiesData Capabilities { get; }
     public Guid ProcessSessionId { get; }
     public DateTimeOffset ExpiresAt { get; }
+    public bool IsUsable =>
+        !_disposed &&
+        Volatile.Read(ref _faulted) == 0 &&
+        ExpiresAt > DateTimeOffset.UtcNow;
     public SystemActivitySnapshot ActivitySnapshot =>
         _activityProvider.GetSnapshot();
+    public event Action<BrokerPipeConnection>? Faulted;
 
     public void ReportActivity(BrokerActivityReport report)
     {
@@ -111,6 +117,15 @@ public sealed class BrokerPipeConnection : IAsyncDisposable
                         System.Text.Json.JsonSerializerDefaults.Web))
                 ?? throw new InvalidDataException(
                     "Broker response data was empty.");
+        }
+        catch (Exception exception) when (
+            exception is TimeoutException or
+            IOException or
+            InvalidDataException or
+            ObjectDisposedException)
+        {
+            await FaultAsync().ConfigureAwait(false);
+            throw;
         }
         finally
         {
@@ -193,6 +208,15 @@ public sealed class BrokerPipeConnection : IAsyncDisposable
                 completion.TrySetException(exception);
             }
         }
+    }
+
+    private async Task FaultAsync()
+    {
+        if (Interlocked.Exchange(ref _faulted, 1) == 0)
+        {
+            Faulted?.Invoke(this);
+        }
+        await DisposeAsync().ConfigureAwait(false);
     }
 
     private void ThrowIfDisposed()
@@ -407,8 +431,7 @@ public sealed class BrokerConnectionRegistry
         {
             lock (_sync)
             {
-                return _current is not null &&
-                    _current.ExpiresAt > DateTimeOffset.UtcNow;
+                return _current?.IsUsable == true;
             }
         }
     }
@@ -418,14 +441,18 @@ public sealed class BrokerConnectionRegistry
         ArgumentNullException.ThrowIfNull(connection);
         lock (_sync)
         {
-            if (_current is not null &&
-                _current.ExpiresAt > DateTimeOffset.UtcNow)
+            if (_current?.IsUsable == true)
             {
                 throw new AdminPipeRpcException(
                     "broker_already_connected",
                     "An Auth Broker is already connected.");
             }
+            if (_current is not null)
+            {
+                _current.Faulted -= Clear;
+            }
             _current = connection;
+            connection.Faulted += Clear;
         }
     }
 
@@ -436,6 +463,7 @@ public sealed class BrokerConnectionRegistry
             if (ReferenceEquals(_current, connection))
             {
                 _current = null;
+                connection.Faulted -= Clear;
             }
         }
     }
@@ -444,8 +472,7 @@ public sealed class BrokerConnectionRegistry
     {
         lock (_sync)
         {
-            if (_current is null ||
-                _current.ExpiresAt <= DateTimeOffset.UtcNow)
+            if (_current?.IsUsable != true)
             {
                 throw new AdminPipeRpcException(
                     "approval_broker_unavailable",
