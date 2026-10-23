@@ -39,6 +39,11 @@ public sealed class VerifiedPipeClientConnection : IAsyncDisposable
                 nameof(serverPolicy));
         }
 
+        if (!string.IsNullOrWhiteSpace(serverPolicy.ExpectedUserSid))
+        {
+            WindowsProcessAccessGrant.GrantVerificationAccessToCurrentProcess(
+                serverPolicy.ExpectedUserSid);
+        }
         var normalizedName = NamedPipeServerFactory.NormalizePipeName(pipeName);
         var stream = new NamedPipeClientStream(
             ".",

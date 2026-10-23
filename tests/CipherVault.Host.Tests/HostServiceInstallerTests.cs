@@ -132,6 +132,124 @@ public sealed class HostServiceInstallerTests
     }
 
     [Fact]
+    public async Task InstallReinstallsValidatedStrictLayoutWithoutTouchingVault()
+    {
+        using var fixture = new InstallFixture();
+        var runner = new ScriptedCommandRunner();
+        var installer = CreateInstaller(fixture.Paths, runner);
+        var options = CreateOptions(fixture.Paths, startService: false);
+        var first = await installer.InstallAsync(options, fixture.Paths);
+        var marker = Path.Combine(fixture.Paths.VaultPath, "vault.db");
+        File.WriteAllText(marker, "keep");
+
+        var second = await installer.InstallAsync(options, fixture.Paths);
+
+        Assert.NotEqual(first.InstallId, second.InstallId);
+        Assert.Equal("keep", File.ReadAllText(marker));
+        Assert.Equal(
+            second.InstallId,
+            CipherVaultServiceConfiguration.LoadInstallManifest(
+                fixture.Paths.PublicManifestPath).InstallId);
+        Assert.Equal(
+            second.InstallId,
+            VaultModeStore.Read(fixture.Paths.ModePath).InstallId);
+        Assert.Equal(
+            2,
+            runner.Commands.Count(command => command.StartsWith(
+                "create CipherVaultHost",
+                StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task FailedReinstallRestoresPreviousInstallState()
+    {
+        using var fixture = new InstallFixture();
+        var runner = new ScriptedCommandRunner();
+        var firstInstaller = CreateInstaller(fixture.Paths, runner);
+        var options = CreateOptions(fixture.Paths, startService: false);
+        _ = await firstInstaller.InstallAsync(options, fixture.Paths);
+        var marker = Path.Combine(fixture.Paths.VaultPath, "vault.db");
+        File.WriteAllText(marker, "keep");
+        var previousConfig = File.ReadAllBytes(fixture.Paths.ServiceConfigPath);
+        var previousManifest = File.ReadAllBytes(
+            fixture.Paths.PublicManifestPath);
+        var previousMode = File.ReadAllBytes(fixture.Paths.ModePath);
+        var failingInstaller = CreateInstaller(
+            fixture.Paths,
+            new ScriptedCommandRunner(
+                ("start", new WindowsServiceCommandResult(5, "", "denied"))),
+            new SequenceServiceQuery(
+                new WindowsServiceSnapshot(false, "notInstalled", null),
+                new WindowsServiceSnapshot(true, "stopped", "Automatic")));
+
+        var exception = await Assert.ThrowsAsync<VaultException>(
+            () => failingInstaller.InstallAsync(
+                options with
+                {
+                    StartService = true
+                },
+                fixture.Paths));
+
+        Assert.Equal(VaultErrorCode.StorageError, exception.Code);
+        Assert.Equal(
+            previousConfig,
+            File.ReadAllBytes(fixture.Paths.ServiceConfigPath));
+        Assert.Equal(
+            previousManifest,
+            File.ReadAllBytes(fixture.Paths.PublicManifestPath));
+        Assert.Equal(
+            previousMode,
+            File.ReadAllBytes(fixture.Paths.ModePath));
+        Assert.Equal("keep", File.ReadAllText(marker));
+    }
+
+    [Fact]
+    public async Task InstallRejectsReusingLayoutOwnedByAnotherUser()
+    {
+        using var fixture = new InstallFixture();
+        var runner = new ScriptedCommandRunner();
+        var installer = CreateInstaller(fixture.Paths, runner);
+        var options = CreateOptions(fixture.Paths, startService: false);
+        _ = await installer.InstallAsync(options, fixture.Paths);
+
+        var exception = await Assert.ThrowsAsync<VaultException>(
+            () => installer.InstallAsync(
+                options with
+                {
+                    OwnerSid = "S-1-5-21-2"
+                },
+                fixture.Paths));
+
+        Assert.Equal(VaultErrorCode.AlreadyExists, exception.Code);
+        Assert.Single(
+            runner.Commands,
+            command => command.StartsWith(
+                "create CipherVaultHost",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task InstallRejectsIncompleteExistingStrictLayout()
+    {
+        using var fixture = new InstallFixture();
+        var runner = new ScriptedCommandRunner();
+        var installer = CreateInstaller(fixture.Paths, runner);
+        var options = CreateOptions(fixture.Paths, startService: false);
+        _ = await installer.InstallAsync(options, fixture.Paths);
+        File.Delete(fixture.Paths.ModePath);
+
+        var exception = await Assert.ThrowsAsync<VaultException>(
+            () => installer.InstallAsync(options, fixture.Paths));
+
+        Assert.Equal(VaultErrorCode.AlreadyExists, exception.Code);
+        Assert.Single(
+            runner.Commands,
+            command => command.StartsWith(
+                "create CipherVaultHost",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task InstallRejectsImageOutsideInstallRoot()
     {
         using var fixture = new InstallFixture();

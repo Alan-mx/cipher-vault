@@ -2,7 +2,7 @@ param(
     [string]$StagePath = "$PSScriptRoot\..\artifacts\publish\CipherVault-win-x64",
     [string]$ArchivePath = "$PSScriptRoot\..\artifacts\publish\CipherVault-win-x64.zip",
     [Parameter(Mandatory = $true)]
-    [ValidatePattern("^[0-9A-Fa-f]{64}$")]
+    [ValidatePattern("^[0-9A-Fa-f]{40}$")]
     [string]$SignerThumbprint,
     [string]$TimestampUrl = "http://timestamp.digicert.com",
     [string]$SigntoolPath
@@ -20,19 +20,34 @@ if (-not (Test-Path -LiteralPath $stage)) {
     throw "Publish stage was not found: $stage"
 }
 
+$certificate = Get-ChildItem Cert:\CurrentUser\My |
+    Where-Object {
+        [string]::Equals(
+            $_.Thumbprint,
+            $SignerThumbprint,
+            [StringComparison]::OrdinalIgnoreCase)
+    } |
+    Select-Object -First 1
+if ($null -eq $certificate) {
+    throw "Code signing certificate was not found in CurrentUser\My: $SignerThumbprint"
+}
+if (-not $certificate.HasPrivateKey) {
+    throw "Code signing certificate does not have a private key: $SignerThumbprint"
+}
+
 if ([string]::IsNullOrWhiteSpace($SigntoolPath)) {
     $kitRoot = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
     $kit = Get-ChildItem -LiteralPath $kitRoot -Directory -ErrorAction SilentlyContinue |
         Sort-Object Name -Descending |
         Where-Object { Test-Path (Join-Path $_.FullName "x64\signtool.exe") } |
         Select-Object -First 1
-    if ($null -eq $kit) {
-        throw "signtool.exe was not found. Install the Windows SDK or set SigntoolPath."
+    if ($null -ne $kit) {
+        $SigntoolPath = Join-Path $kit.FullName "x64\signtool.exe"
     }
-    $SigntoolPath = Join-Path $kit.FullName "x64\signtool.exe"
 }
 
-if (-not (Test-Path -LiteralPath $SigntoolPath)) {
+if (-not [string]::IsNullOrWhiteSpace($SigntoolPath) -and
+    -not (Test-Path -LiteralPath $SigntoolPath)) {
     throw "signtool.exe was not found: $SigntoolPath"
 }
 
@@ -42,20 +57,32 @@ if ($executables.Count -eq 0) {
 }
 
 foreach ($executable in $executables) {
-    & $SigntoolPath sign `
-        /sha1 $SignerThumbprint `
-        /fd SHA256 `
-        /tr $TimestampUrl `
-        /td SHA256 `
-        /q `
-        $executable.FullName
-    if ($LASTEXITCODE -ne 0) {
-        throw "Signing failed: $($executable.FullName)"
+    if (-not [string]::IsNullOrWhiteSpace($SigntoolPath)) {
+        & $SigntoolPath sign `
+            /sha1 $SignerThumbprint `
+            /fd SHA256 `
+            /tr $TimestampUrl `
+            /td SHA256 `
+            /q `
+            $executable.FullName
+        if ($LASTEXITCODE -ne 0) {
+            throw "Signing failed: $($executable.FullName)"
+        }
+    }
+    else {
+        $signature = Set-AuthenticodeSignature `
+            -FilePath $executable.FullName `
+            -Certificate $certificate `
+            -HashAlgorithm SHA256 `
+            -TimestampServer $TimestampUrl
+        if ($signature.Status -ne "Valid") {
+            throw "Signing failed: $($executable.FullName): $($signature.StatusMessage)"
+        }
     }
 
-    & $SigntoolPath verify /pa /q $executable.FullName
-    if ($LASTEXITCODE -ne 0) {
-        throw "Signature verification failed: $($executable.FullName)"
+    $verified = Get-AuthenticodeSignature -LiteralPath $executable.FullName
+    if ($verified.Status -ne "Valid") {
+        throw "Signature verification failed: $($executable.FullName): $($verified.StatusMessage)"
     }
 }
 

@@ -317,17 +317,17 @@ public partial class MainWindow : Window
         }
         if (MainTabs.SelectedIndex == 1)
         {
-            await RefreshCatalogAsync();
+            await RunBusyAsync(RefreshCatalogAsync);
         }
         else if (MainTabs.SelectedIndex == 2)
         {
-            await RefreshTrashAsync();
+            await RunBusyAsync(RefreshTrashAsync);
         }
     }
 
     private async void RefreshCatalogButton_Click(object sender, RoutedEventArgs e)
     {
-        await RefreshCatalogAsync();
+        await RunBusyAsync(RefreshCatalogAsync);
     }
 
     private async void SearchButton_Click(object sender, RoutedEventArgs e)
@@ -339,7 +339,7 @@ public partial class MainWindow : Window
         var query = SearchTextBox.Text.Trim();
         if (query.Length == 0)
         {
-            await RefreshCatalogAsync();
+            await RunBusyAsync(RefreshCatalogAsync);
             return;
         }
         await RunBusyAsync(async () =>
@@ -425,7 +425,7 @@ public partial class MainWindow : Window
 
     private async void RefreshTrashButton_Click(object sender, RoutedEventArgs e)
     {
-        await RefreshTrashAsync();
+        await RunBusyAsync(RefreshTrashAsync);
     }
 
     private async void LoadMoreTrashButton_Click(object sender, RoutedEventArgs e)

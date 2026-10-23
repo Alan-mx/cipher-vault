@@ -2,6 +2,7 @@ using CipherVault.Core.Configuration;
 using CipherVault.Core.Errors;
 using CipherVault.Host.Security;
 using CipherVault.Host.Service;
+using CipherVault.Security.Win;
 using Microsoft.Extensions.Hosting.WindowsServices;
 
 try
@@ -41,6 +42,11 @@ static async Task RunAsServiceAsync(string[] arguments)
     var paths = CipherVaultServicePaths.Default;
     var configPath = GetOption(arguments, "--config") ?? paths.ServiceConfigPath;
     var configuration = CipherVaultServiceConfiguration.Load(configPath);
+    var ownerSid = configuration.OwnerSid
+        ?? throw new VaultException(
+            VaultErrorCode.InvalidInput,
+            "Service owner SID is required.");
+    WindowsProcessAccessGrant.GrantVerificationAccessToCurrentProcess(ownerSid);
     await using var service = StrictServiceHost.Create(configuration, paths);
     await service.RunAsync();
 }

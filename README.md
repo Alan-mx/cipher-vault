@@ -58,11 +58,13 @@ dotnet test .\CipherVault.sln -c Release --no-build --nologo
 
 ```powershell
 .\scripts\publish.ps1
-.\scripts\sign-publish.ps1 -SignerThumbprint 0123456789ABCDEF...
+.\scripts\sign-publish.ps1 -SignerThumbprint 0123456789ABCDEF0123456789ABCDEF01234567
 ```
 
 `sign-publish.ps1` 会签名发布目录中的五个 EXE，验证 Authenticode 签名，然后重新
-创建最终 ZIP。所有客户端和 Host 必须由同一个代码签名证书签名。
+创建最终 ZIP。参数是证书在 `CurrentUser\My` 中的 40 位 SHA-1 thumbprint；脚本优先
+使用 `signtool.exe`，未安装 Windows SDK 时回退到 PowerShell Authenticode 签名。
+所有客户端和 Host 必须由同一个代码签名证书签名。
 
 ## Service install
 
@@ -70,12 +72,12 @@ dotnet test .\CipherVault.sln -c Release --no-build --nologo
 
 ```powershell
 cd "$env:ProgramFiles\CipherVault"
-.\CipherVault.Cli.exe service install --signer-thumbprint 0123456789ABCDEF...
+.\CipherVault.Cli.exe service install --signer-thumbprint <64位SHA-256签名者指纹>
 ```
 
 安装要求：
 
-- `%ProgramData%\CipherVault` 不存在或为空。
+- `%ProgramData%\CipherVault` 不存在、为空，或是 Owner/布局一致的完整 strict 安装。
 - 五个 EXE 已签名且位于 `%ProgramFiles%\CipherVault`。
 - 签名者 thumbprint 与安装参数一致。
 
@@ -91,8 +93,20 @@ ProgramData ACL，并生成只读的 `install-public.json`。
 .\CipherVault.Cli.exe service uninstall
 ```
 
-`service uninstall` 只移除服务注册和签名安装清单，不删除 Vault 数据。再次执行
-严格安装前必须显式确认并清理或备份旧安装数据；当前版本没有自动升级迁移。
+`service uninstall` 只移除服务注册，不删除 `%ProgramData%\CipherVault` 或安装根。
+在 Owner、服务账户和固定目录布局一致的完整 strict 安装上，可以直接重新安装；
+安装器会生成新的 install ID 和安装清单并保留 Vault 数据。不完整、被篡改或包含
+reparse point 的 ProgramData 布局会被拒绝，不会被当作旧数据自动迁移。
+
+管理员端到端冒烟：
+
+```powershell
+.\scripts\strict-service-smoke.ps1 -SignerThumbprint <64位SHA-256签名者指纹>
+```
+
+脚本验证签名、SCM 启停、ProgramData Owner/ACL、Host/CLI/Broker/UI/MCP 进程身份，
+并执行卸载后重装。默认保留数据；只有显式传入 `-RemoveData` 才删除
+`%ProgramData%\CipherVault`。
 
 ## First use
 

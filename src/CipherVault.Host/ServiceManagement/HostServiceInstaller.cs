@@ -211,13 +211,20 @@ public sealed class HostServiceInstaller(
         var signerThumbprint = ResolveSignerThumbprint(
             options.SignerThumbprint,
             images);
-        EnsureFreshInstall(paths);
         var current = serviceQuery.GetStatus(StrictServiceHost.ServiceName);
         if (current.Installed)
         {
             throw new VaultException(
                 VaultErrorCode.AlreadyExists,
                 $"Windows service is already installed: {StrictServiceHost.ServiceName}");
+        }
+
+        var existingInstall = TryLoadExistingInstall(
+            paths,
+            options.OwnerSid);
+        if (existingInstall is null)
+        {
+            EnsureFreshInstall(paths);
         }
 
         var installId = Guid.NewGuid();
@@ -228,6 +235,9 @@ public sealed class HostServiceInstaller(
             signerThumbprint,
             images);
         CipherVaultServiceConfiguration.Validate(serviceConfiguration);
+        var previousInstallFiles = existingInstall is null
+            ? new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase)
+            : CaptureInstallFiles(paths);
         var serviceCreated = false;
         var writtenFiles = new List<string>();
         try
@@ -270,6 +280,17 @@ public sealed class HostServiceInstaller(
             EnsureCommandSucceeded(description, "configure the service description");
             var serviceSid = serviceSidResolver.Resolve(
                 StrictServiceHost.ServiceName);
+            if (existingInstall is not null &&
+                !string.Equals(
+                    serviceSid.Value,
+                    existingInstall.Manifest.ServiceSid,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new VaultException(
+                    VaultErrorCode.AlreadyExists,
+                    "Existing strict installation service SID does not match the reinstalled service.");
+            }
+
             var installManifest = CreateInstallManifest(
                 serviceConfiguration,
                 serviceSid,
@@ -289,9 +310,20 @@ public sealed class HostServiceInstaller(
             CipherVaultServiceConfiguration.Validate(modeManifest);
 
             Directory.CreateDirectory(paths.DataRoot);
-            WriteJson(serviceConfigPath, serviceConfiguration, writtenFiles);
-            WriteJson(paths.PublicManifestPath, installManifest, writtenFiles);
-            VaultModeStore.Write(paths.ModePath, modeManifest, cancellationToken);
+            WriteJson(
+                serviceConfigPath,
+                serviceConfiguration,
+                writtenFiles,
+                overwrite: existingInstall is not null);
+            WriteJson(
+                paths.PublicManifestPath,
+                installManifest,
+                writtenFiles,
+                overwrite: existingInstall is not null);
+            VaultModeStore.Write(
+                paths.ModePath,
+                modeManifest,
+                cancellationToken);
             writtenFiles.Add(paths.ModePath);
             acl.Apply(paths, serviceSid, ownerSid);
 
@@ -337,7 +369,14 @@ public sealed class HostServiceInstaller(
             {
                 TryDeleteFile(file);
             }
-            RemoveEmptyInstallDirectories(paths);
+            if (existingInstall is not null)
+            {
+                RestoreInstallFiles(previousInstallFiles);
+            }
+            else
+            {
+                RemoveEmptyInstallDirectories(paths);
+            }
             throw;
         }
     }
@@ -809,6 +848,163 @@ public sealed class HostServiceInstaller(
         };
     }
 
+    private sealed record ExistingStrictInstall(
+        CipherVaultServiceConfigFile Configuration,
+        CipherVaultInstallPublicManifest Manifest,
+        CipherVaultVaultModeManifest Mode);
+
+    private static ExistingStrictInstall? TryLoadExistingInstall(
+        CipherVaultServicePaths paths,
+        string requestedOwnerSid)
+    {
+        var hasExistingState =
+            File.Exists(paths.ServiceConfigPath) ||
+            File.Exists(paths.PublicManifestPath) ||
+            File.Exists(paths.ModePath) ||
+            (Directory.Exists(paths.DataRoot) &&
+             Directory.EnumerateFileSystemEntries(paths.DataRoot).Any());
+        if (!hasExistingState)
+        {
+            return null;
+        }
+
+        EnsureExistingLayoutIsSafe(paths);
+        try
+        {
+            var configuration = CipherVaultServiceConfiguration.Load(
+                paths.ServiceConfigPath);
+            var manifest = CipherVaultServiceConfiguration.LoadInstallManifest(
+                paths.PublicManifestPath);
+            var mode = VaultModeStore.Read(paths.ModePath);
+
+            if (!PathsEqual(
+                    configuration.DataRoot ?? string.Empty,
+                    paths.DataRoot) ||
+                !PathsEqual(
+                    configuration.VaultPath ?? string.Empty,
+                    paths.VaultPath))
+            {
+                throw new VaultException(
+                    VaultErrorCode.AlreadyExists,
+                    "Existing strict installation paths do not match ProgramData.");
+            }
+            if (!string.Equals(
+                    configuration.ServiceAccount,
+                    ServiceAccount,
+                    StringComparison.Ordinal) ||
+                !string.Equals(
+                    manifest.ServiceAccount,
+                    ServiceAccount,
+                    StringComparison.Ordinal) ||
+                !string.Equals(
+                    manifest.ServiceName,
+                    StrictServiceHost.ServiceName,
+                    StringComparison.Ordinal))
+            {
+                throw new VaultException(
+                    VaultErrorCode.AlreadyExists,
+                    "Existing strict installation service identity is invalid.");
+            }
+            if (!string.Equals(
+                    configuration.OwnerSid,
+                    requestedOwnerSid,
+                    StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(
+                    manifest.OwnerSid,
+                    requestedOwnerSid,
+                    StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(
+                    mode.OwnerSid,
+                    requestedOwnerSid,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new VaultException(
+                    VaultErrorCode.AlreadyExists,
+                    "Existing strict installation owner does not match the requested owner.");
+            }
+            if (mode.InstallId != manifest.InstallId ||
+                mode.InstallId == Guid.Empty)
+            {
+                throw new VaultException(
+                    VaultErrorCode.AlreadyExists,
+                    "Existing strict installation IDs do not match.");
+            }
+
+            return new ExistingStrictInstall(
+                configuration,
+                manifest,
+                mode);
+        }
+        catch (VaultException exception)
+        {
+            throw new VaultException(
+                VaultErrorCode.AlreadyExists,
+                $"Existing strict installation cannot be safely reused: {exception.Message}",
+                exception);
+        }
+        catch (Exception exception) when (
+            exception is IOException or
+            UnauthorizedAccessException or
+            ArgumentException)
+        {
+            throw new VaultException(
+                VaultErrorCode.AlreadyExists,
+                $"Existing strict installation cannot be safely reused: {exception.Message}",
+                exception);
+        }
+    }
+
+    private static void EnsureExistingLayoutIsSafe(
+        CipherVaultServicePaths paths)
+    {
+        foreach (var path in new[]
+                 {
+                     paths.DataRoot,
+                     paths.VaultPath,
+                     paths.LogsPath,
+                     paths.LocksPath,
+                     paths.TransferRoot,
+                     paths.ServiceConfigPath,
+                     paths.PublicManifestPath,
+                     paths.ModePath
+                 })
+        {
+            if ((File.Exists(path) || Directory.Exists(path)) &&
+                (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+            {
+                throw new VaultException(
+                    VaultErrorCode.AlreadyExists,
+                    $"Existing strict installation contains a reparse point: {path}");
+            }
+        }
+    }
+
+    private static Dictionary<string, byte[]> CaptureInstallFiles(
+        CipherVaultServicePaths paths)
+    {
+        var files = new Dictionary<string, byte[]>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var path in new[]
+                 {
+                     paths.ServiceConfigPath,
+                     paths.PublicManifestPath,
+                     paths.ModePath
+                 })
+        {
+            files.Add(Path.GetFullPath(path), File.ReadAllBytes(path));
+        }
+        return files;
+    }
+
+    private static void RestoreInstallFiles(
+        IReadOnlyDictionary<string, byte[]> previousFiles)
+    {
+        foreach (var (path, bytes) in previousFiles)
+        {
+            File.WriteAllBytes(path, bytes);
+        }
+    }
+
     private static void EnsureFreshInstall(CipherVaultServicePaths paths)
     {
         if ((Directory.Exists(paths.DataRoot) &&
@@ -828,7 +1024,8 @@ public sealed class HostServiceInstaller(
     private static void WriteJson<T>(
         string path,
         T value,
-        ICollection<string> writtenFiles)
+        ICollection<string> writtenFiles,
+        bool overwrite = false)
     {
         var fullPath = Path.GetFullPath(path);
         var directory = Path.GetDirectoryName(fullPath)
@@ -852,7 +1049,7 @@ public sealed class HostServiceInstaller(
                 JsonSerializer.Serialize(stream, value, JsonOptions);
                 stream.Flush(flushToDisk: true);
             }
-            File.Move(temporaryPath, fullPath);
+            File.Move(temporaryPath, fullPath, overwrite);
             writtenFiles.Add(fullPath);
         }
         finally
