@@ -73,13 +73,27 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
     public async Task<VaultSessionStatus> GetStatusAsync(
         CancellationToken cancellationToken = default)
     {
-        var data = await CallAsync<AdminPipeStatusData>(
-            "admin.status",
-            new { },
-            cancellationToken).ConfigureAwait(false);
-        return ToSessionStatus(
-            data.Session,
-            data.BrokerAvailable);
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                var data = await CallAsync<AdminPipeStatusData>(
+                    "admin.status",
+                    new { },
+                    cancellationToken).ConfigureAwait(false);
+                return ToSessionStatus(
+                    data.Session,
+                    data.BrokerAvailable);
+            }
+            catch (Exception exception) when (
+                attempt == 0 &&
+                AdminPipeClientConnection.IsConnectionLost(exception))
+            {
+                // CallAsync already invalidated the broken connection.
+                // A single reconnect keeps the lock UI refresh idempotent.
+                continue;
+            }
+        }
     }
 
     public Task<VaultCatalogPage> ListCatalogAsync(
@@ -400,27 +414,60 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
         CancellationToken cancellationToken)
     {
         var connection = await GetConnectionAsync(cancellationToken).ConfigureAwait(false);
-        return await connection.CallAsync<object, T>(
-            method,
-            payload,
-            cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await connection.CallAsync<object, T>(
+                method,
+                payload,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (
+            AdminPipeClientConnection.IsConnectionLost(exception))
+        {
+            await InvalidateConnectionAsync(connection).ConfigureAwait(false);
+            throw;
+        }
     }
 
     private async Task<AdminPipeClientConnection> GetConnectionAsync(
         CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
-        if (_connection is not null)
+        if (_connection is { IsUsable: true })
         {
             return _connection;
         }
         await _connectGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (_connection is not null && !_connection.IsUsable)
+            {
+                await _connection.DisposeAsync().ConfigureAwait(false);
+                _connection = null;
+            }
             _connection ??= await AdminPipeClientConnection.ConnectAsync(
                 _options,
                 cancellationToken).ConfigureAwait(false);
             return _connection;
+        }
+        finally
+        {
+            _connectGate.Release();
+        }
+    }
+
+    private async Task InvalidateConnectionAsync(
+        AdminPipeClientConnection connection)
+    {
+        await _connectGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (!ReferenceEquals(_connection, connection))
+            {
+                return;
+            }
+            _connection = null;
+            await connection.DisposeAsync().ConfigureAwait(false);
         }
         finally
         {

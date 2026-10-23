@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using CipherVault.Core.Configuration;
@@ -8,6 +9,7 @@ using CipherVault.Ipc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
 StrictBridgeSettings settings;
@@ -32,13 +34,30 @@ StrictMcpBridgeClient? bridge = null;
 try
 {
     bridge = await StrictMcpBridgeClient.ConnectAsync(settings);
-    var tools = new BridgeVaultTools(bridge, settings.ReadOnly);
+    var tools = new BridgeVaultTools(bridge);
     var builder = Host.CreateApplicationBuilder(Array.Empty<string>());
     builder.Logging.ClearProviders();
-    builder.Services
+    var mcpServer = builder.Services
         .AddMcpServer()
         .WithStdioServerTransport()
         .WithTools<BridgeVaultTools>(tools);
+    mcpServer.WithRequestFilters(filters =>
+    {
+        filters.AddListToolsFilter(next =>
+            async (context, cancellationToken) =>
+            {
+                var result = await next(context, cancellationToken)
+                    .ConfigureAwait(false);
+                var scopes = tools.VisibleScopes;
+                result.Tools = result.Tools
+                    .Where(tool =>
+                        BridgeVaultTools.IsToolAvailable(
+                            tool.Name,
+                            scopes))
+                    .ToList();
+                return result;
+            });
+    });
 
     var server = builder.Build();
     await server.RunAsync();
@@ -84,10 +103,16 @@ static void ReportError(string code, string message)
 
 public interface IMcpBridgeClient
 {
+    IReadOnlySet<string> RequestedScopes { get; }
+
+    IReadOnlySet<string> GrantedScopes { get; }
+
     Task<string> CallToolAsync(
         string name,
         IReadOnlyDictionary<string, object?> arguments,
         CancellationToken cancellationToken);
+
+    Task RequestGrantAsync(CancellationToken cancellationToken = default);
 
     Task RevokeGrantAsync(CancellationToken cancellationToken = default);
 }
@@ -154,16 +179,25 @@ public sealed record StrictBridgeSettings(
 
 public sealed class StrictMcpBridgeClient : IMcpBridgeClient
 {
+    private static Process? _brokerProcess;
+    private static readonly IReadOnlySet<string> NoScopes =
+        new HashSet<string>(StringComparer.Ordinal);
     private readonly BridgePipeClientConnection _connection;
+    private readonly IReadOnlySet<string> _requestedScopes;
+    private IReadOnlySet<string> _grantedScopes = NoScopes;
 
-    private StrictMcpBridgeClient(BridgePipeClientConnection connection)
+    private StrictMcpBridgeClient(
+        BridgePipeClientConnection connection,
+        IReadOnlySet<string> requestedScopes)
     {
         _connection = connection;
+        _requestedScopes = requestedScopes;
     }
 
     public static async Task<StrictMcpBridgeClient> ConnectAsync(
         StrictBridgeSettings settings)
     {
+        EnsureBrokerStarted(settings);
         var user = System.Security.Principal.WindowsIdentity.GetCurrent().User
             ?? throw new VaultException(
                 VaultErrorCode.StorageError,
@@ -177,9 +211,40 @@ public sealed class StrictMcpBridgeClient : IMcpBridgeClient
             user.Value,
             (uint)System.Diagnostics.Process.GetCurrentProcess().SessionId);
         var connection = await BridgePipeClientConnection.ConnectAsync(options);
-        _ = await connection.RequestGrantAsync();
-        return new StrictMcpBridgeClient(connection);
+        return new StrictMcpBridgeClient(
+            connection,
+            settings.RequestedScopes);
     }
+
+    private static void EnsureBrokerStarted(StrictBridgeSettings settings)
+    {
+        try
+        {
+            // The Broker is a long-lived interactive process, so its handle is
+            // kept for the MCP server lifetime instead of being disposed.
+            _brokerProcess = StrictServiceBrokerLauncher.EnsureStarted(
+                settings.Manifest,
+                settings.ManifestPath);
+        }
+        catch (Exception exception) when (
+            exception is VaultException or
+            Win32Exception or
+            IOException or
+            UnauthorizedAccessException or
+            InvalidOperationException or
+            NotSupportedException)
+        {
+            // Starting the Broker is best effort: a missing or unverifiable
+            // Broker installation must not mask the Bridge error handling.
+            Console.Error.WriteLine(
+                $"broker_launch_failed: {exception.Message}");
+        }
+    }
+
+    public IReadOnlySet<string> RequestedScopes => _requestedScopes;
+
+    public IReadOnlySet<string> GrantedScopes =>
+        Volatile.Read(ref _grantedScopes);
 
     public Task<string> CallToolAsync(
         string name,
@@ -189,8 +254,19 @@ public sealed class StrictMcpBridgeClient : IMcpBridgeClient
         return _connection.CallToolAsync(name, arguments, cancellationToken);
     }
 
+    public async Task RequestGrantAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var grant = await _connection.RequestGrantAsync(cancellationToken)
+            .ConfigureAwait(false);
+        Interlocked.Exchange(
+            ref _grantedScopes,
+            grant.Scopes.ToHashSet(StringComparer.Ordinal));
+    }
+
     public async Task RevokeGrantAsync(CancellationToken cancellationToken = default)
     {
+        Interlocked.Exchange(ref _grantedScopes, NoScopes);
         await _connection.DisposeAsync();
     }
 }
@@ -199,13 +275,16 @@ public sealed class StrictMcpBridgeClient : IMcpBridgeClient
 public sealed class BridgeVaultTools
 {
     private readonly IMcpBridgeClient _bridge;
-    private readonly bool _readOnly;
 
-    public BridgeVaultTools(IMcpBridgeClient bridge, bool readOnly)
+    public BridgeVaultTools(IMcpBridgeClient bridge)
     {
         _bridge = bridge;
-        _readOnly = readOnly;
     }
+
+    public IReadOnlySet<string> VisibleScopes =>
+        _bridge.GrantedScopes.Count > 0
+            ? _bridge.GrantedScopes
+            : _bridge.RequestedScopes;
 
     [McpServerTool(Name = "vault_status")]
     [Description("Return the Vault lock state and session deadlines. This tool never returns document content.")]
@@ -290,7 +369,7 @@ public sealed class BridgeVaultTools
         string[]? tags = null,
         CancellationToken cancellationToken = default)
     {
-        return CallWriteAsync(
+        return CallAsync(
             "create_note",
             Arguments(
                 ("title", title),
@@ -309,7 +388,7 @@ public sealed class BridgeVaultTools
         string content,
         CancellationToken cancellationToken = default)
     {
-        return CallWriteAsync(
+        return CallAsync(
             "append_note",
             Arguments(
                 ("documentId", documentId),
@@ -329,7 +408,7 @@ public sealed class BridgeVaultTools
         string[]? tags = null,
         CancellationToken cancellationToken = default)
     {
-        return CallWriteAsync(
+        return CallAsync(
             "update_note",
             Arguments(
                 ("documentId", documentId),
@@ -348,7 +427,7 @@ public sealed class BridgeVaultTools
         int expectedRevision,
         CancellationToken cancellationToken = default)
     {
-        return CallWriteAsync(
+        return CallAsync(
             "delete_note",
             Arguments(
                 ("documentId", documentId),
@@ -356,24 +435,103 @@ public sealed class BridgeVaultTools
             cancellationToken);
     }
 
-    private Task<string> CallWriteAsync(
+    private async Task<string> CallAsync(
         string name,
         IReadOnlyDictionary<string, object?> arguments,
         CancellationToken cancellationToken)
     {
-        return _readOnly
-            ? Task.FromResult(ErrorMessage(
-                "read_only",
-                "This CipherVault MCP bridge is configured for read-only access."))
-            : CallAsync(name, arguments, cancellationToken);
+        if (!CanCall(name))
+        {
+            return AccessDenied(name);
+        }
+        var result = await _bridge
+            .CallToolAsync(name, arguments, cancellationToken)
+            .ConfigureAwait(false);
+        if (!HasLostGrant(result))
+        {
+            return result;
+        }
+        try
+        {
+            await _bridge.RequestGrantAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (
+            cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return result;
+        }
+        if (!CanCall(name))
+        {
+            return AccessDenied(name);
+        }
+        return await _bridge
+            .CallToolAsync(name, arguments, cancellationToken)
+            .ConfigureAwait(false);
     }
 
-    private Task<string> CallAsync(
-        string name,
-        IReadOnlyDictionary<string, object?> arguments,
-        CancellationToken cancellationToken)
+    private bool CanCall(string name)
     {
-        return _bridge.CallToolAsync(name, arguments, cancellationToken);
+        var granted = _bridge.GrantedScopes;
+        return granted.Count == 0 || IsToolAvailable(name, granted);
+    }
+
+    public static bool IsToolAvailable(
+        string name,
+        IReadOnlySet<string> scopes)
+    {
+        var required = name switch
+        {
+            "create_note" or "append_note" or "update_note" => "write",
+            "delete_note" => "delete",
+            _ => "read"
+        };
+        return scopes.Contains(required);
+    }
+
+    private static string AccessDenied(string name)
+    {
+        return ErrorMessage(
+            "access_denied",
+            $"The current Access Grant does not allow {name}.");
+    }
+
+    private static bool HasLostGrant(string result)
+    {
+        if (string.IsNullOrWhiteSpace(result))
+        {
+            return false;
+        }
+        try
+        {
+            using var document = JsonDocument.Parse(result);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object ||
+                !root.TryGetProperty("ok", out var ok) ||
+                ok.ValueKind != JsonValueKind.False ||
+                !root.TryGetProperty("error", out var error) ||
+                error.ValueKind != JsonValueKind.Object ||
+                !error.TryGetProperty("code", out var code) ||
+                code.ValueKind != JsonValueKind.String)
+            {
+                return false;
+            }
+            return code.GetString() switch
+            {
+                "access_grant_required" => true,
+                "access_grant_revoked" => true,
+                "access_grant_expired" => true,
+                _ => false
+            };
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     private static IReadOnlyDictionary<string, object?> Empty()

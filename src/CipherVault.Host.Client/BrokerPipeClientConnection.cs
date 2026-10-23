@@ -205,8 +205,17 @@ public sealed class BrokerPipeClientConnection : IAsyncDisposable
         var connection = _verifiedConnection?.Connection
             ?? throw new ObjectDisposedException(
                 nameof(BrokerPipeClientConnection));
+        using var connectionLifetime =
+            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var remaining = ExpiresAt - DateTimeOffset.UtcNow;
+        if (remaining <= TimeSpan.Zero)
+        {
+            return;
+        }
+        connectionLifetime.CancelAfter(remaining);
+        var connectionToken = connectionLifetime.Token;
         using var activityCancellation = CancellationTokenSource
-            .CreateLinkedTokenSource(cancellationToken);
+            .CreateLinkedTokenSource(connectionToken);
         var activityTask = ReportActivityLoopAsync(
             activityCancellation.Token);
         try
@@ -217,7 +226,7 @@ public sealed class BrokerPipeClientConnection : IAsyncDisposable
                 try
                 {
                     request = await connection.ReadAsync<PipeRpcRequest>(
-                        cancellationToken).ConfigureAwait(false);
+                        connectionToken).ConfigureAwait(false);
                 }
                 catch (EndOfStreamException)
                 {
@@ -229,6 +238,11 @@ public sealed class BrokerPipeClientConnection : IAsyncDisposable
                 }
                 catch (OperationCanceledException) when (
                     cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (OperationCanceledException) when (
+                    connectionLifetime.IsCancellationRequested)
                 {
                     return;
                 }
@@ -261,7 +275,7 @@ public sealed class BrokerPipeClientConnection : IAsyncDisposable
                         using var promptCancellation =
                             CreateRequestCancellation(
                                 promptRequest.ExpiresAt,
-                                cancellationToken);
+                                connectionToken);
                         var promptResult = await credentialPrompt(
                                 promptRequest,
                                 promptCancellation.Token)
@@ -311,7 +325,7 @@ public sealed class BrokerPipeClientConnection : IAsyncDisposable
                             using var promptCancellation =
                                 CreateRequestCancellation(
                                     transferRequest.ExpiresAt,
-                                    cancellationToken);
+                                    connectionToken);
                             var transferResult = await transferPrompt(
                                     transferRequest,
                                     promptCancellation.Token)
@@ -362,7 +376,7 @@ public sealed class BrokerPipeClientConnection : IAsyncDisposable
                             using var promptCancellation =
                                 CreateRequestCancellation(
                                     approvalRequest.ExpiresAt,
-                                    cancellationToken);
+                                    connectionToken);
                             var approvalDecision = await approvalPrompt(
                                     approvalRequest,
                                     promptCancellation.Token)
@@ -399,7 +413,7 @@ public sealed class BrokerPipeClientConnection : IAsyncDisposable
                         "unsupported_method",
                         $"Unsupported Broker method: {request.Method}");
                 }
-                await connection.WriteAsync(response, cancellationToken)
+                await connection.WriteAsync(response, connectionToken)
                     .ConfigureAwait(false);
             }
         }

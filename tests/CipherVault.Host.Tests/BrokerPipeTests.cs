@@ -433,6 +433,129 @@ public sealed class BrokerPipeTests
     }
 
     [Fact]
+    public async Task BrokerConnectionExpiryReleasesRegistration()
+    {
+        var pipeName = "CipherVault.Broker.ExpiryTest." +
+            Guid.NewGuid().ToString("N");
+        var currentUser = WindowsIdentity.GetCurrent().User!;
+        var currentSession = (uint)Process.GetCurrentProcess().SessionId;
+        var imagePath = Environment.ProcessPath!;
+        var imageHash = WindowsProcessIdentityVerifier.ComputeFileSha256(imagePath);
+        var servicePolicy = Policy(
+            VerifiedProcessKind.HostService,
+            currentUser.Value,
+            currentSession,
+            imagePath,
+            imageHash);
+        var brokerPolicy = Policy(
+            VerifiedProcessKind.AuthBroker,
+            currentUser.Value,
+            currentSession,
+            imagePath,
+            imageHash);
+        var serviceIdentity = VerifyIdentity(
+            (uint)Environment.ProcessId,
+            servicePolicy);
+        var options = new BrokerPipeServerOptions(
+            pipeName,
+            PipeSecurityFactory.Create(
+                [currentUser],
+                includeAdministrators: false,
+                includeSystem: false),
+            Guid.NewGuid().ToString("D"),
+            "1.0.0-test",
+            serviceIdentity,
+            [brokerPolicy],
+            currentUser.Value,
+            currentUser.Value,
+            TimeSpan.FromSeconds(2),
+            RequireInteractiveSession: false,
+            ActivityProvider: new BrokerActivityProvider());
+        var registry = new BrokerConnectionRegistry();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
+        await using (var server = new BrokerPipeServer(options))
+        {
+            var connected = new TaskCompletionSource<BrokerPipeConnection>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var acceptTask = server.AcceptOnceAsync(
+                connection =>
+                {
+                    registry.Set(connection);
+                    connected.TrySetResult(connection);
+                },
+                registry.Clear,
+                timeout.Token);
+            await using var client = await BrokerPipeClientConnection.ConnectAsync(
+                new BrokerPipeClientOptions(
+                    pipeName,
+                    brokerPolicy,
+                    servicePolicy));
+            var readTask = client.RunAsync(
+                (request, _) => Task.FromResult(
+                    new BrokerCredentialPromptResult(
+                        request.RequestId,
+                        request.NonceB64Url,
+                        Confirmed: false,
+                        Credential: null,
+                        CredentialType: "password",
+                        DenialReason: "test")),
+                timeout.Token);
+
+            _ = await connected.Task.WaitAsync(timeout.Token);
+            Assert.True(registry.IsAvailable);
+
+            await acceptTask.WaitAsync(TimeSpan.FromSeconds(10));
+            await readTask.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.False(registry.IsAvailable);
+        }
+
+        await using (var replacementServer = new BrokerPipeServer(options))
+        {
+            var replacementConnected =
+                new TaskCompletionSource<BrokerPipeConnection>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+            var replacementAccept = replacementServer.AcceptOnceAsync(
+                connection =>
+                {
+                    registry.Set(connection);
+                    replacementConnected.TrySetResult(connection);
+                },
+                registry.Clear,
+                timeout.Token);
+            await using var replacementClient =
+                await BrokerPipeClientConnection.ConnectAsync(
+                    new BrokerPipeClientOptions(
+                        pipeName,
+                        brokerPolicy,
+                        servicePolicy));
+            var replacementRead = replacementClient.RunAsync(
+                (request, _) => Task.FromResult(
+                    new BrokerCredentialPromptResult(
+                        request.RequestId,
+                        request.NonceB64Url,
+                        Confirmed: false,
+                        Credential: null,
+                        CredentialType: "password",
+                        DenialReason: "test")),
+                timeout.Token);
+
+            _ = await replacementConnected.Task.WaitAsync(timeout.Token);
+            Assert.True(registry.IsAvailable);
+
+            timeout.Cancel();
+            try
+            {
+                await replacementRead;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            await replacementAccept;
+        }
+    }
+
+    [Fact]
     public void ClientPolicyFactoryBuildsBrokerAndHostPolicies()
     {
         const string sha256 =

@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text.Json;
 using System.Threading.Channels;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Security;
@@ -177,6 +178,10 @@ internal sealed class BridgePipeSession : IAsyncDisposable
                 _grant,
                 call,
                 HandlerToken).ConfigureAwait(false);
+            if (HasLostGrant(result))
+            {
+                _grant = null;
+            }
             return PipeRpcCodec.Success(request.RequestId, result);
         }
         catch (OperationCanceledException)
@@ -200,6 +205,40 @@ internal sealed class BridgePipeSession : IAsyncDisposable
                     ? rpcException.Code
                     : "bridge_error",
                 exception.Message);
+        }
+    }
+
+    private static bool HasLostGrant(string result)
+    {
+        if (string.IsNullOrWhiteSpace(result))
+        {
+            return false;
+        }
+        try
+        {
+            using var document = JsonDocument.Parse(result);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object ||
+                !root.TryGetProperty("ok", out var ok) ||
+                ok.ValueKind != JsonValueKind.False ||
+                !root.TryGetProperty("error", out var error) ||
+                error.ValueKind != JsonValueKind.Object ||
+                !error.TryGetProperty("code", out var code) ||
+                code.ValueKind != JsonValueKind.String)
+            {
+                return false;
+            }
+            return code.GetString() switch
+            {
+                "access_grant_required" => true,
+                "access_grant_revoked" => true,
+                "access_grant_expired" => true,
+                _ => false
+            };
+        }
+        catch (JsonException)
+        {
+            return false;
         }
     }
 

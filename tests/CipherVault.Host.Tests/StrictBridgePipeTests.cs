@@ -8,6 +8,7 @@ using CipherVault.Core.Documents;
 using CipherVault.Core.Session;
 using CipherVault.Host.Client;
 using CipherVault.Host.Contracts;
+using CipherVault.Host.Mcp;
 using CipherVault.Host.Security;
 using CipherVault.Host.Service;
 using CipherVault.Host.Session;
@@ -267,6 +268,41 @@ public sealed class StrictBridgePipeTests
         Assert.Null(expired.GrantExpiresAt);
 
         _ = await client.CloseSessionAsync();
+        _ = await acceptTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task FailedToolCallClearsGrantAndAllowsReauthorization()
+    {
+        var handler = new RevokedGrantBridgeHandler();
+        var pipeName = "CipherVault.Bridge.Test." + Guid.NewGuid().ToString("N");
+        var (server, options) = CreateServer(pipeName, handler);
+        await using var serverInstance = server;
+        var acceptTask = server.AcceptOnceAsync();
+        await using var client = await BridgePipeClientConnection.ConnectAsync(
+            new BridgePipeClientOptions(
+                pipeName,
+                options.ClientId,
+                options.AccessMode,
+                new HashSet<string>(StringComparer.Ordinal) { "read" },
+                options.AllowedClientPolicy,
+                CurrentProcessServicePolicy(options.OwnerSid)));
+
+        _ = await client.RequestGrantAsync();
+        using var failed = await CallToolAsync(client, "vault_status", []);
+        Assert.False(failed.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal(
+            "access_grant_revoked",
+            failed.RootElement
+                .GetProperty("error")
+                .GetProperty("code")
+                .GetString());
+
+        var renewed = await client.RequestGrantAsync();
+
+        Assert.Equal("mcp", renewed.ClientId);
+        Assert.Contains("read", renewed.Scopes);
+        await client.DisposeAsync();
         _ = await acceptTask.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
@@ -676,6 +712,60 @@ public sealed class StrictBridgePipeTests
             CancellationToken cancellationToken)
         {
             ClosedReasons.Add(reasonCode);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class RevokedGrantBridgeHandler : IBridgeSessionHandler
+    {
+        public Task<BridgeIssuedGrant> RequestGrantAsync(
+            BridgeProcessSession session,
+            BridgeGrantRequest request,
+            CancellationToken cancellationToken)
+        {
+            var grantId = Guid.NewGuid();
+            return Task.FromResult(new BridgeIssuedGrant(
+                new BridgeGrantData(
+                    grantId,
+                    session.ClientId,
+                    session.AccessMode == McpAccessMode.ReadWrite
+                        ? "readWrite"
+                        : "readOnly",
+                    ["read"],
+                    DateTimeOffset.UtcNow.AddHours(1)),
+                new AccessGrantContext(
+                    grantId,
+                    session.ClientId,
+                    session.BridgeInstanceId,
+                    AccessGrantScope.Read,
+                    Guid.NewGuid(),
+                    session.ProcessSessionId)));
+        }
+
+        public Task<string> CallToolAsync(
+            BridgeProcessSession session,
+            AccessGrantContext? grant,
+            BridgeToolCallRequest request,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(BridgeToolEnvelope.Error(
+                "access_grant_revoked",
+                "The Bridge Access Grant was revoked."));
+        }
+
+        public Task<BridgeStatusData> GetStatusAsync(
+            BridgeProcessSession session,
+            AccessGrantContext? grant,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(CreateStatus(session, grant));
+        }
+
+        public Task CloseSessionAsync(
+            Guid processSessionId,
+            string reasonCode,
+            CancellationToken cancellationToken)
+        {
             return Task.CompletedTask;
         }
     }

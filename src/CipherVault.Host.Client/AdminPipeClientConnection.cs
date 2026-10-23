@@ -12,6 +12,7 @@ public sealed class AdminPipeClientConnection : IAsyncDisposable
     private VerifiedProcessEvidence? _clientEvidence;
     private VerifiedPipeClientConnection? _verifiedConnection;
     private readonly SemaphoreSlim _requestGate = new(1, 1);
+    private int _faulted;
     private bool _disposed;
 
     private AdminPipeClientConnection(
@@ -32,6 +33,9 @@ public sealed class AdminPipeClientConnection : IAsyncDisposable
     public Guid ProcessSessionId { get; }
     public Guid AdminSessionId { get; }
     public DateTimeOffset ExpiresAt { get; }
+    public bool IsUsable =>
+        !_disposed &&
+        Volatile.Read(ref _faulted) == 0;
 
     public static async Task<AdminPipeClientConnection> ConnectAsync(
         AdminPipeClientOptions options,
@@ -160,6 +164,11 @@ public sealed class AdminPipeClientConnection : IAsyncDisposable
             return response.Data.Value.Deserialize<TResponse>(JsonOptions)
                 ?? throw new InvalidDataException("Admin pipe response data was empty.");
         }
+        catch (Exception exception) when (IsConnectionLost(exception))
+        {
+            await FaultAsync().ConfigureAwait(false);
+            throw;
+        }
         finally
         {
             _requestGate.Release();
@@ -209,6 +218,30 @@ public sealed class AdminPipeClientConnection : IAsyncDisposable
         _requestGate.Dispose();
     }
 
+    internal static bool IsConnectionLost(Exception exception)
+    {
+        return exception is IOException or ObjectDisposedException ||
+            exception is PipeRpcException
+            {
+                Code: "admin_session_expired"
+            };
+    }
+
+    private async Task FaultAsync()
+    {
+        if (Interlocked.Exchange(ref _faulted, 1) != 0)
+        {
+            return;
+        }
+        var connection = Interlocked.Exchange(
+            ref _verifiedConnection,
+            null);
+        if (connection is not null)
+        {
+            await connection.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
     private static void ValidateHello(
         PipeHelloResponse hello,
         VerifiedProcessIdentity serverIdentity)
@@ -240,7 +273,9 @@ public sealed class AdminPipeClientConnection : IAsyncDisposable
 
     private void ThrowIfDisposed()
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ObjectDisposedException.ThrowIf(
+            _disposed || Volatile.Read(ref _faulted) != 0,
+            this);
     }
 }
 

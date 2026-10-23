@@ -135,12 +135,22 @@ public sealed class BrokerPipeConnection : IAsyncDisposable
 
     internal async Task RunAsync(CancellationToken cancellationToken)
     {
+        using var connectionLifetime =
+            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var remaining = ExpiresAt - DateTimeOffset.UtcNow;
+        if (remaining <= TimeSpan.Zero)
+        {
+            FailPending(new TimeoutException("Broker connection has expired."));
+            return;
+        }
+        connectionLifetime.CancelAfter(remaining);
+
         try
         {
             while (true)
             {
                 var frame = await _connection.ReadAsync<JsonElement>(
-                    cancellationToken).ConfigureAwait(false);
+                    connectionLifetime.Token).ConfigureAwait(false);
                 if (frame.TryGetProperty("method", out var method))
                 {
                     if (!string.Equals(
@@ -171,6 +181,11 @@ public sealed class BrokerPipeConnection : IAsyncDisposable
             cancellationToken.IsCancellationRequested)
         {
             FailPending(new OperationCanceledException(cancellationToken));
+        }
+        catch (OperationCanceledException) when (
+            connectionLifetime.IsCancellationRequested)
+        {
+            FailPending(new TimeoutException("Broker connection has expired."));
         }
         catch (EndOfStreamException exception)
         {

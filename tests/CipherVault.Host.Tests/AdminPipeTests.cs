@@ -130,6 +130,103 @@ public sealed class AdminPipeTests
     }
 
     [Fact]
+    public async Task LockRevokesAdminSessionAndStatusReconnects()
+    {
+        var pipeName = "CipherVault.Admin.ReconnectTest." +
+            Guid.NewGuid().ToString("N");
+        var currentUser = WindowsIdentity.GetCurrent().User!;
+        var currentSession = (uint)Process.GetCurrentProcess().SessionId;
+        var imagePath = Environment.ProcessPath!;
+        var imageHash = WindowsProcessIdentityVerifier.ComputeFileSha256(imagePath);
+        var servicePolicy = Policy(
+            VerifiedProcessKind.HostService,
+            currentUser.Value,
+            currentSession,
+            imagePath,
+            imageHash);
+        var clientPolicy = Policy(
+            VerifiedProcessKind.AdminUi,
+            currentUser.Value,
+            currentSession,
+            imagePath,
+            imageHash);
+        var serviceIdentity = VerifyIdentity(
+            (uint)Environment.ProcessId,
+            servicePolicy);
+        var status = new HostSessionStatusData(
+            "locked",
+            SessionId: null,
+            StartedAt: null,
+            LastUserActivityAt: null,
+            IdleExpiresAt: null,
+            HardExpiresAt: null,
+            LockReason: "startup",
+            ActiveLeases: 0,
+            ConnectedClients: 1,
+            RecoveryVerified: true);
+        var adminSessions = new AdminSessionStore(
+            idleLifetime: TimeSpan.FromMinutes(15),
+            hardLifetime: TimeSpan.FromHours(4));
+        var options = new AdminPipeServerOptions(
+            pipeName,
+            PipeSecurityFactory.Create(
+                [currentUser],
+                includeAdministrators: false,
+                includeSystem: false),
+            Guid.NewGuid().ToString("D"),
+            "strict",
+            "1.0.0-test",
+            serviceIdentity,
+            [clientPolicy],
+            currentUser.Value,
+            currentUser.Value,
+            TimeSpan.FromMinutes(15),
+            TimeSpan.FromHours(4),
+            StatusProvider: (_, _) => Task.FromResult(
+                new AdminPipeStatusData(
+                    "1.0.0-test",
+                    PipeProtocol.Version,
+                    "strict",
+                    BrokerAvailable: true,
+                    status)),
+            LockProvider: (_, reason, _) =>
+            {
+                status = status with { LockReason = reason };
+                adminSessions.RevokeAll(reason);
+                return Task.FromResult(status);
+            },
+            AdminSessions: adminSessions);
+        using var stopping = new CancellationTokenSource(
+            TimeSpan.FromSeconds(15));
+        var loopTask = StrictPipeAcceptLoop.RunAsync(
+            async token =>
+            {
+                await using var server = new AdminPipeServer(options);
+                _ = await server.AcceptOnceAsync(token);
+            },
+            TimeSpan.FromMilliseconds(50),
+            stopping.Token);
+
+        await using var client = await NamedPipeHostVaultClient.CreateAsync(
+            new AdminPipeClientOptions(
+                pipeName,
+                clientPolicy,
+                servicePolicy));
+        var before = await client.GetStatusAsync();
+        Assert.Equal(VaultSessionState.Locked, before.State);
+
+        var locked = await client.LockAsync("test-lock");
+        Assert.Equal("test-lock", locked.LockReason);
+
+        var after = await client.GetStatusAsync();
+        Assert.Equal(VaultSessionState.Locked, after.State);
+        Assert.Equal("test-lock", after.LockReason);
+
+        stopping.Cancel();
+        await loopTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
     public async Task AdminPipeHandshakeReturnsStatusAndRevokesOnDisconnect()
     {
         var pipeName = "CipherVault.Admin.Test." + Guid.NewGuid().ToString("N");

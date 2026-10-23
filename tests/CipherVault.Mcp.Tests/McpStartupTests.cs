@@ -61,6 +61,9 @@ public sealed class McpStartupTests
 
             Assert.Equal(1, process.ExitCode);
             Assert.Equal(string.Empty, stdout);
+            // The manifest has no Auth Broker image, so the best-effort Broker
+            // launch reports a warning instead of aborting startup.
+            Assert.Contains("broker_launch_failed:", stderr);
             Assert.Contains("bridge_unavailable:", stderr);
             Assert.DoesNotContain("Unhandled exception", stderr);
         }
