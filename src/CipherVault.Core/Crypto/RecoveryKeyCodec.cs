@@ -9,6 +9,8 @@ public static class RecoveryKeyCodec
     private const string Alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
     private const int RecoveryKeyBytes = 32;
     private const int ChecksumBytes = 4;
+    public static int NormalizedLength { get; } =
+        GetEncodedLength(RecoveryKeyBytes) + GetEncodedLength(ChecksumBytes);
 
     public static string Format(byte[] recoveryKey)
     {
@@ -33,7 +35,7 @@ public static class RecoveryKeyCodec
     {
         var compact = new string(
             formatted
-                .Where(character => !char.IsWhiteSpace(character) && character != '-')
+                .Where(character => !IsSeparator(character))
                 .Select(character => char.ToUpperInvariant(character))
                 .ToArray());
 
@@ -41,7 +43,9 @@ public static class RecoveryKeyCodec
         var checksumLength = GetEncodedLength(ChecksumBytes);
         if (compact.Length != payloadLength + checksumLength)
         {
-            throw new VaultException(VaultErrorCode.InvalidCredential, "Recovery key format is invalid.");
+            throw new VaultException(
+                VaultErrorCode.InvalidCredential,
+                $"Recovery key format is invalid. Expected {NormalizedLength} characters after removing separators, received {compact.Length}.");
         }
 
         var payload = Decode(compact[..payloadLength], RecoveryKeyBytes);
@@ -58,6 +62,20 @@ public static class RecoveryKeyCodec
     private static int GetEncodedLength(int byteCount)
     {
         return (byteCount * 8 + 4) / 5;
+    }
+
+    private static bool IsSeparator(char character)
+    {
+        return char.IsWhiteSpace(character) ||
+            character is
+                '-' or
+                '\u2010' or
+                '\u2011' or
+                '\u2012' or
+                '\u2013' or
+                '\u2014' or
+                '\u2015' or
+                '\u2212';
     }
 
     private static string Encode(byte[] data)

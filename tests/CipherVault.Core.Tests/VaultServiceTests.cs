@@ -198,6 +198,31 @@ public sealed class VaultServiceTests
         Assert.Contains('-', formatted);
     }
 
+    [Fact]
+    public void RecoveryKeyAcceptsCommonDashSeparators()
+    {
+        var key = RandomNumberGenerator.GetBytes(32);
+        var formatted = RecoveryKeyCodec.Format(key)
+            .Replace('-', '\u2013');
+
+        var parsed = RecoveryKeyCodec.Parse(formatted);
+
+        Assert.True(CryptographicOperations.FixedTimeEquals(key, parsed));
+    }
+
+    [Fact]
+    public void RecoveryKeyFormatErrorIncludesExpectedAndActualLength()
+    {
+        var exception = Assert.Throws<VaultException>(
+            () => RecoveryKeyCodec.Parse("ABC-DEF"));
+
+        Assert.Equal(VaultErrorCode.InvalidCredential, exception.Code);
+        Assert.Contains(
+            $"Expected {RecoveryKeyCodec.NormalizedLength}",
+            exception.Message);
+        Assert.Contains("received 6", exception.Message);
+    }
+
     private sealed class VaultFixture : IAsyncDisposable
     {
         private VaultFixture(

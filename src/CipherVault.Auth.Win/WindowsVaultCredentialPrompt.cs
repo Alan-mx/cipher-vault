@@ -1,5 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
+using CipherVault.Core.Crypto;
 using CipherVault.Core.Session;
 
 namespace CipherVault.Auth.Win;
@@ -55,6 +57,7 @@ public static class WindowsVaultCredentialPrompt
         private readonly PasswordBox _credentialBox;
         private readonly ComboBox? _typeSelector;
         private readonly TextBlock _credentialLabel;
+        private readonly TextBlock _validationMessage;
         private bool _confirmed;
 
         public VaultCredentialPromptWindow(
@@ -64,7 +67,7 @@ public static class WindowsVaultCredentialPrompt
         {
             Title = title;
             Width = 480;
-            Height = preferredType is null ? 270 : 225;
+            Height = preferredType is null ? 290 : 250;
             ResizeMode = ResizeMode.NoResize;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             Topmost = true;
@@ -79,6 +82,12 @@ public static class WindowsVaultCredentialPrompt
             {
                 Text = "资料库密码：",
                 Margin = new Thickness(0, 10, 0, 0)
+            };
+            _validationMessage = new TextBlock
+            {
+                Foreground = Brushes.Firebrick,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 8)
             };
 
             var approveButton = new Button
@@ -97,12 +106,20 @@ public static class WindowsVaultCredentialPrompt
                 IsCancel = true
             };
             cancelButton.Click += (_, _) => Close();
+            var pasteButton = new Button
+            {
+                Content = "粘贴",
+                MinWidth = 90,
+                Margin = new Thickness(0, 0, 8, 0)
+            };
+            pasteButton.Click += (_, _) => PasteCredential();
 
             var buttons = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
                 HorizontalAlignment = HorizontalAlignment.Right
             };
+            buttons.Children.Add(pasteButton);
             buttons.Children.Add(approveButton);
             buttons.Children.Add(cancelButton);
 
@@ -136,6 +153,7 @@ public static class WindowsVaultCredentialPrompt
 
             panel.Children.Add(_credentialLabel);
             panel.Children.Add(_credentialBox);
+            panel.Children.Add(_validationMessage);
             panel.Children.Add(buttons);
             Content = panel;
             Loaded += (_, _) => _credentialBox.Focus();
@@ -172,9 +190,43 @@ public static class WindowsVaultCredentialPrompt
             {
                 return;
             }
+            _validationMessage.Text = string.Empty;
+            if (_initialType == VaultCredentialType.RecoveryKey)
+            {
+                try
+                {
+                    _ = RecoveryKeyCodec.Parse(_credentialBox.Password);
+                }
+                catch (Exception exception) when (
+                    exception is ArgumentException or InvalidOperationException or
+                    CipherVault.Core.Errors.VaultException)
+                {
+                    _validationMessage.Text = exception.Message;
+                    _credentialBox.Focus();
+                    return;
+                }
+            }
 
             _confirmed = true;
             Close();
+        }
+
+        private void PasteCredential()
+        {
+            try
+            {
+                if (Clipboard.ContainsText())
+                {
+                    _credentialBox.Password = Clipboard.GetText().Trim();
+                    _credentialBox.Focus();
+                }
+            }
+            catch (Exception exception) when (
+                exception is InvalidOperationException or
+                System.Runtime.InteropServices.COMException)
+            {
+                _validationMessage.Text = "无法读取剪贴板。";
+            }
         }
     }
 }
