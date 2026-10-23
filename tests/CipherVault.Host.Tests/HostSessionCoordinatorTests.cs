@@ -101,6 +101,66 @@ public sealed class HostSessionCoordinatorTests
     }
 
     [Fact]
+    public async Task StatusReadDoesNotRevokeCurrentAdminSessionWhileLocked()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var coordinator = fixture.App.Services.GetRequiredService<HostSessionCoordinator>();
+        var adminSessions = fixture.App.Services.GetRequiredService<AdminSessionStore>();
+        var session = adminSessions.Create(
+            new VerifiedProcessIdentity(
+                VerifiedProcessKind.AdminCli,
+                123,
+                DateTimeOffset.UtcNow,
+                "S-1-5-21-1",
+                "S-1-5-5-1-1",
+                1,
+                @"C:\Program Files\CipherVault\CipherVault.Cli.exe",
+                new string('a', 64),
+                new string('b', 64),
+                "CN=CipherVault Test",
+                IntegrityLevel: 0x2000),
+            "S-1-5-21-1",
+            "S-1-5-80-1");
+
+        _ = await coordinator.GetSnapshotAsync();
+
+        Assert.Equal(
+            AdminSessionState.Active,
+            adminSessions.List().Single(item =>
+                item.SessionId == session.SessionId).State);
+    }
+
+    [Fact]
+    public async Task UnlockDoesNotRevokeCurrentAdminSessionWhileLocked()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var coordinator = fixture.App.Services.GetRequiredService<HostSessionCoordinator>();
+        var adminSessions = fixture.App.Services.GetRequiredService<AdminSessionStore>();
+        var session = adminSessions.Create(
+            new VerifiedProcessIdentity(
+                VerifiedProcessKind.AdminCli,
+                123,
+                DateTimeOffset.UtcNow,
+                "S-1-5-21-1",
+                "S-1-5-5-1-1",
+                1,
+                @"C:\Program Files\CipherVault\CipherVault.Cli.exe",
+                new string('a', 64),
+                new string('b', 64),
+                "CN=CipherVault Test",
+                IntegrityLevel: 0x2000),
+            "S-1-5-21-1",
+            "S-1-5-80-1");
+
+        _ = await coordinator.UnlockAsync(HostCredentialPreference.Password);
+
+        Assert.Equal(
+            AdminSessionState.Active,
+            adminSessions.List().Single(item =>
+                item.SessionId == session.SessionId).State);
+    }
+
+    [Fact]
     public async Task LockRevokesApprovalsAndAdminSessions()
     {
         await using var fixture = await HostTestFixture.CreateAsync();

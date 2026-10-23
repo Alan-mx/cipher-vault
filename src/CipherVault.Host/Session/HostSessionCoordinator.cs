@@ -57,9 +57,12 @@ public sealed class HostSessionCoordinator
         {
             if (_state != VaultSessionState.Locking)
             {
+                var previousState = _state;
                 _state = status.State;
                 _lockReason = status.LockReason ?? _lockReason;
-                revokeGrants = status.State == VaultSessionState.Locked;
+                revokeGrants =
+                    previousState != VaultSessionState.Locked &&
+                    status.State == VaultSessionState.Locked;
                 if (revokeGrants)
                 {
                     _leaseCancellation?.Cancel();
@@ -106,7 +109,6 @@ public sealed class HostSessionCoordinator
                 await _accessGrants.RevokeAllAsync("vault-relocked")
                     .ConfigureAwait(false);
                 _approvals?.RevokeAll();
-                _adminSessions?.RevokeAll("vault-relocked");
             }
             if (current.State is VaultSessionState.Unlocked or VaultSessionState.Expiring)
             {
