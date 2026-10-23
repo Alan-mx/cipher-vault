@@ -20,4 +20,5 @@ public sealed record BridgePipeServerOptions
     public required McpAccessMode AccessMode { get; init; }
     public required TimeSpan BridgeSessionLifetime { get; init; }
     public required IBridgeSessionHandler Handler { get; init; }
+    public OwnerSessionRegistry? OwnerSessions { get; init; }
 }

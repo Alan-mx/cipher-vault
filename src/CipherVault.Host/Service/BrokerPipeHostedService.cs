@@ -18,7 +18,8 @@ public sealed class BrokerPipeHostedService(
     CipherVaultServicePaths paths,
     StrictServiceHostOptions options,
     BrokerConnectionRegistry registry,
-    BrokerActivityProvider activityProvider) : BackgroundService
+    BrokerActivityProvider activityProvider,
+    OwnerSessionRegistry ownerSessions) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -69,7 +70,8 @@ public sealed class BrokerPipeHostedService(
             serviceSid,
             TimeSpan.FromHours(12),
             RequireInteractiveSession: true,
-            ActivityProvider: activityProvider);
+            ActivityProvider: activityProvider,
+            OwnerSessions: ownerSessions);
 
         while (!stoppingToken.IsCancellationRequested)
         {

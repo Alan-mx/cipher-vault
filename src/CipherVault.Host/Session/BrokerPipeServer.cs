@@ -22,7 +22,8 @@ public sealed record BrokerPipeServerOptions(
     string ServiceSid,
     TimeSpan SessionLifetime,
     bool RequireInteractiveSession = true,
-    BrokerActivityProvider? ActivityProvider = null);
+    BrokerActivityProvider? ActivityProvider = null,
+    OwnerSessionRegistry? OwnerSessions = null);
 
 public sealed class BrokerPipeConnection : IAsyncDisposable
 {
@@ -259,6 +260,8 @@ public sealed class BrokerPipeServer : IAsyncDisposable
                 ProcessVerificationStatus.IdentityMismatch,
                 "broker_session_required");
         }
+        using var ownerSessionLease =
+            _options.OwnerSessions?.Enter(clientIdentity);
 
         var hello = await pipeConnection.ReadAsync<PipeHelloRequest>(
             cancellationToken).ConfigureAwait(false);

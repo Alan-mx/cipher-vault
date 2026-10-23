@@ -19,7 +19,8 @@ public sealed class StrictBridgeHostedService(
     HostSessionCoordinator sessions,
     AccessGrantService grants,
     IHostAccessGrantPrompt grantPrompt,
-    StrictAdminVaultRpcProvider rpc) : BackgroundService
+    StrictAdminVaultRpcProvider rpc,
+    OwnerSessionRegistry ownerSessions) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -83,7 +84,8 @@ public sealed class StrictBridgeHostedService(
                 ? McpAccessMode.ReadWrite
                 : McpAccessMode.ReadOnly,
             BridgeSessionLifetime = TimeSpan.FromHours(12),
-            Handler = handler
+            Handler = handler,
+            OwnerSessions = ownerSessions
         };
         await new BridgePipeAcceptLoop(serverOptions)
             .RunAsync(stoppingToken).ConfigureAwait(false);

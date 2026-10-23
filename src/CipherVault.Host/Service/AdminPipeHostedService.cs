@@ -102,6 +102,7 @@ public sealed class AdminPipeHostedService(
     StrictAdminInitializeProvider initializeProvider,
     StrictAdminVaultRpcProvider vaultRpcProvider,
     AdminSessionStore adminSessions,
+    OwnerSessionRegistry ownerSessions,
     HostSessionCoordinator sessions,
     IHostApplicationLifetime applicationLifetime) : BackgroundService
 {
@@ -182,7 +183,8 @@ public sealed class AdminPipeHostedService(
             {
                 applicationLifetime.StopApplication();
                 return Task.CompletedTask;
-            });
+            },
+            OwnerSessions: ownerSessions);
 
         await StrictPipeAcceptLoop.RunAsync(
             async token =>

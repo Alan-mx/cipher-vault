@@ -72,6 +72,8 @@ public sealed class AdminPipeServer : IAsyncDisposable
                 ProcessVerificationStatus.IdentityMismatch,
                 "admin_session_required");
         }
+        using var ownerSessionLease =
+            _options.OwnerSessions?.Enter(clientIdentity);
 
         var clientHello = await connection.ReadAsync<PipeHelloRequest>(cancellationToken)
             .ConfigureAwait(false);

@@ -169,22 +169,6 @@ function Read-TrimmedFile {
     return ([string]$value).Trim()
 }
 
-function Stop-InstalledClientProcesses {
-    param([string[]]$ImagePaths)
-    $normalizedPaths = @($ImagePaths | ForEach-Object {
-        [IO.Path]::GetFullPath($_)
-    })
-    Get-CimInstance Win32_Process |
-        Where-Object {
-            -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and
-            $normalizedPaths -contains $_.ExecutablePath
-        } |
-        ForEach-Object {
-            Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
-        }
-    Start-Sleep -Milliseconds 300
-}
-
 function Wait-ServiceState {
     param(
         [string]$ExpectedState,
@@ -381,13 +365,6 @@ try {
             throw "Service was not removed before install."
         }
     }
-    Stop-InstalledClientProcesses -ImagePaths @(
-        $UiExe,
-        $CliExe,
-        $BrokerExe,
-        $McpExe
-    )
-
     $installArgs = @(
         "service", "install",
         "--host-exe", $HostExe,
@@ -610,13 +587,6 @@ try {
     if (-not $uninstalledOk) {
         throw "Service is still installed after uninstall."
     }
-    Stop-InstalledClientProcesses -ImagePaths @(
-        $UiExe,
-        $CliExe,
-        $BrokerExe,
-        $McpExe
-    )
-
     Invoke-ServiceStep -Step "reinstall" -Arguments $installArgs | Out-Null
     Invoke-ServiceStep -Step "reinstall-start" -Arguments @("service", "start") | Out-Null
     if (-not (Wait-ServiceState -ExpectedState "Running")) {
@@ -714,12 +684,6 @@ catch {
             $null = & $CliExe service stop 2>&1
             $null = & $CliExe service uninstall 2>&1
         }
-        Stop-InstalledClientProcesses -ImagePaths @(
-            $UiExe,
-            $CliExe,
-            $BrokerExe,
-            $McpExe
-        )
         if (Test-Path -LiteralPath $manifestPath) {
             $null = & $CliExe service install `
                 --host-exe $HostExe `

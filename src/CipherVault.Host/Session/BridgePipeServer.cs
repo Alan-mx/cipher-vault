@@ -79,6 +79,8 @@ public sealed class BridgePipeServer : IAsyncDisposable
                 ProcessVerificationStatus.IdentityMismatch,
                 "bridge_owner_mismatch");
         }
+        using var ownerSessionLease =
+            _options.OwnerSessions?.Enter(clientIdentity);
 
         var hello = await connection.ReadAsync<PipeHelloRequest>(
                 sessionCancellation.Token)

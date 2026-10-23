@@ -92,6 +92,7 @@ public sealed class StrictServiceHost : IAsyncDisposable
                     serviceProvider.GetRequiredService<BrokerActivityProvider>(),
                     sessionOptions: sessionOptions));
             builder.Services.AddSingleton<BrokerConnectionRegistry>();
+            builder.Services.AddSingleton<OwnerSessionRegistry>();
             builder.Services.AddSingleton<ApprovalStore>();
             builder.Services.AddSingleton<AdminSessionStore>();
             builder.Services.AddSingleton<TransferCoordinator>();

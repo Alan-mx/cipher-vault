@@ -39,4 +39,5 @@ public sealed record AdminPipeServerOptions(
         CancellationToken,
         Task<object>>? MethodProvider = null,
     AdminSessionStore? AdminSessions = null,
-    Func<Task>? StopHostCallback = null);
+    Func<Task>? StopHostCallback = null,
+    OwnerSessionRegistry? OwnerSessions = null);
