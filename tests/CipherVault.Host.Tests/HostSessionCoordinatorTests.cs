@@ -12,6 +12,81 @@ namespace CipherVault.Host.Tests;
 public sealed class HostSessionCoordinatorTests
 {
     [Fact]
+    public async Task InitializeAcceptsEmptyStrictVaultLayout()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-init-layout-{Guid.NewGuid():N}");
+        var vaultPath = Path.Combine(root, "Vault");
+        Directory.CreateDirectory(vaultPath);
+        File.WriteAllText(Path.Combine(vaultPath, "vault.mode"), "{}");
+        await using var vault = new VaultService(new ActiveActivityProvider());
+        var prompt = new HostTestFixture.TestCredentialPrompt();
+        var coordinator = new HostSessionCoordinator(
+            vault,
+            vaultPath,
+            prompt,
+            new AccessGrantService(),
+            new ApprovalStore(),
+            new AdminSessionStore());
+        try
+        {
+            var initialized = await coordinator.InitializeAsync(vaultPath);
+
+            Assert.Equal(Path.GetFullPath(vaultPath), initialized.VaultPath);
+            Assert.True(File.Exists(Path.Combine(vaultPath, "vault.mode")));
+            Assert.True(File.Exists(Path.Combine(vaultPath, "vault.db")));
+            Assert.True(File.Exists(Path.Combine(vaultPath, "vault.keys")));
+            var unlocked = await coordinator.UnlockAsync(
+                HostCredentialPreference.Password);
+            Assert.Equal(VaultSessionState.Unlocked, unlocked.State);
+        }
+        finally
+        {
+            await vault.DisposeAsync();
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task InitializeRejectsNonEmptyStrictVaultLayout()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-init-layout-{Guid.NewGuid():N}");
+        var vaultPath = Path.Combine(root, "Vault");
+        Directory.CreateDirectory(vaultPath);
+        File.WriteAllText(Path.Combine(vaultPath, "vault.mode"), "{}");
+        File.WriteAllText(Path.Combine(vaultPath, "unexpected.txt"), "data");
+        await using var vault = new VaultService(new ActiveActivityProvider());
+        var coordinator = new HostSessionCoordinator(
+            vault,
+            vaultPath,
+            new HostTestFixture.TestCredentialPrompt(),
+            new AccessGrantService(),
+            new ApprovalStore(),
+            new AdminSessionStore());
+        try
+        {
+            var exception = await Assert.ThrowsAsync<HostException>(
+                () => coordinator.InitializeAsync(vaultPath));
+
+            Assert.Equal(HostErrorCode.AlreadyExists, exception.Code);
+        }
+        finally
+        {
+            await vault.DisposeAsync();
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task LockReturnsCompletedLockedSnapshot()
     {
         await using var fixture = await HostTestFixture.CreateAsync();
@@ -194,6 +269,14 @@ public sealed class HostSessionCoordinatorTests
                 throw new TimeoutException("Condition was not met before timeout.");
             }
             await Task.Delay(25);
+        }
+    }
+
+    private sealed class ActiveActivityProvider : ISystemActivityProvider
+    {
+        public SystemActivitySnapshot GetSnapshot()
+        {
+            return new SystemActivitySnapshot(TimeSpan.Zero, false);
         }
     }
 }

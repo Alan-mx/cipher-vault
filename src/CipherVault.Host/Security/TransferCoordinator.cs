@@ -243,6 +243,10 @@ public sealed class TransferCoordinator : IDisposable
 
         var manifest = WriteManifest(workspace);
         ApplyFrozenRules(workspace);
+        if (workspace.Direction == HostTransferDirection.Export)
+        {
+            ApplyExportPayloadRules(workspace);
+        }
         return manifest;
     }
 
@@ -666,6 +670,14 @@ public sealed class TransferCoordinator : IDisposable
 
     private void ApplyFrozenRules(TransferWorkspace workspace)
     {
+        VaultFileSecurity.ProtectDirectoryWithRules(
+            workspace.RootPath,
+            CreateFrozenRules(workspace));
+    }
+
+    private static IReadOnlyList<VaultFileAccessRule> CreateFrozenRules(
+        TransferWorkspace workspace)
+    {
         var service = WindowsIdentity.GetCurrent().User
             ?? throw new VaultException(
                 VaultErrorCode.StorageError,
@@ -695,7 +707,62 @@ public sealed class TransferCoordinator : IDisposable
                 FileSystemRights.ReadAndExecute,
                 InheritToChildren: true));
         }
-        VaultFileSecurity.ProtectDirectoryWithRules(workspace.RootPath, rules);
+        return rules;
+    }
+
+    private static void ApplyExportPayloadRules(
+        TransferWorkspace workspace)
+    {
+        var payloadPath = Path.GetFullPath(workspace.PayloadPath);
+        if (!IsUnderRoot(workspace.RootPath, payloadPath))
+        {
+            throw InvalidManifest(
+                "Export payload is outside transfer staging.");
+        }
+        if ((File.Exists(payloadPath) || Directory.Exists(payloadPath)) &&
+            (File.GetAttributes(payloadPath) &
+                FileAttributes.ReparsePoint) != 0)
+        {
+            throw InvalidManifest(
+                "Export payload contains a reparse point.");
+        }
+
+        var rules = CreateFrozenRules(workspace);
+        if (File.Exists(payloadPath))
+        {
+            VaultFileSecurity.ProtectFileWithRules(payloadPath, rules);
+            return;
+        }
+        if (!Directory.Exists(payloadPath))
+        {
+            throw InvalidManifest(
+                "Export payload is missing.");
+        }
+        ApplyExportDirectoryRules(payloadPath, rules);
+    }
+
+    private static void ApplyExportDirectoryRules(
+        string directory,
+        IReadOnlyList<VaultFileAccessRule> rules)
+    {
+        VaultFileSecurity.ProtectDirectoryWithRules(directory, rules);
+        foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+        {
+            var attributes = File.GetAttributes(entry);
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                throw InvalidManifest(
+                    "Export payload contains a reparse point.");
+            }
+            if ((attributes & FileAttributes.Directory) != 0)
+            {
+                ApplyExportDirectoryRules(entry, rules);
+            }
+            else
+            {
+                VaultFileSecurity.ProtectFileWithRules(entry, rules);
+            }
+        }
     }
 
     private static void Cleanup(TransferWorkspace workspace)

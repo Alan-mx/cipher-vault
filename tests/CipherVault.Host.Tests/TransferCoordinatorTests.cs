@@ -1,10 +1,13 @@
 using System.Diagnostics;
 using System.IO;
+using System.Security.AccessControl;
 using System.Security.Cryptography;
+using System.Security.Principal;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using CipherVault.Core.Configuration;
 using CipherVault.Core.Errors;
+using CipherVault.Core.Security;
 using CipherVault.Host.Security;
 
 namespace CipherVault.Host.Tests;
@@ -60,6 +63,53 @@ public sealed class TransferCoordinatorTests
         Assert.Equal(frozen.TransferId, verified.TransferId);
         Assert.Equal(frozen.ExpiresAt, verified.ExpiresAt);
         Assert.Single(verified.Files);
+    }
+
+    [Fact]
+    public void FreezeManifestGrantsOwnerReadAccessToProtectedExportDirectory()
+    {
+        const string ownerSid = "S-1-5-21-900";
+        const string logonSid = "S-1-5-5-1-900";
+        using var fixture = new TransferFixture();
+        using var workspace = fixture.Coordinator.CreateWorkspace(
+            HostTransferDirection.Export,
+            HostTransferPayloadKind.Directory,
+            ownerSid,
+            logonSid,
+            "payload");
+        var nested = Path.Combine(workspace.PayloadPath, "nested");
+        var note = Path.Combine(nested, "note.md");
+        Directory.CreateDirectory(nested);
+        File.WriteAllText(note, "export content");
+        VaultFileSecurity.ProtectDirectory(nested);
+        VaultFileSecurity.ProtectFile(note);
+        VaultFileSecurity.ProtectDirectory(workspace.PayloadPath);
+
+        fixture.Coordinator.FreezeManifest(workspace);
+
+        AssertDirectoryReadAccess(workspace.PayloadPath, ownerSid, logonSid);
+        AssertDirectoryReadAccess(nested, ownerSid, logonSid);
+        AssertFileReadAccess(note, ownerSid, logonSid);
+    }
+
+    [Fact]
+    public void FreezeManifestGrantsOwnerReadAccessToProtectedExportFile()
+    {
+        const string ownerSid = "S-1-5-21-901";
+        const string logonSid = "S-1-5-5-1-901";
+        using var fixture = new TransferFixture();
+        using var workspace = fixture.Coordinator.CreateWorkspace(
+            HostTransferDirection.Export,
+            HostTransferPayloadKind.File,
+            ownerSid,
+            logonSid,
+            "vault.cvbackup");
+        File.WriteAllText(workspace.PayloadPath, "backup payload");
+        VaultFileSecurity.ProtectFile(workspace.PayloadPath);
+
+        fixture.Coordinator.FreezeManifest(workspace);
+
+        AssertFileReadAccess(workspace.PayloadPath, ownerSid, logonSid);
     }
 
     [Fact]
@@ -212,6 +262,50 @@ public sealed class TransferCoordinatorTests
             Path.Combine(workspace.PayloadPath, fileName),
             content);
         return workspace;
+    }
+
+    private static void AssertDirectoryReadAccess(
+        string path,
+        params string[] expectedSids)
+    {
+        var security = new DirectoryInfo(path).GetAccessControl();
+        var rules = security.GetAccessRules(
+                includeExplicit: true,
+                includeInherited: true,
+                typeof(SecurityIdentifier))
+            .Cast<FileSystemAccessRule>()
+            .ToArray();
+        foreach (var sid in expectedSids)
+        {
+            var identifier = new SecurityIdentifier(sid);
+            Assert.Contains(rules, rule =>
+                rule.AccessControlType == AccessControlType.Allow &&
+                rule.IdentityReference.Equals(identifier) &&
+                (rule.FileSystemRights & FileSystemRights.ReadAndExecute) ==
+                FileSystemRights.ReadAndExecute);
+        }
+    }
+
+    private static void AssertFileReadAccess(
+        string path,
+        params string[] expectedSids)
+    {
+        var security = new FileInfo(path).GetAccessControl();
+        var rules = security.GetAccessRules(
+                includeExplicit: true,
+                includeInherited: true,
+                typeof(SecurityIdentifier))
+            .Cast<FileSystemAccessRule>()
+            .ToArray();
+        foreach (var sid in expectedSids)
+        {
+            var identifier = new SecurityIdentifier(sid);
+            Assert.Contains(rules, rule =>
+                rule.AccessControlType == AccessControlType.Allow &&
+                rule.IdentityReference.Equals(identifier) &&
+                (rule.FileSystemRights & FileSystemRights.ReadAndExecute) ==
+                FileSystemRights.ReadAndExecute);
+        }
     }
 
     private static void WriteManifest(

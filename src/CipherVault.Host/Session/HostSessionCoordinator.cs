@@ -365,11 +365,19 @@ public sealed class HostSessionCoordinator
                 HostErrorCode.InvalidInput,
                 "Initialization target must match the configured Vault path.");
         }
-        if (Directory.Exists(fullPath) || File.Exists(fullPath))
+        if (File.Exists(fullPath))
         {
             throw new HostException(
                 HostErrorCode.AlreadyExists,
                 "Vault initialization requires a path that does not already exist.");
+        }
+        var fixedLayoutInitialization = Directory.Exists(fullPath);
+        if (fixedLayoutInitialization &&
+            !IsEmptyStrictVaultLayout(fullPath))
+        {
+            throw new HostException(
+                HostErrorCode.AlreadyExists,
+                "Vault initialization requires an empty strict Vault layout.");
         }
 
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -402,11 +410,58 @@ public sealed class HostSessionCoordinator
                     "Passwords do not match.");
             }
 
-            var result = await _vault.InitializeAsync(fullPath, first.Credential, cancellationToken)
+            var initializationPath = fixedLayoutInitialization
+                ? Path.Combine(
+                    Path.GetDirectoryName(fullPath)
+                        ?? throw new HostException(
+                            HostErrorCode.InvalidInput,
+                            "Vault path has no parent."),
+                    $".{Path.GetFileName(fullPath)}.init-{Guid.NewGuid():N}")
+                : fullPath;
+            var result = await _vault.InitializeAsync(
+                    initializationPath,
+                    first.Credential,
+                    cancellationToken)
                 .ConfigureAwait(false);
+            if (fixedLayoutInitialization)
+            {
+                var movedFiles = new List<string>();
+                try
+                {
+                    foreach (var fileName in new[] { "vault.db", "vault.keys" })
+                    {
+                        var source = Path.Combine(initializationPath, fileName);
+                        var destination = Path.Combine(fullPath, fileName);
+                        File.Move(source, destination);
+                        movedFiles.Add(destination);
+                    }
+                    Directory.Delete(initializationPath);
+                }
+                catch (Exception exception) when (
+                    exception is IOException or UnauthorizedAccessException)
+                {
+                    foreach (var file in movedFiles)
+                    {
+                        try
+                        {
+                            File.Delete(file);
+                        }
+                        catch (Exception cleanupException) when (
+                            cleanupException is IOException or
+                            UnauthorizedAccessException)
+                        {
+                        }
+                    }
+                    TryDeleteDirectory(initializationPath);
+                    throw new HostException(
+                        HostErrorCode.StorageError,
+                        "Initialized Vault could not be moved into the fixed layout.",
+                        exception);
+                }
+            }
             return new HostInitializeData(
                 result.VaultId,
-                result.VaultPath,
+                fullPath,
                 result.RecoveryKey,
                 result.CreatedAt);
         }
@@ -828,5 +883,47 @@ public sealed class HostSessionCoordinator
             _activeLeases,
             ConnectedClients: _connectedClients,
             status.RecoveryVerified);
+    }
+
+    private static bool IsEmptyStrictVaultLayout(string path)
+    {
+        try
+        {
+            if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+            {
+                return false;
+            }
+            var entries = Directory.EnumerateFileSystemEntries(path)
+                .Select(Path.GetFileName)
+                .ToArray();
+            return entries.Length == 1 &&
+                string.Equals(
+                    entries[0],
+                    "vault.mode",
+                    StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException)
+        {
+            throw new HostException(
+                HostErrorCode.StorageError,
+                "Vault initialization layout could not be inspected.",
+                exception);
+        }
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException)
+        {
+        }
     }
 }

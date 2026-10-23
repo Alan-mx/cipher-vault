@@ -239,7 +239,8 @@ static async Task<int> ConfirmRecoveryAsync(
     var confirmation = service.PromptsForCredentials
         ? string.Empty
         : ReadText("Re-enter the recovery key to confirm it was saved: ");
-    if (expectedKey is not null &&
+    if (!service.PromptsForCredentials &&
+        expectedKey is not null &&
         !string.Equals(
             NormalizeRecoveryKey(confirmation),
             NormalizeRecoveryKey(expectedKey),
