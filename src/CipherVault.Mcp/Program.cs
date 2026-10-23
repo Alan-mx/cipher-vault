@@ -1,8 +1,10 @@
 using System.ComponentModel;
+using System.IO;
 using System.Text.Json;
 using CipherVault.Core.Configuration;
 using CipherVault.Core.Errors;
 using CipherVault.Host.Client;
+using CipherVault.Ipc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -26,23 +28,58 @@ catch (ArgumentException exception)
     return;
 }
 
-var bridge = await StrictMcpBridgeClient.ConnectAsync(settings);
-var tools = new BridgeVaultTools(bridge, settings.ReadOnly);
-var builder = Host.CreateApplicationBuilder(Array.Empty<string>());
-builder.Logging.ClearProviders();
-builder.Services
-    .AddMcpServer()
-    .WithStdioServerTransport()
-    .WithTools<BridgeVaultTools>(tools);
-
-var server = builder.Build();
+StrictMcpBridgeClient? bridge = null;
 try
 {
+    bridge = await StrictMcpBridgeClient.ConnectAsync(settings);
+    var tools = new BridgeVaultTools(bridge, settings.ReadOnly);
+    var builder = Host.CreateApplicationBuilder(Array.Empty<string>());
+    builder.Logging.ClearProviders();
+    builder.Services
+        .AddMcpServer()
+        .WithStdioServerTransport()
+        .WithTools<BridgeVaultTools>(tools);
+
+    var server = builder.Build();
     await server.RunAsync();
+}
+catch (VaultException exception)
+{
+    ReportError(exception.Code.ToString(), exception.Message);
+}
+catch (ProcessIdentityRejectedException exception)
+{
+    ReportError("bridge_identity_rejected", exception.Message);
+}
+catch (Exception exception) when (
+    exception is TimeoutException or IOException)
+{
+    ReportError("bridge_unavailable", exception.Message);
+}
+catch (Exception exception)
+{
+    ReportError("mcp_error", exception.Message);
 }
 finally
 {
-    await bridge.RevokeGrantAsync();
+    if (bridge is not null)
+    {
+        try
+        {
+            await bridge.RevokeGrantAsync();
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine(
+                $"bridge_revoke_failed: {exception.Message}");
+        }
+    }
+}
+
+static void ReportError(string code, string message)
+{
+    Console.Error.WriteLine($"{code}: {message}");
+    Environment.ExitCode = 1;
 }
 
 public interface IMcpBridgeClient
