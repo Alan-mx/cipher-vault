@@ -162,6 +162,36 @@ scope。Agent 不接受长期 Bearer token，也不使用 direct HTTP MCP。
 若要替换当前 Vault，必须先停止 Host，并显式将恢复结果放入服务 Vault 目录后再
 启动。当前版本没有在线替换和自动迁移。
 
+## 参考项目与借鉴边界
+
+> 版本快照：2026-10-24。以下项目仅用于产品或架构参考，不构成当前运行时依赖。
+> AGPL 项目只阅读其公开设计，不复制源码。具体规划见
+> [`docs/specs/knowledge-graph-mcp/clarify.md`](docs/specs/knowledge-graph-mcp/clarify.md)。
+
+| 项目 | 参考版本 | 许可/类型 | 借鉴内容 | 明确不照搬 |
+| --- | --- | --- | --- | --- |
+| [Obsidian](https://obsidian.md/) | 闭源产品，不锁定版本 | 闭源专有 | `[[笔记名]]`、反向链接、局部图谱、以标签过滤知识网络 | 把文件夹或全库图谱作为唯一主导航 |
+| [Local REST API](https://github.com/coddingtonbear/obsidian-local-rest-api) | `5.5.2` | MIT | MCP 活集成、按标题/块/frontmatter 精准修改、条件写、当前文档上下文 | 回环 HTTP、Bearer Token 直连、任意命令执行；CipherVault 继续使用签名命名管道和短期 Grant |
+| [Basic Memory](https://github.com/basicmachines-co/basic-memory) | `v0.24.1` | AGPL-3.0 | Markdown 与 SQLite 索引并存、MCP 原生知识图谱、稳定 permalink、工具行为标注、文件/索引一致性检查 | 明文知识库、外部 Python 进程、云端记忆服务 |
+| [Logseq](https://github.com/logseq/logseq) | `2.0.2`（DB beta） | AGPL-3.0 | 页面/块级引用、属性查询、图谱过滤思路；为未来块引用预留模型 | 直接采用 beta DB 实现，或把全库图谱作为主要入口 |
+| [SiYuan](https://github.com/siyuan-note/siyuan) | `v3.8.8` | AGPL-3.0 | 稳定块 ID、块级双向链接、文档地图、CLI/API、`--dry-run` 预览修改 | 向 Agent 暴露任意 SQL；首版直接实现块级模型 |
+| [TriliumNext](https://github.com/TriliumNext/Trilium) | `v0.106.1` | AGPL-3.0 | 关系属性、Relation Map/Note Map、节点克隆、大规模个人知识库设计 | 树结构优先的产品模型；复制 AGPL 代码或首版实现克隆 |
+| [SilverBullet](https://github.com/silverbulletmd/silverbullet) | `2.12.1` | MIT | Wiki 双向链接与数据库查询结合、用可配置视图组织知识 | Lua 脚本运行时、浏览器/服务端架构 |
+| [MCP Memory Service](https://github.com/doobidoo/mcp-memory-service) | `v12.3.1` | Apache-2.0 | 本地优先检索、Agent 作用域、实时变更通知、图谱仪表盘 | 首版引入自主记忆整合、向量数据库和云端同步 |
+| [MCP Memory Server](https://github.com/modelcontextprotocol/servers/tree/main/src/memory) | npm `2.0.0` | MIT | Entity/Relation/Observation 模型、MCP Resource 变更通知 | JSONL 单文件存储、直接返回整张图谱 |
+| [MCP Security Best Practices](https://modelcontextprotocol.io/specification/latest/basic/security_best_practices) | `2026-07-28` | 规范文本 | 本地 MCP Server 风险、权限最小化、用户同意、工具行为提示 | 不把工具提示当作授权依据；安全约束仍由 Host 强制执行 |
+| [MSAGL](https://github.com/microsoft/automatic-graph-layout) | `Msagl.WpfGraphControl 1.2.1` | MIT | 原生 WPF 图谱布局、缩放、节点搜索和子图折叠 | 首版用它承载全库大图谱 |
+| [Cytoscape.js](https://github.com/cytoscape/cytoscape.js) | `3.34.4` | MIT | 成熟的关系图交互、筛选和扩展生态 | 首版引入 WebView2 和浏览器渲染栈 |
+| [Sigma.js](https://github.com/jacomyal/sigma.js) + [Graphology](https://github.com/graphology/graphology) | `4.0.3` + `0.26.0` | MIT | WebGL 大图谱渲染和图层分析 | 首版使用；仅在全库图谱阶段重新评估 |
+
+社区经验用于校验优先级：
+
+- [Logseq: Graph performance](https://discuss.logseq.com/t/graph-performance/34524)
+  记录约 2190 个 Markdown 文件时图谱交互明显退化，因此 CipherVault 首版限制
+  局部图节点数，不把全库图谱作为主要浏览方式。
+- [Logseq: filtered views of the graph](https://discuss.logseq.com/t/presentation-mode-filtered-views-of-the-graph/22431)
+  讨论表明用户更需要按标签、属性和上下文筛选的子图。
+
 ## License
 
 MIT License. See [LICENSE](LICENSE).
