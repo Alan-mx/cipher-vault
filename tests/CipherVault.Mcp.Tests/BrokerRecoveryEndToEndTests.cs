@@ -4,6 +4,7 @@ using System.Text.Json;
 using CipherVault.Core.Configuration;
 using CipherVault.Host.Client;
 using CipherVault.Host.Contracts;
+using CipherVault.Host.Operations;
 using CipherVault.Host.Security;
 using CipherVault.Host.Service;
 using CipherVault.Host.Session;
@@ -53,6 +54,9 @@ public sealed class BrokerRecoveryEndToEndTests
             Guid.NewGuid().ToString("N");
         var bridgePipeName = "CipherVault.Mcp.BridgeRecoveryTest." +
             Guid.NewGuid().ToString("N");
+        var lifecycleLogDirectory = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-broker-log-{Guid.NewGuid():N}");
         var registry = new BrokerConnectionRegistry();
         var activityProvider = new BrokerActivityProvider();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(45));
@@ -72,6 +76,7 @@ public sealed class BrokerRecoveryEndToEndTests
                 HeartbeatTimeout: TimeSpan.FromSeconds(2)),
             registry,
             activityProvider,
+            new JsonlBrokerLifecycleLog(lifecycleLogDirectory),
             NullLogger<BrokerPipeAcceptLoop>.Instance);
         var brokerLoopTask = brokerAcceptLoop.RunAsync(timeout.Token);
         var clientOptionsPath = Path.Combine(
@@ -168,6 +173,32 @@ public sealed class BrokerRecoveryEndToEndTests
             await WaitUntilAsync(
                 () => RegisteredProcessId(registry) == (uint?)secondBroker.Id,
                 TimeSpan.FromSeconds(5));
+
+            var lifecycleLogPath = Assert.Single(
+                Directory.GetFiles(
+                    lifecycleLogDirectory,
+                    "broker-*.jsonl"));
+            var lifecycleEvents = File.ReadAllLines(lifecycleLogPath)
+                .Select(line => JsonSerializer.Deserialize<BrokerLifecycleLogEvent>(
+                    line,
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web)))
+                .OfType<BrokerLifecycleLogEvent>()
+                .ToArray();
+            Assert.Contains(
+                lifecycleEvents,
+                item => item.EventType == "broker_accepted" &&
+                    item.ProcessId == (uint?)firstBroker.Id);
+            Assert.Contains(
+                lifecycleEvents,
+                item => item.EventType == "broker_unavailable");
+            Assert.Contains(
+                lifecycleEvents,
+                item => item.EventType == "broker_accepted" &&
+                    item.ProcessId == (uint?)secondBroker.Id);
+            Assert.Contains(
+                lifecycleEvents,
+                item => item.EventType == "broker_released" &&
+                    item.ProcessId == (uint?)firstBroker.Id);
         }
         finally
         {
@@ -211,6 +242,10 @@ public sealed class BrokerRecoveryEndToEndTests
             {
             }
             File.Delete(clientOptionsPath);
+            if (Directory.Exists(lifecycleLogDirectory))
+            {
+                Directory.Delete(lifecycleLogDirectory, recursive: true);
+            }
         }
     }
 

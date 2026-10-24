@@ -7,6 +7,7 @@ using CipherVault.Core.Session;
 using CipherVault.Host.Security;
 using CipherVault.Security.Win;
 using CipherVault.Host.Session;
+using CipherVault.Host.Operations;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using HostApplicationBuilderFactory = Microsoft.Extensions.Hosting.Host;
@@ -111,6 +112,8 @@ public sealed class StrictServiceHost : IAsyncDisposable
                     serviceProvider.GetRequiredService<BrokerConnectionRegistry>()));
             builder.Services.AddSingleton<ISecurityEventLog>(
                 new JsonlSecurityEventLog(paths.LogsPath));
+            builder.Services.AddSingleton<IBrokerLifecycleLog>(
+                new JsonlBrokerLifecycleLog(paths.LogsPath));
             builder.Services.AddSingleton(serviceProvider =>
                 new AccessGrantService(
                     securityLog:

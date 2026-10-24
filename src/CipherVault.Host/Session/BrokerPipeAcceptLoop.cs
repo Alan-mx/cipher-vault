@@ -1,4 +1,6 @@
+using System.ComponentModel;
 using CipherVault.Core.Session;
+using CipherVault.Host.Operations;
 using CipherVault.Host.Security;
 using Microsoft.Extensions.Logging;
 
@@ -8,6 +10,7 @@ public sealed class BrokerPipeAcceptLoop(
     BrokerPipeServerOptions options,
     BrokerConnectionRegistry registry,
     BrokerActivityProvider activityProvider,
+    IBrokerLifecycleLog lifecycleLog,
     ILogger<BrokerPipeAcceptLoop> logger)
 {
     private static readonly TimeSpan[] FailureBackoffs =
@@ -23,6 +26,7 @@ public sealed class BrokerPipeAcceptLoop(
         var loopOptions = options ?? throw new ArgumentNullException(nameof(options));
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(activityProvider);
+        ArgumentNullException.ThrowIfNull(lifecycleLog);
         ArgumentNullException.ThrowIfNull(logger);
 
         var failureCount = 0;
@@ -31,10 +35,15 @@ public sealed class BrokerPipeAcceptLoop(
             BrokerPipeServer? server = null;
             CancellationTokenSource? connectionWatch = null;
             Task? monitorTask = null;
+            BrokerPipeConnection? acceptedConnection = null;
             var stage = "create";
             try
             {
                 server = new BrokerPipeServer(loopOptions);
+                lifecycleLog.Write(Event(
+                    "pipe_created",
+                    stage,
+                    "success"));
                 connectionWatch =
                     CancellationTokenSource.CreateLinkedTokenSource(
                         stoppingToken);
@@ -49,9 +58,15 @@ public sealed class BrokerPipeAcceptLoop(
                 await server.AcceptOnceAsync(
                     connection =>
                     {
+                        acceptedConnection = connection;
                         registry.Set(connection);
                         failureCount = 0;
                         accepted.TrySetResult();
+                        lifecycleLog.Write(Event(
+                            "broker_accepted",
+                            "session",
+                            "success",
+                            connection));
                         logger.LogInformation(
                             "Auth Broker pipe accepted process {ProcessId}.",
                             connection.ClientIdentity.ProcessId);
@@ -60,6 +75,11 @@ public sealed class BrokerPipeAcceptLoop(
                     {
                         registry.Clear(connection);
                         activityProvider.Clear();
+                        lifecycleLog.Write(Event(
+                            "broker_released",
+                            "session",
+                            "success",
+                            connection));
                         logger.LogInformation(
                             "Auth Broker pipe released process {ProcessId}.",
                             connection.ClientIdentity.ProcessId);
@@ -73,6 +93,13 @@ public sealed class BrokerPipeAcceptLoop(
                     StringComparison.Ordinal))
             {
                 failureCount++;
+                lifecycleLog.Write(Event(
+                    "broker_duplicate_rejected",
+                    stage,
+                    "rejected",
+                    retryCount: failureCount,
+                    errorType: GetErrorType(exception),
+                    message: exception.Message));
                 logger.LogWarning(
                     exception,
                     "Auth Broker pipe rejected a duplicate connection.");
@@ -91,11 +118,26 @@ public sealed class BrokerPipeAcceptLoop(
             catch (OperationCanceledException) when (
                 connectionWatch?.IsCancellationRequested == true)
             {
+                lifecycleLog.Write(Event(
+                    "session_cancelled",
+                    stage,
+                    "cancelled",
+                    acceptedConnection,
+                    message: "Connection watch requested pipe recycling."));
                 failureCount = 0;
             }
             catch (Exception exception)
             {
                 failureCount++;
+                lifecycleLog.Write(Event(
+                    "pipe_failed",
+                    stage,
+                    "error",
+                    acceptedConnection,
+                    retryCount: failureCount,
+                    errorType: GetErrorType(exception),
+                    win32ErrorCode: GetWin32ErrorCode(exception),
+                    message: exception.Message));
                 logger.LogError(
                     exception,
                     "Auth Broker pipe failed during {Stage}; retry {RetryCount}.",
@@ -110,6 +152,15 @@ public sealed class BrokerPipeAcceptLoop(
             }
             finally
             {
+                if (acceptedConnection is not null &&
+                    !registry.IsAvailable)
+                {
+                    lifecycleLog.Write(Event(
+                        "broker_unavailable",
+                        "cleanup",
+                        "unavailable",
+                        acceptedConnection));
+                }
                 connectionWatch?.Cancel();
                 if (monitorTask is not null)
                 {
@@ -122,6 +173,14 @@ public sealed class BrokerPipeAcceptLoop(
                     }
                     catch (Exception exception)
                     {
+                        lifecycleLog.Write(Event(
+                            "monitor_cleanup_failed",
+                            "cleanup",
+                            "error",
+                            acceptedConnection,
+                            errorType: GetErrorType(exception),
+                            win32ErrorCode: GetWin32ErrorCode(exception),
+                            message: exception.Message));
                         logger.LogWarning(
                             exception,
                             "Auth Broker pipe monitor failed during cleanup.");
@@ -132,9 +191,22 @@ public sealed class BrokerPipeAcceptLoop(
                     try
                     {
                         await server.DisposeAsync().ConfigureAwait(false);
+                        lifecycleLog.Write(Event(
+                            "pipe_disposed",
+                            "cleanup",
+                            "success",
+                            acceptedConnection));
                     }
                     catch (Exception exception)
                     {
+                        lifecycleLog.Write(Event(
+                            "pipe_disposal_failed",
+                            "cleanup",
+                            "error",
+                            acceptedConnection,
+                            errorType: GetErrorType(exception),
+                            win32ErrorCode: GetWin32ErrorCode(exception),
+                            message: exception.Message));
                         logger.LogWarning(
                             exception,
                             "Auth Broker pipe disposal failed; the next accept attempt will retry.");
@@ -181,5 +253,47 @@ public sealed class BrokerPipeAcceptLoop(
         {
             return false;
         }
+    }
+
+    private static BrokerLifecycleLogEvent Event(
+        string eventType,
+        string stage,
+        string result,
+        BrokerPipeConnection? connection = null,
+        int? retryCount = null,
+        string? errorType = null,
+        int? win32ErrorCode = null,
+        string? message = null)
+    {
+        return new BrokerLifecycleLogEvent(
+            DateTimeOffset.UtcNow,
+            eventType,
+            stage,
+            result,
+            connection?.ClientIdentity.ProcessId,
+            connection?.ClientIdentity.ProcessStartedAt,
+            retryCount,
+            errorType,
+            win32ErrorCode,
+            message);
+    }
+
+    private static string GetErrorType(Exception exception)
+    {
+        return exception.GetType().Name;
+    }
+
+    private static int? GetWin32ErrorCode(Exception exception)
+    {
+        for (Exception? current = exception;
+             current is not null;
+             current = current.InnerException)
+        {
+            if (current is Win32Exception win32Exception)
+            {
+                return win32Exception.NativeErrorCode;
+            }
+        }
+        return null;
     }
 }

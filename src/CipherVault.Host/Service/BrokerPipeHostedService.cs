@@ -5,6 +5,7 @@ using CipherVault.Core.Configuration;
 using CipherVault.Core.Errors;
 using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
+using CipherVault.Host.Operations;
 using CipherVault.Host.Security;
 using CipherVault.Host.Session;
 using CipherVault.Ipc;
@@ -21,6 +22,7 @@ public sealed class BrokerPipeHostedService(
     BrokerConnectionRegistry registry,
     BrokerActivityProvider activityProvider,
     OwnerSessionRegistry ownerSessions,
+    IBrokerLifecycleLog lifecycleLog,
     ILogger<BrokerPipeAcceptLoop> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -79,6 +81,7 @@ public sealed class BrokerPipeHostedService(
                 serverOptions,
                 registry,
                 activityProvider,
+                lifecycleLog,
                 logger)
             .RunAsync(stoppingToken)
             .ConfigureAwait(false);

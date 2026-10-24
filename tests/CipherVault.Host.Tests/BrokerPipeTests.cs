@@ -8,6 +8,7 @@ using System.Text.Json;
 using CipherVault.Core.Configuration;
 using CipherVault.Host.Client;
 using CipherVault.Host.Contracts;
+using CipherVault.Host.Operations;
 using CipherVault.Host.Security;
 using CipherVault.Host.Service;
 using CipherVault.Host.Session;
@@ -684,6 +685,7 @@ public sealed class BrokerPipeTests
                 options,
                 registry,
                 activityProvider,
+                NullBrokerLifecycleLog.Instance,
                 NullLogger<BrokerPipeAcceptLoop>.Instance)
             .RunAsync(timeout.Token);
         var optionsPath = Path.Combine(
