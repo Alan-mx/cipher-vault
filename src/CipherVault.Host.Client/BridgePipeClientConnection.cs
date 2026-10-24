@@ -15,7 +15,8 @@ public sealed record BridgePipeClientOptions(
     ProcessVerificationPolicy ServerPolicy,
     int ConnectTimeoutMilliseconds = 5_000);
 
-public sealed class BridgePipeClientConnection : IAsyncDisposable
+public sealed class BridgePipeClientConnection :
+    IBridgePipeClientConnection
 {
     private static readonly JsonSerializerOptions JsonOptions =
         new(JsonSerializerDefaults.Web);
@@ -23,17 +24,26 @@ public sealed class BridgePipeClientConnection : IAsyncDisposable
     private readonly IReadOnlySet<string> _requestedScopes;
     private VerifiedProcessEvidence? _clientEvidence;
     private VerifiedPipeClientConnection? _connection;
+    private int _faulted;
     private bool _disposed;
 
     private BridgePipeClientConnection(
         VerifiedProcessEvidence clientEvidence,
         VerifiedPipeClientConnection connection,
-        IReadOnlySet<string> requestedScopes)
+        IReadOnlySet<string> requestedScopes,
+        DateTimeOffset expiresAt)
     {
         _clientEvidence = clientEvidence;
         _connection = connection;
         _requestedScopes = requestedScopes;
+        ExpiresAt = expiresAt;
     }
+
+    public DateTimeOffset ExpiresAt { get; }
+    public bool IsUsable =>
+        !_disposed &&
+        Volatile.Read(ref _faulted) == 0 &&
+        ExpiresAt > DateTimeOffset.UtcNow;
 
     public static async Task<BridgePipeClientConnection> ConnectAsync(
         BridgePipeClientOptions options,
@@ -113,7 +123,8 @@ public sealed class BridgePipeClientConnection : IAsyncDisposable
             return new BridgePipeClientConnection(
                 client.Evidence,
                 connection,
-                options.RequestedScopes);
+                options.RequestedScopes,
+                auth.ExpiresAt);
         }
         catch
         {
@@ -185,7 +196,7 @@ public sealed class BridgePipeClientConnection : IAsyncDisposable
         TRequest payload,
         CancellationToken cancellationToken)
     {
-        ThrowIfDisposed();
+        ThrowIfUnavailable();
         await _requestGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -211,6 +222,16 @@ public sealed class BridgePipeClientConnection : IAsyncDisposable
                 ?? throw new InvalidDataException(
                     "Bridge response data was empty.");
         }
+        catch (Exception exception) when (
+            exception is IOException or ObjectDisposedException ||
+            exception is PipeRpcException
+            {
+                Code: "bridge_session_expired"
+            })
+        {
+            Interlocked.Exchange(ref _faulted, 1);
+            throw;
+        }
         finally
         {
             _requestGate.Release();
@@ -233,8 +254,17 @@ public sealed class BridgePipeClientConnection : IAsyncDisposable
         _requestGate.Dispose();
     }
 
-    private void ThrowIfDisposed()
+    private void ThrowIfUnavailable()
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ObjectDisposedException.ThrowIf(
+            _disposed || Volatile.Read(ref _faulted) != 0,
+            this);
+        if (ExpiresAt <= DateTimeOffset.UtcNow)
+        {
+            Interlocked.Exchange(ref _faulted, 1);
+            throw new PipeRpcException(
+                "bridge_session_expired",
+                "The Bridge session has expired.");
+        }
     }
 }

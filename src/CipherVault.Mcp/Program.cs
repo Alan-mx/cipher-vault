@@ -180,24 +180,55 @@ public sealed record StrictBridgeSettings(
 public sealed class StrictMcpBridgeClient : IMcpBridgeClient
 {
     private static Process? _brokerProcess;
+    private static readonly SemaphoreSlim BrokerGate = new(1, 1);
     private static readonly IReadOnlySet<string> NoScopes =
         new HashSet<string>(StringComparer.Ordinal);
-    private readonly BridgePipeClientConnection _connection;
-    private readonly IReadOnlySet<string> _requestedScopes;
+    private readonly StrictBridgeSettings _settings;
+    private readonly Func<
+        CancellationToken,
+        Task<IBridgePipeClientConnection>> _connectionFactory;
+    private readonly Func<CancellationToken, Task<bool>> _ensureBrokerStarted;
+    private readonly SemaphoreSlim _connectionGate = new(1, 1);
+    private IBridgePipeClientConnection? _connection;
     private IReadOnlySet<string> _grantedScopes = NoScopes;
+    private bool _disposed;
 
-    private StrictMcpBridgeClient(
-        BridgePipeClientConnection connection,
-        IReadOnlySet<string> requestedScopes)
+    internal StrictMcpBridgeClient(
+        StrictBridgeSettings settings,
+        IBridgePipeClientConnection connection,
+        Func<
+            CancellationToken,
+            Task<IBridgePipeClientConnection>> connectionFactory,
+        Func<CancellationToken, Task<bool>> ensureBrokerStarted)
     {
+        _settings = settings;
         _connection = connection;
-        _requestedScopes = requestedScopes;
+        _connectionFactory = connectionFactory;
+        _ensureBrokerStarted = ensureBrokerStarted;
     }
 
     public static async Task<StrictMcpBridgeClient> ConnectAsync(
-        StrictBridgeSettings settings)
+        StrictBridgeSettings settings,
+        CancellationToken cancellationToken = default)
     {
-        EnsureBrokerStarted(settings);
+        _ = await EnsureBrokerStartedAsync(
+            settings,
+            cancellationToken).ConfigureAwait(false);
+        var connection = await CreateConnectionAsync(
+            settings,
+            cancellationToken).ConfigureAwait(false);
+        return new StrictMcpBridgeClient(
+            settings,
+            connection,
+            token => CreateConnectionAsync(settings, token),
+            token => EnsureBrokerStartedAsync(settings, token));
+    }
+
+    private static async Task<IBridgePipeClientConnection>
+        CreateConnectionAsync(
+            StrictBridgeSettings settings,
+            CancellationToken cancellationToken)
+    {
         var user = System.Security.Principal.WindowsIdentity.GetCurrent().User
             ?? throw new VaultException(
                 VaultErrorCode.StorageError,
@@ -210,14 +241,16 @@ public sealed class StrictMcpBridgeClient : IMcpBridgeClient
             settings.RequestedScopes,
             user.Value,
             (uint)System.Diagnostics.Process.GetCurrentProcess().SessionId);
-        var connection = await BridgePipeClientConnection.ConnectAsync(options);
-        return new StrictMcpBridgeClient(
-            connection,
-            settings.RequestedScopes);
+        return await BridgePipeClientConnection.ConnectAsync(
+            options,
+            cancellationToken).ConfigureAwait(false);
     }
 
-    private static void EnsureBrokerStarted(StrictBridgeSettings settings)
+    private static async Task<bool> EnsureBrokerStartedAsync(
+        StrictBridgeSettings settings,
+        CancellationToken cancellationToken)
     {
+        await BrokerGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             // The Broker is a long-lived interactive process, so its handle is
@@ -225,6 +258,7 @@ public sealed class StrictMcpBridgeClient : IMcpBridgeClient
             _brokerProcess = StrictServiceBrokerLauncher.EnsureStarted(
                 settings.Manifest,
                 settings.ManifestPath);
+            return true;
         }
         catch (Exception exception) when (
             exception is VaultException or
@@ -238,36 +272,283 @@ public sealed class StrictMcpBridgeClient : IMcpBridgeClient
             // Broker installation must not mask the Bridge error handling.
             Console.Error.WriteLine(
                 $"broker_launch_failed: {exception.Message}");
+            return false;
+        }
+        finally
+        {
+            BrokerGate.Release();
         }
     }
 
-    public IReadOnlySet<string> RequestedScopes => _requestedScopes;
+    public IReadOnlySet<string> RequestedScopes => _settings.RequestedScopes;
 
     public IReadOnlySet<string> GrantedScopes =>
         Volatile.Read(ref _grantedScopes);
 
-    public Task<string> CallToolAsync(
+    public async Task<string> CallToolAsync(
         string name,
         IReadOnlyDictionary<string, object?> arguments,
         CancellationToken cancellationToken)
     {
-        return _connection.CallToolAsync(name, arguments, cancellationToken);
+        ThrowIfDisposed();
+        var connection = await GetConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        try
+        {
+            return await connection.CallToolAsync(
+                name,
+                arguments,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (
+            IsTransportFailure(exception))
+        {
+            var replacement = await ReconnectAsync(
+                connection,
+                cancellationToken).ConfigureAwait(false);
+            if (RequiresGrant(name))
+            {
+                try
+                {
+                    await RequestGrantAsync(cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception grantException)
+                {
+                    return ErrorResult(
+                        "bridge_reauthorization_failed",
+                        grantException.Message);
+                }
+            }
+            if (!IsRetrySafeTool(name))
+            {
+                return ErrorResult(
+                    "bridge_connection_reset",
+                    "The Bridge connection was re-established. " +
+                    "The write operation was not retried automatically.");
+            }
+            try
+            {
+                return await replacement.CallToolAsync(
+                    name,
+                    arguments,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception retryException) when (
+                IsTransportFailure(retryException))
+            {
+                return ErrorResult(
+                    "bridge_unavailable",
+                    retryException.Message);
+            }
+        }
     }
 
     public async Task RequestGrantAsync(
         CancellationToken cancellationToken = default)
     {
-        var grant = await _connection.RequestGrantAsync(cancellationToken)
+        ThrowIfDisposed();
+        var brokerRecoveryAttempted = false;
+        var reconnectAttempted = false;
+        while (true)
+        {
+            var connection = await GetConnectionAsync(cancellationToken)
+                .ConfigureAwait(false);
+            try
+            {
+                await RequestGrantOnConnectionAsync(
+                    connection,
+                    cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            catch (PipeRpcException exception) when (
+                string.Equals(
+                    exception.Code,
+                    "approval_broker_unavailable",
+                    StringComparison.Ordinal) &&
+                !brokerRecoveryAttempted)
+            {
+                brokerRecoveryAttempted = true;
+                if (!await _ensureBrokerStarted(cancellationToken)
+                        .ConfigureAwait(false))
+                {
+                    throw;
+                }
+                var recoveryDeadline = DateTimeOffset.UtcNow.AddSeconds(12);
+                while (DateTimeOffset.UtcNow < recoveryDeadline)
+                {
+                    await Task.Delay(
+                        TimeSpan.FromMilliseconds(750),
+                        cancellationToken).ConfigureAwait(false);
+                    try
+                    {
+                        await RequestGrantOnConnectionAsync(
+                            connection,
+                            cancellationToken).ConfigureAwait(false);
+                        return;
+                    }
+                    catch (PipeRpcException retryException) when (
+                        string.Equals(
+                            retryException.Code,
+                            "approval_broker_unavailable",
+                            StringComparison.Ordinal))
+                    {
+                    }
+                }
+                throw;
+            }
+            catch (Exception exception) when (
+                !reconnectAttempted &&
+                IsTransportFailure(exception))
+            {
+                reconnectAttempted = true;
+                _ = await ReconnectAsync(
+                    connection,
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    public async Task RevokeGrantAsync(CancellationToken cancellationToken = default)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+        _disposed = true;
+        Interlocked.Exchange(ref _grantedScopes, NoScopes);
+        var connection = Interlocked.Exchange(ref _connection, null);
+        if (connection is not null)
+        {
+            await connection.DisposeAsync().ConfigureAwait(false);
+        }
+        _connectionGate.Dispose();
+    }
+
+    private async Task<IBridgePipeClientConnection> GetConnectionAsync(
+        CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+        if (_connection is { IsUsable: true })
+        {
+            return _connection;
+        }
+        await _connectionGate.WaitAsync(cancellationToken)
+            .ConfigureAwait(false);
+        try
+        {
+            if (_connection is { IsUsable: true })
+            {
+                return _connection;
+            }
+            await ReplaceConnectionLockedAsync(cancellationToken)
+                .ConfigureAwait(false);
+            return _connection!;
+        }
+        finally
+        {
+            _connectionGate.Release();
+        }
+    }
+
+    private async Task<IBridgePipeClientConnection> ReconnectAsync(
+        IBridgePipeClientConnection failedConnection,
+        CancellationToken cancellationToken)
+    {
+        await _connectionGate.WaitAsync(cancellationToken)
+            .ConfigureAwait(false);
+        try
+        {
+            if (!ReferenceEquals(_connection, failedConnection) &&
+                _connection is { IsUsable: true })
+            {
+                return _connection;
+            }
+            if (ReferenceEquals(_connection, failedConnection))
+            {
+                _connection = null;
+            }
+            await failedConnection.DisposeAsync().ConfigureAwait(false);
+            await ReplaceConnectionLockedAsync(cancellationToken)
+                .ConfigureAwait(false);
+            return _connection!;
+        }
+        finally
+        {
+            _connectionGate.Release();
+        }
+    }
+
+    private async Task ReplaceConnectionLockedAsync(
+        CancellationToken cancellationToken)
+    {
+        var previous = Interlocked.Exchange(ref _connection, null);
+        if (previous is not null)
+        {
+            await previous.DisposeAsync().ConfigureAwait(false);
+        }
+        Interlocked.Exchange(ref _grantedScopes, NoScopes);
+        _connection = await _connectionFactory(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private async Task RequestGrantOnConnectionAsync(
+        IBridgePipeClientConnection connection,
+        CancellationToken cancellationToken)
+    {
+        var grant = await connection.RequestGrantAsync(cancellationToken)
             .ConfigureAwait(false);
         Interlocked.Exchange(
             ref _grantedScopes,
             grant.Scopes.ToHashSet(StringComparer.Ordinal));
     }
 
-    public async Task RevokeGrantAsync(CancellationToken cancellationToken = default)
+    private static bool IsTransportFailure(Exception exception)
     {
-        Interlocked.Exchange(ref _grantedScopes, NoScopes);
-        await _connection.DisposeAsync();
+        return exception is IOException or
+            ObjectDisposedException or
+            TimeoutException ||
+            exception is PipeRpcException
+            {
+                Code: "bridge_session_expired"
+            };
+    }
+
+    private static bool IsRetrySafeTool(string name)
+    {
+        return name is
+            "vault_status" or
+            "list_catalog" or
+            "search_notes" or
+            "read_note" or
+            "scan_notes";
+    }
+
+    private static bool RequiresGrant(string name)
+    {
+        return !string.Equals(
+            name,
+            "vault_status",
+            StringComparison.Ordinal);
+    }
+
+    private static string ErrorResult(string code, string message)
+    {
+        return JsonSerializer.Serialize(
+            new
+            {
+                ok = false,
+                error = new
+                {
+                    code,
+                    message
+                }
+            });
+    }
+
+    private void ThrowIfDisposed()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
     }
 }
 

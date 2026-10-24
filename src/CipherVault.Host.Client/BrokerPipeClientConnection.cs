@@ -10,29 +10,33 @@ public sealed record BrokerPipeClientOptions(
     string PipeName,
     ProcessVerificationPolicy ClientPolicy,
     ProcessVerificationPolicy ServerPolicy,
-    int ConnectTimeoutMilliseconds = 5_000);
+    int ConnectTimeoutMilliseconds = 5_000,
+    TimeSpan? ActivityReportInterval = null);
 
 public sealed class BrokerPipeClientConnection : IAsyncDisposable
 {
-    private static readonly TimeSpan ActivityReportInterval =
+    private static readonly TimeSpan DefaultActivityReportInterval =
         TimeSpan.FromSeconds(2);
     private static readonly JsonSerializerOptions JsonOptions =
         new(JsonSerializerDefaults.Web);
     private readonly WindowsSystemActivityProvider _activityProvider = new();
     private VerifiedProcessEvidence? _clientEvidence;
     private VerifiedPipeClientConnection? _verifiedConnection;
+    private readonly TimeSpan _activityReportInterval;
     private bool _disposed;
 
     private BrokerPipeClientConnection(
         VerifiedProcessEvidence clientEvidence,
         VerifiedPipeClientConnection verifiedConnection,
         BrokerCapabilitiesData capabilities,
-        DateTimeOffset expiresAt)
+        DateTimeOffset expiresAt,
+        TimeSpan activityReportInterval)
     {
         _clientEvidence = clientEvidence;
         _verifiedConnection = verifiedConnection;
         Capabilities = capabilities;
         ExpiresAt = expiresAt;
+        _activityReportInterval = activityReportInterval;
     }
 
     public BrokerCapabilitiesData Capabilities { get; }
@@ -53,6 +57,15 @@ public sealed class BrokerPipeClientConnection : IAsyncDisposable
         {
             throw new ArgumentException(
                 "Broker server policy must expect a Host service.",
+                nameof(options));
+        }
+        var activityReportInterval =
+            options.ActivityReportInterval ??
+            DefaultActivityReportInterval;
+        if (activityReportInterval <= TimeSpan.Zero)
+        {
+            throw new ArgumentException(
+                "Broker activity report interval must be positive.",
                 nameof(options));
         }
 
@@ -140,7 +153,8 @@ public sealed class BrokerPipeClientConnection : IAsyncDisposable
                 clientResult.Evidence,
                 verifiedConnection,
                 capabilities,
-                authentication.ExpiresAt);
+                authentication.ExpiresAt,
+                activityReportInterval);
         }
         catch
         {
@@ -438,7 +452,7 @@ public sealed class BrokerPipeClientConnection : IAsyncDisposable
             await ReportActivityAsync(cancellationToken)
                 .ConfigureAwait(false);
             await Task.Delay(
-                ActivityReportInterval,
+                _activityReportInterval,
                 cancellationToken).ConfigureAwait(false);
         }
     }

@@ -556,6 +556,84 @@ public sealed class BrokerPipeTests
     }
 
     [Fact]
+    public async Task SilentBrokerHeartbeatReleasesRegistration()
+    {
+        var pipeName = "CipherVault.Broker.HeartbeatTest." +
+            Guid.NewGuid().ToString("N");
+        var currentUser = WindowsIdentity.GetCurrent().User!;
+        var currentSession = (uint)Process.GetCurrentProcess().SessionId;
+        var imagePath = Environment.ProcessPath!;
+        var imageHash = WindowsProcessIdentityVerifier.ComputeFileSha256(imagePath);
+        var servicePolicy = Policy(
+            VerifiedProcessKind.HostService,
+            currentUser.Value,
+            currentSession,
+            imagePath,
+            imageHash);
+        var brokerPolicy = Policy(
+            VerifiedProcessKind.AuthBroker,
+            currentUser.Value,
+            currentSession,
+            imagePath,
+            imageHash);
+        var serviceIdentity = VerifyIdentity(
+            (uint)Environment.ProcessId,
+            servicePolicy);
+        var options = new BrokerPipeServerOptions(
+            pipeName,
+            PipeSecurityFactory.Create(
+                [currentUser],
+                includeAdministrators: false,
+                includeSystem: false),
+            Guid.NewGuid().ToString("D"),
+            "1.0.0-test",
+            serviceIdentity,
+            [brokerPolicy],
+            currentUser.Value,
+            currentUser.Value,
+            TimeSpan.FromMinutes(5),
+            RequireInteractiveSession: false,
+            ActivityProvider: new BrokerActivityProvider(),
+            HeartbeatTimeout: TimeSpan.FromSeconds(1));
+        var registry = new BrokerConnectionRegistry();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await using var server = new BrokerPipeServer(options);
+        var connected = new TaskCompletionSource<BrokerPipeConnection>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var acceptTask = server.AcceptOnceAsync(
+            connection =>
+            {
+                registry.Set(connection);
+                connected.TrySetResult(connection);
+            },
+            registry.Clear,
+            timeout.Token);
+        await using var client = await BrokerPipeClientConnection.ConnectAsync(
+            new BrokerPipeClientOptions(
+                pipeName,
+                brokerPolicy,
+                servicePolicy,
+                ActivityReportInterval: TimeSpan.FromSeconds(10)));
+        var readTask = client.RunAsync(
+            (request, _) => Task.FromResult(
+                new BrokerCredentialPromptResult(
+                    request.RequestId,
+                    request.NonceB64Url,
+                    Confirmed: false,
+                    Credential: null,
+                    CredentialType: "password",
+                    DenialReason: "test")),
+            timeout.Token);
+
+        _ = await connected.Task.WaitAsync(timeout.Token);
+        Assert.True(registry.IsAvailable);
+
+        await acceptTask.WaitAsync(TimeSpan.FromSeconds(10));
+        await readTask.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(registry.IsAvailable);
+    }
+
+    [Fact]
     public void ClientPolicyFactoryBuildsBrokerAndHostPolicies()
     {
         const string sha256 =

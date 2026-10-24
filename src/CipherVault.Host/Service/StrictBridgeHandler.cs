@@ -22,6 +22,12 @@ public sealed class StrictBridgeHandler(
         BridgeGrantRequest request,
         CancellationToken cancellationToken)
     {
+        if (session.ExpiresAt <= DateTimeOffset.UtcNow)
+        {
+            throw new AdminPipeRpcException(
+                "bridge_session_expired",
+                "The Bridge session has expired.");
+        }
         var snapshot = await sessions.GetSnapshotAsync(cancellationToken)
             .ConfigureAwait(false);
         if (snapshot.SessionId is null ||
@@ -48,7 +54,9 @@ public sealed class StrictBridgeHandler(
             requestedScopes,
             new AccessGrantVaultGeneration(
                 snapshot.SessionId.Value,
-                snapshot.HardExpiresAt.Value),
+                snapshot.HardExpiresAt.Value < session.ExpiresAt
+                    ? snapshot.HardExpiresAt.Value
+                    : session.ExpiresAt),
             async (approval, token) =>
             {
                 var prompt = await grantPrompt.RequestAsync(
@@ -103,6 +111,25 @@ public sealed class StrictBridgeHandler(
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(request);
+        if (session.ExpiresAt <= DateTimeOffset.UtcNow)
+        {
+            return BridgeToolEnvelope.Error(
+                "bridge_session_expired",
+                "The Bridge session has expired.");
+        }
+        if (string.Equals(
+                request.ToolName,
+                "vault_status",
+                StringComparison.Ordinal))
+        {
+            var vaultSnapshot = await sessions.GetSnapshotAsync(
+                    cancellationToken)
+                .ConfigureAwait(false);
+            return BridgeToolEnvelope.VaultStatus(
+                session.ClientId,
+                session.AccessMode,
+                vaultSnapshot);
+        }
         if (grant is null)
         {
             return BridgeToolEnvelope.Error(
@@ -154,14 +181,6 @@ public sealed class StrictBridgeHandler(
                 "Access Grant is no longer valid.");
         }
         grant = used.Grant;
-
-        if (definition.ResultKind == BridgeToolResultKind.VaultStatus)
-        {
-            return BridgeToolEnvelope.VaultStatus(
-                session.ClientId,
-                session.AccessMode,
-                snapshot);
-        }
 
         try
         {

@@ -46,6 +46,18 @@ internal sealed class BridgePipeSession : IAsyncDisposable
             await foreach (var request in _requests.ReadAllAsync(
                                cancellationToken).ConfigureAwait(false))
             {
+                if (DateTimeOffset.UtcNow >= _session.ExpiresAt)
+                {
+                    await _connection.WriteAsync(
+                        PipeRpcCodec.Failure(
+                            request.RequestId,
+                            "bridge_session_expired",
+                            "The Bridge session has expired."),
+                        cancellationToken).ConfigureAwait(false);
+                    _requestWriter.TryComplete();
+                    return;
+                }
+
                 PipeRpcResponse response;
                 if (string.Equals(
                         request.Method,
@@ -105,8 +117,7 @@ internal sealed class BridgePipeSession : IAsyncDisposable
             }
         }
         catch (OperationCanceledException) when (
-            cancellationToken.IsCancellationRequested &&
-            _requests.Completion.IsCompleted)
+            cancellationToken.IsCancellationRequested)
         {
         }
     }
@@ -124,6 +135,13 @@ internal sealed class BridgePipeSession : IAsyncDisposable
 
     private async Task<PipeRpcResponse> HandleGrantAsync(PipeRpcRequest request)
     {
+        if (DateTimeOffset.UtcNow >= _session.ExpiresAt)
+        {
+            return PipeRpcCodec.Failure(
+                request.RequestId,
+                "bridge_session_expired",
+                "The Bridge session has expired.");
+        }
         if (_grant is not null)
         {
             return PipeRpcCodec.Failure(
@@ -170,6 +188,13 @@ internal sealed class BridgePipeSession : IAsyncDisposable
     private async Task<PipeRpcResponse> HandleToolCallAsync(
         PipeRpcRequest request)
     {
+        if (DateTimeOffset.UtcNow >= _session.ExpiresAt)
+        {
+            return PipeRpcCodec.Failure(
+                request.RequestId,
+                "bridge_session_expired",
+                "The Bridge session has expired.");
+        }
         try
         {
             var call = PipeRpcCodec.ReadPayload<BridgeToolCallRequest>(request);

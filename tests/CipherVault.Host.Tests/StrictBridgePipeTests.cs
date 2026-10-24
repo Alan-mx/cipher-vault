@@ -148,6 +148,42 @@ public sealed class StrictBridgePipeTests
     }
 
     [Fact]
+    public async Task BridgeSessionExpiryClosesConnectionAndRevokesGrant()
+    {
+        using var grants = new AccessGrantService();
+        var handler = new RealGrantBridgeHandler(
+            grants,
+            new ImmediateAccessGrantPrompt());
+        var pipeName = "CipherVault.Bridge.Test." + Guid.NewGuid().ToString("N");
+        var options = CreateBridgeOptions(
+            pipeName,
+            handler,
+            McpAccessMode.ReadOnly) with
+        {
+            BridgeSessionLifetime = TimeSpan.FromSeconds(1)
+        };
+        await using var server = new BridgePipeServer(options);
+        var acceptTask = server.AcceptOnceAsync();
+        await using var client = await BridgePipeClientConnection.ConnectAsync(
+            new BridgePipeClientOptions(
+                pipeName,
+                options.ClientId,
+                options.AccessMode,
+                new HashSet<string>(StringComparer.Ordinal) { "read" },
+                options.AllowedClientPolicy,
+                CurrentProcessServicePolicy(options.OwnerSid)));
+
+        _ = await client.RequestGrantAsync();
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var exception = await Assert.ThrowsAsync<PipeRpcException>(
+            () => client.GetStatusAsync());
+        Assert.Equal("bridge_session_expired", exception.Code);
+        _ = await acceptTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Empty(grants.List());
+    }
+
+    [Fact]
     public async Task CloseWithoutReasonUsesClientRequested()
     {
         using var grants = new AccessGrantService();
@@ -236,6 +272,38 @@ public sealed class StrictBridgePipeTests
         Assert.Empty(revoked.GrantScopes);
         Assert.Null(revoked.GrantExpiresAt);
 
+        _ = await client.CloseSessionAsync();
+        _ = await acceptTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task VaultStatusWorksWithoutGrantWhileLocked()
+    {
+        await using var environment = await CreateRealBridgeEnvironmentAsync();
+        var sessions = environment.Fixture.App.Services
+            .GetRequiredService<HostSessionCoordinator>();
+        await sessions.LockAsync(
+            "test-lock",
+            CancellationToken.None);
+        var acceptTask = environment.Server.AcceptOnceAsync();
+        await using var client = await BridgePipeClientConnection.ConnectAsync(
+            new BridgePipeClientOptions(
+                environment.Options.PipeName,
+                environment.Options.ClientId,
+                environment.Options.AccessMode,
+                new HashSet<string>(StringComparer.Ordinal) { "read" },
+                environment.Options.AllowedClientPolicy,
+                CurrentProcessServicePolicy(environment.Options.OwnerSid)));
+
+        using var status = await CallToolAsync(client, "vault_status", []);
+
+        Assert.True(status.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal(
+            "locked",
+            status.RootElement
+                .GetProperty("session")
+                .GetProperty("state")
+                .GetString());
         _ = await client.CloseSessionAsync();
         _ = await acceptTask.WaitAsync(TimeSpan.FromSeconds(5));
     }

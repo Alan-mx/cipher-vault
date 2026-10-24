@@ -76,10 +76,24 @@ public sealed class BrokerPipeHostedService(
         while (!stoppingToken.IsCancellationRequested)
         {
             await using var server = new BrokerPipeServer(serverOptions);
+            using var connectionWatch =
+                CancellationTokenSource.CreateLinkedTokenSource(
+                    stoppingToken);
+            var accepted = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var monitorTask = MonitorConnectedBrokerAsync(
+                server,
+                registry,
+                () => accepted.Task.IsCompleted,
+                connectionWatch.Token);
             try
             {
                 await server.AcceptOnceAsync(
-                    registry.Set,
+                    connection =>
+                    {
+                        registry.Set(connection);
+                        accepted.TrySetResult();
+                    },
                     connection =>
                     {
                         registry.Clear(connection);
@@ -112,6 +126,36 @@ public sealed class BrokerPipeHostedService(
                     return;
                 }
             }
+            finally
+            {
+                connectionWatch.Cancel();
+                try
+                {
+                    await monitorTask.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+            }
+        }
+    }
+
+    private static async Task MonitorConnectedBrokerAsync(
+        BrokerPipeServer server,
+        BrokerConnectionRegistry registry,
+        Func<bool> hasAccepted,
+        CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        while (await timer.WaitForNextTickAsync(cancellationToken)
+                   .ConfigureAwait(false))
+        {
+            if (!hasAccepted() || registry.IsAvailable)
+            {
+                continue;
+            }
+            await server.DisposeAsync().ConfigureAwait(false);
+            return;
         }
     }
 

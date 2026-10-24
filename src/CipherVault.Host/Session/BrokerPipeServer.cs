@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Security.AccessControl;
@@ -23,7 +24,12 @@ public sealed record BrokerPipeServerOptions(
     TimeSpan SessionLifetime,
     bool RequireInteractiveSession = true,
     BrokerActivityProvider? ActivityProvider = null,
-    OwnerSessionRegistry? OwnerSessions = null);
+    OwnerSessionRegistry? OwnerSessions = null,
+    TimeSpan? HeartbeatTimeout = null)
+{
+    public static readonly TimeSpan DefaultHeartbeatTimeout =
+        TimeSpan.FromSeconds(6);
+}
 
 public sealed class BrokerPipeConnection : IAsyncDisposable
 {
@@ -31,8 +37,10 @@ public sealed class BrokerPipeConnection : IAsyncDisposable
         new(JsonSerializerDefaults.Web);
     private readonly PipeJsonConnection _connection;
     private readonly BrokerActivityProvider _activityProvider;
+    private readonly TimeSpan _heartbeatTimeout;
     private readonly ConcurrentDictionary<Guid, TaskCompletionSource<PipeRpcResponse>>
         _pending = new();
+    private int _clientLost;
     private int _faulted;
     private bool _disposed;
 
@@ -42,7 +50,8 @@ public sealed class BrokerPipeConnection : IAsyncDisposable
         BrokerCapabilitiesData capabilities,
         Guid processSessionId,
         DateTimeOffset expiresAt,
-        BrokerActivityProvider activityProvider)
+        BrokerActivityProvider activityProvider,
+        TimeSpan heartbeatTimeout)
     {
         _connection = connection;
         ClientIdentity = clientIdentity;
@@ -50,6 +59,7 @@ public sealed class BrokerPipeConnection : IAsyncDisposable
         ProcessSessionId = processSessionId;
         ExpiresAt = expiresAt;
         _activityProvider = activityProvider;
+        _heartbeatTimeout = heartbeatTimeout;
     }
 
     public VerifiedProcessIdentity ClientIdentity { get; }
@@ -59,7 +69,8 @@ public sealed class BrokerPipeConnection : IAsyncDisposable
     public bool IsUsable =>
         !_disposed &&
         Volatile.Read(ref _faulted) == 0 &&
-        ExpiresAt > DateTimeOffset.UtcNow;
+        ExpiresAt > DateTimeOffset.UtcNow &&
+        IsClientProcessAlive();
     public SystemActivitySnapshot ActivitySnapshot =>
         _activityProvider.GetSnapshot();
     public event Action<BrokerPipeConnection>? Faulted;
@@ -144,13 +155,35 @@ public sealed class BrokerPipeConnection : IAsyncDisposable
             return;
         }
         connectionLifetime.CancelAfter(remaining);
+        using var processWatchCancellation =
+            CancellationTokenSource.CreateLinkedTokenSource(
+                connectionLifetime.Token);
+        var processWatchTask = MonitorClientProcessAsync(
+            processWatchCancellation.Token);
 
         try
         {
             while (true)
             {
-                var frame = await _connection.ReadAsync<JsonElement>(
-                    connectionLifetime.Token).ConfigureAwait(false);
+                using var heartbeat =
+                    CancellationTokenSource.CreateLinkedTokenSource(
+                        connectionLifetime.Token);
+                heartbeat.CancelAfter(_heartbeatTimeout);
+                JsonElement frame;
+                try
+                {
+                    frame = await _connection.ReadAsync<JsonElement>(
+                        heartbeat.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (
+                    heartbeat.IsCancellationRequested &&
+                    !connectionLifetime.IsCancellationRequested &&
+                    !cancellationToken.IsCancellationRequested)
+                {
+                    FailPending(new TimeoutException(
+                        "Broker heartbeat timed out."));
+                    return;
+                }
                 if (frame.TryGetProperty("method", out var method))
                 {
                     if (!string.Equals(
@@ -195,10 +228,61 @@ public sealed class BrokerPipeConnection : IAsyncDisposable
         {
             FailPending(exception);
         }
+        catch (ObjectDisposedException) when (
+            Volatile.Read(ref _clientLost) != 0)
+        {
+            FailPending(new IOException("Broker client process exited."));
+        }
         catch (Exception exception)
         {
             FailPending(exception);
             throw;
+        }
+        finally
+        {
+            processWatchCancellation.Cancel();
+            try
+            {
+                await processWatchTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+    }
+
+    private async Task MonitorClientProcessAsync(
+        CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        while (await timer.WaitForNextTickAsync(cancellationToken)
+                   .ConfigureAwait(false))
+        {
+            if (IsClientProcessAlive())
+            {
+                continue;
+            }
+            Volatile.Write(ref _clientLost, 1);
+            await _connection.DisposeAsync().ConfigureAwait(false);
+            return;
+        }
+    }
+
+    public bool IsClientProcessAlive()
+    {
+        try
+        {
+            using var process = Process.GetProcessById(
+                (int)ClientIdentity.ProcessId);
+            return true;
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException or
+            InvalidOperationException or
+            System.ComponentModel.Win32Exception or
+            NotSupportedException)
+        {
+            return false;
         }
     }
 
@@ -266,6 +350,14 @@ public sealed class BrokerPipeServer : IAsyncDisposable
         {
             throw new ArgumentException(
                 "Broker pipe requires Auth Broker client policies.",
+                nameof(options));
+        }
+        if ((options.HeartbeatTimeout ??
+                BrokerPipeServerOptions.DefaultHeartbeatTimeout) <=
+            TimeSpan.Zero)
+        {
+            throw new ArgumentException(
+                "Broker heartbeat timeout must be positive.",
                 nameof(options));
         }
         _server = NamedPipeServerFactory.Create(
@@ -386,7 +478,9 @@ public sealed class BrokerPipeServer : IAsyncDisposable
             capabilities,
             processSessionId,
             expiresAt,
-            _options.ActivityProvider ?? new BrokerActivityProvider());
+            _options.ActivityProvider ?? new BrokerActivityProvider(),
+            _options.HeartbeatTimeout ??
+                BrokerPipeServerOptions.DefaultHeartbeatTimeout);
         connected(connection);
         try
         {
@@ -447,6 +541,18 @@ public sealed class BrokerConnectionRegistry
             lock (_sync)
             {
                 return _current?.IsUsable == true;
+            }
+        }
+    }
+
+    public bool ConnectedClientProcessExited
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _current is not null &&
+                    !_current.IsClientProcessAlive();
             }
         }
     }

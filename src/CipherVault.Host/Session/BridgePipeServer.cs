@@ -148,6 +148,20 @@ public sealed class BridgePipeServer : IAsyncDisposable
                 session.ExpiresAt),
             sessionCancellation.Token).ConfigureAwait(false);
 
+        using var sessionLifetime =
+            CancellationTokenSource.CreateLinkedTokenSource(
+                sessionCancellation.Token);
+        var remaining = session.ExpiresAt - DateTimeOffset.UtcNow;
+        if (remaining > TimeSpan.Zero)
+        {
+            sessionLifetime.CancelAfter(remaining);
+        }
+        else
+        {
+            sessionLifetime.Cancel();
+        }
+        var sessionToken = sessionLifetime.Token;
+
         var requests = Channel.CreateUnbounded<PipeRpcRequest>(
             new UnboundedChannelOptions
             {
@@ -159,22 +173,27 @@ public sealed class BridgePipeServer : IAsyncDisposable
             connection,
             requests.Writer,
             disconnected,
-            sessionCancellation);
+            sessionToken);
         var bridgeSession = new BridgePipeSession(
             _options,
             session,
             connection,
             requests.Reader,
             requests.Writer,
-            sessionCancellation.Token,
+            sessionToken,
             handlerCancellation.Token);
         try
         {
             await bridgeSession.RunAsync(
-                sessionCancellation.Token).ConfigureAwait(false);
+                sessionToken).ConfigureAwait(false);
         }
         finally
         {
+            var closeReason =
+                sessionLifetime.IsCancellationRequested &&
+                !cancellationToken.IsCancellationRequested
+                    ? "bridge-expired"
+                    : "bridge-disconnected";
             disconnected.Cancel();
             handlerCancellation.Cancel();
             sessionCancellation.Cancel();
@@ -188,7 +207,7 @@ public sealed class BridgePipeServer : IAsyncDisposable
             }
             await _options.Handler.CloseSessionAsync(
                 session.ProcessSessionId,
-                "bridge-disconnected",
+                closeReason,
                 CancellationToken.None).ConfigureAwait(false);
         }
         return session;
@@ -198,21 +217,21 @@ public sealed class BridgePipeServer : IAsyncDisposable
         PipeJsonConnection connection,
         ChannelWriter<PipeRpcRequest> writer,
         CancellationTokenSource disconnected,
-        CancellationTokenSource sessionCancellation)
+        CancellationToken sessionToken)
     {
         try
         {
-            while (!sessionCancellation.IsCancellationRequested)
+            while (!sessionToken.IsCancellationRequested)
             {
                 var request = await connection.ReadAsync<PipeRpcRequest>(
-                    sessionCancellation.Token).ConfigureAwait(false);
+                    sessionToken).ConfigureAwait(false);
                 await writer.WriteAsync(
                     request,
-                    sessionCancellation.Token).ConfigureAwait(false);
+                    sessionToken).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (
-            sessionCancellation.IsCancellationRequested)
+            sessionToken.IsCancellationRequested)
         {
         }
         catch (EndOfStreamException)
