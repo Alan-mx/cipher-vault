@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
@@ -32,12 +33,21 @@ if (command == "service")
 {
     return await RunServiceCommandAsync(args, jsonOptions);
 }
+var skipBrokerLaunch = HasFlag(args, "--no-broker");
+if (skipBrokerLaunch && command != "status")
+{
+    Console.Error.WriteLine("--no-broker is only supported by the status command.");
+    return 2;
+}
 
 var standalone = HasFlag(args, "--standalone");
 CliHostSession session;
 try
 {
-    session = await CreateHostSessionAsync(args, standalone);
+    session = await CreateHostSessionAsync(
+        args,
+        standalone,
+        skipBrokerLaunch);
 }
 catch (VaultException exception)
 {
@@ -599,7 +609,8 @@ static async Task<int> RunServiceOperationAsync(
 
 static async Task<CliHostSession> CreateHostSessionAsync(
     string[] arguments,
-    bool standalone)
+    bool standalone,
+    bool skipBrokerLaunch)
 {
     if (standalone)
     {
@@ -649,17 +660,28 @@ static async Task<CliHostSession> CreateHostSessionAsync(
             VaultErrorCode.InvalidInput,
             "Install manifest Admin pipe is required.");
     }
-    using var brokerProcess = StrictServiceBrokerLauncher.EnsureStarted(
-        manifest,
-        manifestPath);
-    var options = StrictServiceClientPolicyFactory.CreateAdminOptions(
-        manifest,
-        adminPipe,
-        currentUser.Value,
-        (uint)System.Diagnostics.Process.GetCurrentProcess().SessionId,
-        VerifiedProcessKind.AdminCli);
-    var strictClient = await NamedPipeHostVaultClient.CreateAsync(options);
-    return new CliHostSession(paths.VaultPath, strictClient, ownership: null);
+    Process? brokerProcess = null;
+    try
+    {
+        if (!skipBrokerLaunch)
+        {
+            brokerProcess = StrictServiceBrokerLauncher.EnsureStarted(
+                manifest,
+                manifestPath);
+        }
+        var options = StrictServiceClientPolicyFactory.CreateAdminOptions(
+            manifest,
+            adminPipe,
+            currentUser.Value,
+            (uint)System.Diagnostics.Process.GetCurrentProcess().SessionId,
+            VerifiedProcessKind.AdminCli);
+        var strictClient = await NamedPipeHostVaultClient.CreateAsync(options);
+        return new CliHostSession(paths.VaultPath, strictClient, ownership: null);
+    }
+    finally
+    {
+        brokerProcess?.Dispose();
+    }
 }
 
 static bool HasFlag(string[] arguments, string flag)
@@ -835,7 +857,7 @@ static void PrintHelp()
           service uninstall   Remove the service registration and retain data
                               Add --remove-data to delete %ProgramData%\CipherVault
           init                --vault <directory>
-          status              --vault <directory>
+          status              --vault <directory> [--no-broker]
           backup              --vault <directory> --to <file.cvbackup>
           restore             --backup <file.cvbackup> --to <new-directory> [--credential password|recovery-key]
           verify              --vault <directory>
