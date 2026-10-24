@@ -2,6 +2,18 @@ using System.Text.Json;
 using CipherVault.Host.Client;
 using CipherVault.Host.Contracts;
 
+var approvalDelay = TimeSpan.Zero;
+if (int.TryParse(
+        Environment.GetEnvironmentVariable(
+            "CIPHER_VAULT_TEST_APPROVAL_DELAY_MS"),
+        out var approvalDelayMilliseconds) &&
+    approvalDelayMilliseconds > 0)
+{
+    approvalDelay = TimeSpan.FromMilliseconds(approvalDelayMilliseconds);
+}
+var approvalStartedPath = Environment.GetEnvironmentVariable(
+    "CIPHER_VAULT_TEST_APPROVAL_STARTED_FILE");
+
 if (args.Length != 1)
 {
     Console.Error.WriteLine("Expected a Broker client options JSON file.");
@@ -48,13 +60,7 @@ while (!cancellation.IsCancellationRequested)
                     Credential: null,
                     CredentialType: "password",
                     DenialReason: "test")),
-            (request, _) => Task.FromResult(
-                new BrokerApprovalDecision(
-                    request.ApprovalId,
-                    request.NonceB64Url,
-                    Approved: true,
-                    DenialReason: null,
-                    ApprovedScopes: request.RequestedScopes)),
+            ApproveAsync,
             cancellation.Token);
     }
     catch (OperationCanceledException) when (
@@ -78,3 +84,26 @@ while (!cancellation.IsCancellationRequested)
 }
 
 return 0;
+
+async Task<BrokerApprovalDecision> ApproveAsync(
+    BrokerApprovalRequest request,
+    CancellationToken cancellationToken)
+{
+    if (!string.IsNullOrWhiteSpace(approvalStartedPath))
+    {
+        await File.WriteAllTextAsync(
+            approvalStartedPath,
+            request.ApprovalId.ToString("D"),
+            cancellationToken);
+    }
+    if (approvalDelay > TimeSpan.Zero)
+    {
+        await Task.Delay(approvalDelay, cancellationToken);
+    }
+    return new BrokerApprovalDecision(
+        request.ApprovalId,
+        request.NonceB64Url,
+        Approved: true,
+        DenialReason: null,
+        ApprovedScopes: request.RequestedScopes);
+}

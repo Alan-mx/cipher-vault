@@ -265,36 +265,54 @@ public sealed class BrokerAccessGrantPrompt(BrokerConnectionRegistry registry)
         var allowed = AccessGrantScopes.ToNames(request.AllowedScopes)
             .OrderBy(value => value, StringComparer.Ordinal)
             .ToArray();
-        var result = await broker.CallAsync<
-                BrokerApprovalRequest,
-                BrokerApprovalDecision>(
-                "broker.approval.request",
-                new BrokerApprovalRequest(
-                    approvalId,
-                    nonce,
-                    "AccessGrant",
-                    "授权 Agent 访问 CipherVault",
-                    $"客户端 {request.ClientId} 请求权限：{requested}",
-                    CanonicalJson.ComputeSha256(
-                        JsonSerializer.SerializeToElement(new
-                        {
-                            request.ClientId,
-                            request.ClientInstanceId,
-                            request.RequestedScopes
-                        })),
+        BrokerApprovalDecision result;
+        try
+        {
+            result = await broker.CallAsync<
+                    BrokerApprovalRequest,
+                    BrokerApprovalDecision>(
+                    "broker.approval.request",
+                    new BrokerApprovalRequest(
+                        approvalId,
+                        nonce,
+                        "AccessGrant",
+                        "授权 Agent 访问 CipherVault",
+                        $"客户端 {request.ClientId} 请求权限：{requested}",
+                        CanonicalJson.ComputeSha256(
+                            JsonSerializer.SerializeToElement(new
+                            {
+                                request.ClientId,
+                                request.ClientInstanceId,
+                                request.RequestedScopes
+                            })),
+                        expiresAt,
+                        AccessGrantScopes.ToNames(request.RequestedScopes)
+                            .OrderBy(value => value, StringComparer.Ordinal)
+                            .ToArray(),
+                        allowed,
+                        request.ClientId,
+                        request.ClientInstanceId,
+                        request.TokenAccessMode.ToString(),
+                        request.IdleLifetime.ToString(),
+                        request.HardLifetime.ToString()),
                     expiresAt,
-                    AccessGrantScopes.ToNames(request.RequestedScopes)
-                        .OrderBy(value => value, StringComparer.Ordinal)
-                        .ToArray(),
-                    allowed,
-                    request.ClientId,
-                    request.ClientInstanceId,
-                    request.TokenAccessMode.ToString(),
-                    request.IdleLifetime.ToString(),
-                    request.HardLifetime.ToString()),
-                expiresAt,
-                cancellationToken)
-            .ConfigureAwait(false);
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (AdminPipeRpcException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is TimeoutException or
+            IOException or
+            InvalidDataException or
+            ObjectDisposedException)
+        {
+            throw new AdminPipeRpcException(
+                "approval_broker_unavailable",
+                "The interactive Auth Broker connection is unavailable for Access Grant.");
+        }
         if (result.ApprovalId != approvalId ||
             !PipeHandshakeTranscript.FixedTimeEquals(nonce, result.NonceB64Url))
         {
