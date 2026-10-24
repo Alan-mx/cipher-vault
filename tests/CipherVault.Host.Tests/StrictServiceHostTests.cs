@@ -1,6 +1,7 @@
 using System.IO;
 using CipherVault.Core.Configuration;
 using CipherVault.Core.Errors;
+using CipherVault.Host.Security;
 using CipherVault.Host.Service;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -25,6 +26,9 @@ public sealed class StrictServiceHostTests
                 EnableAdminPipe: false,
                 EnableBrokerPipe: false,
                 EnableBridgePipe: false));
+        var grantPrompt =
+            service.Services.GetRequiredService<IHostAccessGrantPrompt>();
+        Assert.IsType<BrokerAccessGrantPrompt>(grantPrompt);
         var lifetime = service.Services.GetRequiredService<IHostApplicationLifetime>();
         var started = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);

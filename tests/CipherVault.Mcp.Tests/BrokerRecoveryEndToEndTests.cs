@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using CipherVault.Host.Client;
 using CipherVault.Host.Security;
 
 namespace CipherVault.Mcp.Tests;
@@ -82,6 +83,121 @@ public sealed class BrokerRecoveryEndToEndTests
             environment.ReplacementBroker);
         Assert.Equal(1, environment.BrokerStarts);
         await environment.WaitForRegisteredAsync(secondBroker);
+
+        var lifecycleEvents =
+            await environment.WaitForLifecycleEventsAsync(events =>
+                events.Any(item =>
+                    item.EventType == "broker_accepted" &&
+                    item.ProcessId == (uint?)firstBroker.Id) &&
+                events.Any(item =>
+                    item.EventType == "broker_unavailable") &&
+                events.Any(item =>
+                    item.EventType == "broker_released" &&
+                    item.ProcessId == (uint?)firstBroker.Id) &&
+                events.Any(item =>
+                    item.EventType == "broker_accepted" &&
+                    item.ProcessId == (uint?)secondBroker.Id));
+        Assert.Contains(
+            lifecycleEvents,
+            item => item.EventType == "access_grant_approval_failed" &&
+                item.Stage == "broker.approval.request" &&
+                item.Result == "error" &&
+                item.ErrorType is not null);
+    }
+
+    [Fact]
+    public async Task MidApprovalBrokerKillReturnsStableRecoveryErrorAndLogsCause()
+    {
+        await using var environment =
+            await BrokerRecoveryTestEnvironment.CreateAsync();
+        var approvalStartedPath = environment.CreateTemporaryFilePath(
+            "direct-approval-started");
+        var firstBroker = environment.StartInitialBroker(
+            approvalDelay: TimeSpan.FromSeconds(30),
+            approvalStartedPath: approvalStartedPath);
+        await environment.WaitForRegisteredAsync(firstBroker);
+
+        var requestTask = environment.BridgeConnection.RequestGrantAsync(
+            environment.Token);
+        await WaitUntilAsync(
+            () => File.Exists(approvalStartedPath),
+            TimeSpan.FromSeconds(10));
+        var approvalId = (await File.ReadAllTextAsync(
+            approvalStartedPath,
+            environment.Token)).Trim();
+        firstBroker.Kill(entireProcessTree: true);
+        await firstBroker.WaitForExitAsync(environment.Token);
+
+        var exception = await Assert.ThrowsAsync<PipeRpcException>(
+            async () => await requestTask.WaitAsync(
+                TimeSpan.FromSeconds(10),
+                environment.Token));
+        Assert.Equal("approval_broker_unavailable", exception.Code);
+
+        var lifecycleEvents =
+            await environment.WaitForLifecycleEventsAsync(events =>
+                events.Any(item =>
+                    item.EventType == "access_grant_approval_failed" &&
+                    item.Message?.Contains(
+                        $"approvalId={approvalId}",
+                        StringComparison.Ordinal) == true) &&
+                events.Any(item =>
+                    item.EventType == "broker_released" &&
+                    item.ProcessId == (uint?)firstBroker.Id));
+        var failureEvent = Assert.Single(
+            lifecycleEvents,
+            item => item.EventType == "access_grant_approval_failed");
+        Assert.Equal("broker.approval.request", failureEvent.Stage);
+        Assert.Equal("error", failureEvent.Result);
+        Assert.Contains(
+            failureEvent.ErrorType,
+            new[]
+            {
+                typeof(IOException).FullName,
+                typeof(EndOfStreamException).FullName,
+                typeof(ObjectDisposedException).FullName,
+                typeof(TimeoutException).FullName,
+                typeof(InvalidDataException).FullName
+            });
+        Assert.Equal(0, environment.BrokerStarts);
+        Assert.Null(environment.ReplacementBroker);
+    }
+
+    [Fact]
+    public async Task RequestCancellationDoesNotStartBrokerRecovery()
+    {
+        await using var environment =
+            await BrokerRecoveryTestEnvironment.CreateAsync();
+        var approvalStartedPath = environment.CreateTemporaryFilePath(
+            "cancelled-approval-started");
+        var firstBroker = environment.StartInitialBroker(
+            approvalDelay: TimeSpan.FromSeconds(30),
+            approvalStartedPath: approvalStartedPath);
+        await environment.WaitForRegisteredAsync(firstBroker);
+        using var cancellation = CancellationTokenSource
+            .CreateLinkedTokenSource(environment.Token);
+
+        var requestTask = environment.Mcp.RequestGrantAsync(
+            cancellation.Token);
+        await WaitUntilAsync(
+            () => File.Exists(approvalStartedPath),
+            TimeSpan.FromSeconds(10));
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            async () => await requestTask.WaitAsync(
+                TimeSpan.FromSeconds(10),
+                environment.Token));
+        await Task.Delay(500, environment.Token);
+
+        Assert.Empty(environment.Mcp.GrantedScopes);
+        Assert.Equal(0, environment.BrokerStarts);
+        Assert.Null(environment.ReplacementBroker);
+        Assert.True(environment.Registry.IsAvailable);
+        var lifecycleEvents = await environment.ReadLifecycleEventsAsync();
+        Assert.DoesNotContain(
+            lifecycleEvents,
+            item => item.EventType == "access_grant_approval_failed");
     }
 
     [Fact]

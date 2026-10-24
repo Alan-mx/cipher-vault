@@ -25,6 +25,7 @@ internal sealed class BrokerRecoveryTestEnvironment : IAsyncDisposable
     private readonly string _clientOptionsPath;
     private readonly AccessGrantService _grants;
     private readonly BridgePipeServer _bridgeServer;
+    private readonly BridgePipeClientConnection _bridgeConnection;
     private readonly Task _brokerLoopTask;
     private readonly Task _bridgeAcceptTask;
     private readonly BrokerGrantHandler _handler;
@@ -51,6 +52,7 @@ internal sealed class BrokerRecoveryTestEnvironment : IAsyncDisposable
         _timeout = timeout;
         _grants = grants;
         _bridgeServer = bridgeServer;
+        _bridgeConnection = bridgeConnection;
         _brokerLoopTask = brokerLoopTask;
         _bridgeAcceptTask = bridgeAcceptTask;
         _handler = handler;
@@ -60,6 +62,7 @@ internal sealed class BrokerRecoveryTestEnvironment : IAsyncDisposable
     public BrokerConnectionRegistry Registry => _registry;
     public AccessGrantService Grants => _grants;
     public BrokerGrantHandler Handler => _handler;
+    public BridgePipeClientConnection BridgeConnection => _bridgeConnection;
     public StrictMcpBridgeClient Mcp { get; private set; } = null!;
     public Process? InitialBroker => _initialBroker;
     public Process? ReplacementBroker => _replacementBroker;
@@ -148,7 +151,9 @@ internal sealed class BrokerRecoveryTestEnvironment : IAsyncDisposable
             timeout.Token);
 
         var grants = new AccessGrantService();
-        var brokerPrompt = new BrokerAccessGrantPrompt(registry);
+        var brokerPrompt = new BrokerAccessGrantPrompt(
+            registry,
+            lifecycleLog);
         var handler = new BrokerGrantHandler(grants, brokerPrompt);
         var bridgeOptions = new BridgePipeServerOptions
         {
@@ -264,12 +269,43 @@ internal sealed class BrokerRecoveryTestEnvironment : IAsyncDisposable
             Directory.GetFiles(
                 lifecycleLogDirectory,
                 "broker-*.jsonl"));
-        return File.ReadAllLines(lifecycleLogPath)
-            .Select(line => JsonSerializer.Deserialize<BrokerLifecycleLogEvent>(
-                line,
-                new JsonSerializerOptions(JsonSerializerDefaults.Web)))
+        using var stream = new FileStream(
+            lifecycleLogPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        var lines = new List<string>();
+        while (reader.ReadLine() is { } line)
+        {
+            lines.Add(line);
+        }
+        return lines
+            .Select(TryDeserializeLifecycleEvent)
             .OfType<BrokerLifecycleLogEvent>()
             .ToArray();
+    }
+
+    public async Task<BrokerLifecycleLogEvent[]> WaitForLifecycleEventsAsync(
+        Func<BrokerLifecycleLogEvent[], bool> condition,
+        TimeSpan? timeout = null)
+    {
+        var deadline = DateTimeOffset.UtcNow + (timeout ??
+            TimeSpan.FromSeconds(10));
+        while (true)
+        {
+            var events = await ReadLifecycleEventsAsync();
+            if (condition(events))
+            {
+                return events;
+            }
+            if (DateTimeOffset.UtcNow >= deadline)
+            {
+                throw new TimeoutException(
+                    "Expected Broker lifecycle event was not observed.");
+            }
+            await Task.Delay(50);
+        }
     }
 
     public async ValueTask DisposeAsync()
@@ -459,6 +495,21 @@ internal sealed class BrokerRecoveryTestEnvironment : IAsyncDisposable
                     "Broker recovery test condition was not reached.");
             }
             await Task.Delay(25);
+        }
+    }
+
+    private static BrokerLifecycleLogEvent? TryDeserializeLifecycleEvent(
+        string line)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<BrokerLifecycleLogEvent>(
+                line,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 }

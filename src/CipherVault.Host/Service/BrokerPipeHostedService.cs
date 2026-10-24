@@ -247,7 +247,9 @@ public sealed class BrokerApprovalPrompt(
     }
 }
 
-public sealed class BrokerAccessGrantPrompt(BrokerConnectionRegistry registry)
+public sealed class BrokerAccessGrantPrompt(
+    BrokerConnectionRegistry registry,
+    IBrokerLifecycleLog? lifecycleLog = null)
     : IHostAccessGrantPrompt
 {
     public async Task<HostAccessGrantPromptResult> RequestAsync(
@@ -309,6 +311,19 @@ public sealed class BrokerAccessGrantPrompt(BrokerConnectionRegistry registry)
             InvalidDataException or
             ObjectDisposedException)
         {
+            lifecycleLog?.Write(new BrokerLifecycleLogEvent(
+                DateTimeOffset.UtcNow,
+                "access_grant_approval_failed",
+                "broker.approval.request",
+                "error",
+                ProcessId: broker.ClientIdentity.ProcessId,
+                ProcessStartedAt: broker.ClientIdentity.ProcessStartedAt,
+                ErrorType: exception.GetType().FullName,
+                Message:
+                    $"approvalId={approvalId:D}; clientId={request.ClientId}; " +
+                    "code=approval_broker_unavailable; " +
+                    $"exception={exception.GetType().FullName}; " +
+                    $"detail={exception.Message}"));
             throw new AdminPipeRpcException(
                 "approval_broker_unavailable",
                 "The interactive Auth Broker connection is unavailable for Access Grant.");

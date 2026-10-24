@@ -109,7 +109,8 @@ public sealed class StrictServiceHost : IAsyncDisposable
                     serviceProvider.GetRequiredService<BrokerConnectionRegistry>()));
             builder.Services.AddSingleton<IHostAccessGrantPrompt>(
                 serviceProvider => new BrokerAccessGrantPrompt(
-                    serviceProvider.GetRequiredService<BrokerConnectionRegistry>()));
+                    serviceProvider.GetRequiredService<BrokerConnectionRegistry>(),
+                    serviceProvider.GetRequiredService<IBrokerLifecycleLog>()));
             builder.Services.AddSingleton<ISecurityEventLog>(
                 new JsonlSecurityEventLog(paths.LogsPath));
             builder.Services.AddSingleton<IBrokerLifecycleLog>(
