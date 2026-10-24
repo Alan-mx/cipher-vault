@@ -10,6 +10,7 @@ using CipherVault.Host.Session;
 using CipherVault.Ipc;
 using CipherVault.Security.Win;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace CipherVault.Host.Service;
 
@@ -19,7 +20,8 @@ public sealed class BrokerPipeHostedService(
     StrictServiceHostOptions options,
     BrokerConnectionRegistry registry,
     BrokerActivityProvider activityProvider,
-    OwnerSessionRegistry ownerSessions) : BackgroundService
+    OwnerSessionRegistry ownerSessions,
+    ILogger<BrokerPipeAcceptLoop> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -73,90 +75,13 @@ public sealed class BrokerPipeHostedService(
             ActivityProvider: activityProvider,
             OwnerSessions: ownerSessions);
 
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            await using var server = new BrokerPipeServer(serverOptions);
-            using var connectionWatch =
-                CancellationTokenSource.CreateLinkedTokenSource(
-                    stoppingToken);
-            var accepted = new TaskCompletionSource(
-                TaskCreationOptions.RunContinuationsAsynchronously);
-            var monitorTask = MonitorConnectedBrokerAsync(
-                server,
+        await new BrokerPipeAcceptLoop(
+                serverOptions,
                 registry,
-                () => accepted.Task.IsCompleted,
-                connectionWatch.Token);
-            try
-            {
-                await server.AcceptOnceAsync(
-                    connection =>
-                    {
-                        registry.Set(connection);
-                        accepted.TrySetResult();
-                    },
-                    connection =>
-                    {
-                        registry.Clear(connection);
-                        activityProvider.Clear();
-                    },
-                    stoppingToken).ConfigureAwait(false);
-            }
-            catch (AdminPipeRpcException exception) when (
-                exception.Code == "broker_already_connected")
-            {
-                await Task.Delay(
-                    TimeSpan.FromMilliseconds(250),
-                    stoppingToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (
-                stoppingToken.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception)
-            {
-                try
-                {
-                    await Task.Delay(
-                        TimeSpan.FromMilliseconds(100),
-                        stoppingToken).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    return;
-                }
-            }
-            finally
-            {
-                connectionWatch.Cancel();
-                try
-                {
-                    await monitorTask.ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                }
-            }
-        }
-    }
-
-    private static async Task MonitorConnectedBrokerAsync(
-        BrokerPipeServer server,
-        BrokerConnectionRegistry registry,
-        Func<bool> hasAccepted,
-        CancellationToken cancellationToken)
-    {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
-        while (await timer.WaitForNextTickAsync(cancellationToken)
-                   .ConfigureAwait(false))
-        {
-            if (!hasAccepted() || registry.IsAvailable)
-            {
-                continue;
-            }
-            await server.DisposeAsync().ConfigureAwait(false);
-            return;
-        }
+                activityProvider,
+                logger)
+            .RunAsync(stoppingToken)
+            .ConfigureAwait(false);
     }
 
     private static VaultException Invalid(string message)

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using CipherVault.Host.Client;
 
 namespace CipherVault.Mcp.Tests;
 
@@ -192,7 +193,7 @@ public sealed class BridgeToolContractTests
     }
 
     [Fact]
-    public async Task GrantFailureReturnsOriginalResultWhenReauthorizationFails()
+    public async Task GrantFailureReturnsReauthorizationErrorWhenRecoveryFails()
     {
         var bridge = new RecoveringMcpBridgeClient(
             "access_grant_expired",
@@ -204,7 +205,31 @@ public sealed class BridgeToolContractTests
         using var document = JsonDocument.Parse(result);
         Assert.False(document.RootElement.GetProperty("ok").GetBoolean());
         Assert.Equal(
-            "access_grant_expired",
+            "bridge_reauthorization_failed",
+            document.RootElement
+                .GetProperty("error")
+                .GetProperty("code")
+                .GetString());
+        Assert.Equal(1, bridge.GrantRequests);
+        Assert.Single(bridge.Calls);
+    }
+
+    [Fact]
+    public async Task GrantFailureReturnsBrokerErrorCodeWhenRecoveryFails()
+    {
+        var bridge = new RecoveringMcpBridgeClient(
+            "access_grant_required",
+            grantFailure: new PipeRpcException(
+                "approval_broker_unavailable",
+                "The interactive Auth Broker is not available."));
+        var tools = new BridgeVaultTools(bridge);
+
+        var result = await tools.VaultStatus(CancellationToken.None);
+
+        using var document = JsonDocument.Parse(result);
+        Assert.False(document.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal(
+            "approval_broker_unavailable",
             document.RootElement
                 .GetProperty("error")
                 .GetProperty("code")
@@ -300,16 +325,19 @@ public sealed class BridgeToolContractTests
     {
         private readonly string _errorCode;
         private readonly bool _failGrantRequest;
+        private readonly Exception? _grantFailure;
         private readonly IReadOnlySet<string>? _grantedScopesAfterRequest;
 
         public RecoveringMcpBridgeClient(
             string errorCode,
             bool failGrantRequest = false,
-            IReadOnlySet<string>? grantedScopesAfterRequest = null)
+            IReadOnlySet<string>? grantedScopesAfterRequest = null,
+            Exception? grantFailure = null)
         {
             _errorCode = errorCode;
             _failGrantRequest = failGrantRequest;
             _grantedScopesAfterRequest = grantedScopesAfterRequest;
+            _grantFailure = grantFailure;
         }
 
         public List<(
@@ -346,6 +374,10 @@ public sealed class BridgeToolContractTests
             CancellationToken cancellationToken = default)
         {
             GrantRequests++;
+            if (_grantFailure is not null)
+            {
+                throw _grantFailure;
+            }
             if (_failGrantRequest)
             {
                 throw new InvalidOperationException("Bridge is unavailable.");

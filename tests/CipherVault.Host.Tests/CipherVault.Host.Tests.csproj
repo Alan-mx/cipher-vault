@@ -23,6 +23,8 @@
     <ProjectReference Include="..\..\src\CipherVault.Host.Contracts\CipherVault.Host.Contracts.csproj" />
     <ProjectReference Include="..\..\src\CipherVault.Ipc\CipherVault.Ipc.csproj" />
     <ProjectReference Include="..\..\src\CipherVault.Security.Win\CipherVault.Security.Win.csproj" />
+    <ProjectReference Include="..\CipherVault.TestBroker\CipherVault.TestBroker.csproj"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

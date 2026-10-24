@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using CipherVault.Core.Configuration;
 using CipherVault.Host.Contracts;
+using CipherVault.Host.Session;
 
 namespace CipherVault.Host.Security;
 
@@ -248,6 +249,14 @@ public sealed class AccessGrantService : IDisposable
         {
             outcome = DeniedWithoutCooldown("cancelled");
             propagateCancellation = true;
+        }
+        catch (AdminPipeRpcException exception) when (
+            string.Equals(
+                exception.Code,
+                "approval_broker_unavailable",
+                StringComparison.Ordinal))
+        {
+            outcome = DeniedWithoutCooldown(exception.Code);
         }
         catch
         {

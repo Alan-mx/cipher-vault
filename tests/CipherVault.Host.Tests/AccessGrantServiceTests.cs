@@ -2,6 +2,7 @@ using System.Text;
 using CipherVault.Core.Configuration;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Security;
+using CipherVault.Host.Session;
 
 namespace CipherVault.Host.Tests;
 
@@ -133,6 +134,28 @@ public sealed class AccessGrantServiceTests
                 AccessGrantScope.Read)),
             processSessionId);
         Assert.Equal(AccessGrantRequestStatus.Approved, approved.Status);
+    }
+
+    [Fact]
+    public async Task BrokerUnavailableApprovalFailureKeepsErrorCode()
+    {
+        var now = DateTimeOffset.Parse("2026-10-21T10:00:00Z");
+        var service = new AccessGrantService(
+            timeProvider: new MutableTimeProvider(now));
+
+        var outcome = await service.RequestAsync(
+            "agent",
+            Guid.NewGuid(),
+            McpAccessMode.ReadOnly,
+            AccessGrantScope.Read,
+            Generation(now, TimeSpan.FromHours(1)),
+            (_, _) => throw new AdminPipeRpcException(
+                "approval_broker_unavailable",
+                "The interactive Auth Broker is not available."),
+            Guid.NewGuid());
+
+        Assert.Equal(AccessGrantRequestStatus.Denied, outcome.Status);
+        Assert.Equal("approval_broker_unavailable", outcome.ReasonCode);
     }
 
     [Fact]

@@ -742,9 +742,15 @@ public sealed class BridgeVaultTools
         {
             throw;
         }
-        catch (Exception)
+        catch (PipeRpcException exception)
         {
-            return result;
+            return ErrorMessage(exception.Code, exception.Message);
+        }
+        catch (Exception exception)
+        {
+            return ErrorMessage(
+                "bridge_reauthorization_failed",
+                exception.Message);
         }
         if (!CanCall(name))
         {

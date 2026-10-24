@@ -39,6 +39,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CipherVault.Ipc", "src\Ciph
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CipherVault.Auth.Broker", "src\CipherVault.Auth.Broker\CipherVault.Auth.Broker.csproj", "{BBC84FAA-86B7-4D3F-81D8-A3152CE8484A}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CipherVault.TestBroker", "tests\CipherVault.TestBroker\CipherVault.TestBroker.csproj", "{B1C1836C-9410-4879-8EAA-FACC56C7A8BE}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -241,6 +243,18 @@ Global
 		{BBC84FAA-86B7-4D3F-81D8-A3152CE8484A}.Release|x64.Build.0 = Release|Any CPU
 		{BBC84FAA-86B7-4D3F-81D8-A3152CE8484A}.Release|x86.ActiveCfg = Release|Any CPU
 		{BBC84FAA-86B7-4D3F-81D8-A3152CE8484A}.Release|x86.Build.0 = Release|Any CPU
+		{B1C1836C-9410-4879-8EAA-FACC56C7A8BE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B1C1836C-9410-4879-8EAA-FACC56C7A8BE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B1C1836C-9410-4879-8EAA-FACC56C7A8BE}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{B1C1836C-9410-4879-8EAA-FACC56C7A8BE}.Debug|x64.Build.0 = Debug|Any CPU
+		{B1C1836C-9410-4879-8EAA-FACC56C7A8BE}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{B1C1836C-9410-4879-8EAA-FACC56C7A8BE}.Debug|x86.Build.0 = Debug|Any CPU
+		{B1C1836C-9410-4879-8EAA-FACC56C7A8BE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B1C1836C-9410-4879-8EAA-FACC56C7A8BE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B1C1836C-9410-4879-8EAA-FACC56C7A8BE}.Release|x64.ActiveCfg = Release|Any CPU
+		{B1C1836C-9410-4879-8EAA-FACC56C7A8BE}.Release|x64.Build.0 = Release|Any CPU
+		{B1C1836C-9410-4879-8EAA-FACC56C7A8BE}.Release|x86.ActiveCfg = Release|Any CPU
+		{B1C1836C-9410-4879-8EAA-FACC56C7A8BE}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -262,5 +276,6 @@ Global
 		{44B6B60C-3519-41ED-82E3-3006F7299E0F} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{7095748A-7EE6-4099-9BD9-DB672032D41A} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{BBC84FAA-86B7-4D3F-81D8-A3152CE8484A} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{B1C1836C-9410-4879-8EAA-FACC56C7A8BE} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal

@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO.Pipes;
 using System.Security.Principal;
@@ -12,6 +13,7 @@ using CipherVault.Host.Service;
 using CipherVault.Host.Session;
 using CipherVault.Ipc;
 using CipherVault.Security.Win;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace CipherVault.Host.Tests;
 
@@ -634,6 +636,131 @@ public sealed class BrokerPipeTests
     }
 
     [Fact]
+    public async Task AcceptLoopRetriesCreationAndRecoversAfterBrokerKill()
+    {
+        var pipeName = "CipherVault.Broker.ProcessRecoveryTest." +
+            Guid.NewGuid().ToString("N");
+        var currentUser = WindowsIdentity.GetCurrent().User!;
+        var currentSession = (uint)Process.GetCurrentProcess().SessionId;
+        var serviceImagePath = Environment.ProcessPath!;
+        var brokerImagePath = FindTestBrokerExecutable();
+        var servicePolicy = Policy(
+            VerifiedProcessKind.HostService,
+            currentUser.Value,
+            currentSession,
+            serviceImagePath,
+            WindowsProcessIdentityVerifier.ComputeFileSha256(serviceImagePath));
+        var brokerPolicy = Policy(
+            VerifiedProcessKind.AuthBroker,
+            currentUser.Value,
+            currentSession,
+            brokerImagePath,
+            WindowsProcessIdentityVerifier.ComputeFileSha256(brokerImagePath));
+        var serviceIdentity = VerifyIdentity(
+            (uint)Environment.ProcessId,
+            servicePolicy);
+        var security = PipeSecurityFactory.Create(
+            [currentUser],
+            includeAdministrators: false,
+            includeSystem: false);
+        var options = new BrokerPipeServerOptions(
+            pipeName,
+            security,
+            Guid.NewGuid().ToString("D"),
+            "1.0.0-test",
+            serviceIdentity,
+            [brokerPolicy],
+            currentUser.Value,
+            currentUser.Value,
+            TimeSpan.FromMinutes(1),
+            RequireInteractiveSession: false,
+            ActivityProvider: new BrokerActivityProvider(),
+            HeartbeatTimeout: TimeSpan.FromSeconds(2));
+        var registry = new BrokerConnectionRegistry();
+        var activityProvider = new BrokerActivityProvider();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var blocker = NamedPipeServerFactory.Create(pipeName, security);
+        var loopTask = new BrokerPipeAcceptLoop(
+                options,
+                registry,
+                activityProvider,
+                NullLogger<BrokerPipeAcceptLoop>.Instance)
+            .RunAsync(timeout.Token);
+        var optionsPath = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-test-broker-{Guid.NewGuid():N}.json");
+        Process? first = null;
+        Process? second = null;
+
+        try
+        {
+            await Task.Delay(350, timeout.Token);
+            await blocker.DisposeAsync();
+
+            var clientOptions = new BrokerPipeClientOptions(
+                pipeName,
+                brokerPolicy,
+                servicePolicy,
+                ActivityReportInterval: TimeSpan.FromMilliseconds(500));
+            await File.WriteAllTextAsync(
+                optionsPath,
+                JsonSerializer.Serialize(
+                    clientOptions,
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                timeout.Token);
+
+            first = StartTestBroker(optionsPath);
+            await WaitUntilAsync(
+                () => RegisteredProcessId(registry) == (uint?)first.Id,
+                TimeSpan.FromSeconds(10));
+
+            first.Kill(entireProcessTree: true);
+            await first.WaitForExitAsync(timeout.Token);
+            await WaitUntilAsync(
+                () => !registry.IsAvailable,
+                TimeSpan.FromSeconds(10));
+
+            second = StartTestBroker(optionsPath);
+            await WaitUntilAsync(
+                () => RegisteredProcessId(registry) == (uint?)second.Id,
+                TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            foreach (var process in new[] { first, second })
+            {
+                if (process is null)
+                {
+                    continue;
+                }
+                try
+                {
+                    if (!process.HasExited)
+                    {
+                        process.Kill(entireProcessTree: true);
+                    }
+                    await process.WaitForExitAsync();
+                }
+                catch (Exception exception) when (
+                    exception is InvalidOperationException or Win32Exception)
+                {
+                }
+                process.Dispose();
+            }
+            timeout.Cancel();
+            try
+            {
+                await loopTask.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            await blocker.DisposeAsync();
+            File.Delete(optionsPath);
+        }
+    }
+
+    [Fact]
     public void ClientPolicyFactoryBuildsBrokerAndHostPolicies()
     {
         const string sha256 =
@@ -760,6 +887,59 @@ public sealed class BrokerPipeTests
         await raw.FlushAsync();
     }
 
+    private static uint? RegisteredProcessId(BrokerConnectionRegistry registry)
+    {
+        try
+        {
+            return registry.GetRequired().ClientIdentity.ProcessId;
+        }
+        catch (AdminPipeRpcException exception) when (
+            exception.Code == "approval_broker_unavailable")
+        {
+            return null;
+        }
+    }
+
+    private static string FindTestBrokerExecutable()
+    {
+        var configuration = new DirectoryInfo(AppContext.BaseDirectory)
+            .Parent?.Name
+            ?? throw new InvalidOperationException(
+                "Unable to resolve test build configuration.");
+        var repositoryRoot = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "..",
+            "..",
+            "..",
+            "..",
+            ".."));
+        var executable = Path.Combine(
+            repositoryRoot,
+            "tests",
+            "CipherVault.TestBroker",
+            "bin",
+            configuration,
+            "net10.0-windows",
+            "CipherVault.TestBroker.exe");
+        Assert.True(
+            File.Exists(executable),
+            $"Test Broker executable was not found: {executable}");
+        return executable;
+    }
+
+    private static Process StartTestBroker(string optionsPath)
+    {
+        var startInfo = new ProcessStartInfo(FindTestBrokerExecutable())
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        startInfo.ArgumentList.Add(optionsPath);
+        return Process.Start(startInfo)
+            ?? throw new InvalidOperationException(
+                "Unable to start the test Broker process.");
+    }
+
     private static async Task WaitUntilAsync(
         Func<bool> condition,
         TimeSpan timeout)
@@ -770,7 +950,7 @@ public sealed class BrokerPipeTests
             if (DateTimeOffset.UtcNow >= deadline)
             {
                 throw new TimeoutException(
-                    "Broker activity report was not received.");
+                    "Broker test condition was not reached.");
             }
             await Task.Delay(25);
         }

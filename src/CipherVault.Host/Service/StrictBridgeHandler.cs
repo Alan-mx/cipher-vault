@@ -322,6 +322,7 @@ public sealed class StrictBridgeHandler(
                 {
                     "vault-session-expired" => "auth_required",
                     "no_allowed_scopes" => "invalid_input",
+                    "approval_broker_unavailable" => "approval_broker_unavailable",
                     "approval-cancelled" => "access_denied",
                     "approval-failed" => "access_denied",
                     "cancelled" => "access_denied",

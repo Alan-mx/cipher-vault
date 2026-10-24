@@ -542,6 +542,32 @@ public sealed class StrictBridgePipeTests
     }
 
     [Fact]
+    public async Task BrokerUnavailableGrantFailureKeepsErrorCode()
+    {
+        await using var environment = await CreateRealBridgeEnvironmentAsync();
+        environment.Fixture.AccessGrantPrompt.Handler = (_, _) =>
+            throw new AdminPipeRpcException(
+                "approval_broker_unavailable",
+                "The interactive Auth Broker is not available.");
+        var acceptTask = environment.Server.AcceptOnceAsync();
+        await using var client = await BridgePipeClientConnection.ConnectAsync(
+            new BridgePipeClientOptions(
+                environment.Options.PipeName,
+                environment.Options.ClientId,
+                environment.Options.AccessMode,
+                new HashSet<string>(StringComparer.Ordinal) { "read" },
+                environment.Options.AllowedClientPolicy,
+                CurrentProcessServicePolicy(environment.Options.OwnerSid)));
+
+        var exception = await Assert.ThrowsAsync<PipeRpcException>(
+            () => client.RequestGrantAsync());
+
+        Assert.Equal("approval_broker_unavailable", exception.Code);
+        await client.DisposeAsync();
+        _ = await acceptTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
     public async Task AcceptLoopContinuesAfterFailedConnection()
     {
         var handler = new FailingCloseBridgeHandler();

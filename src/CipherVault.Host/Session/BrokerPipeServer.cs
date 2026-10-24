@@ -274,7 +274,8 @@ public sealed class BrokerPipeConnection : IAsyncDisposable
         {
             using var process = Process.GetProcessById(
                 (int)ClientIdentity.ProcessId);
-            return true;
+            return process.StartTime.ToUniversalTime() ==
+                ClientIdentity.ProcessStartedAt.UtcDateTime;
         }
         catch (Exception exception) when (
             exception is ArgumentException or
