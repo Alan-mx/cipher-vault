@@ -54,6 +54,25 @@ public interface IVaultService : IAsyncDisposable
         int limit,
         CancellationToken cancellationToken = default);
 
+    Task<VaultDocumentMap> GetDocumentMapAsync(
+        Guid documentId,
+        CancellationToken cancellationToken = default);
+
+    Task<VaultBacklinkPage> ListBacklinksAsync(
+        Guid documentId,
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken = default);
+
+    Task<VaultTagPage> ListTagsAsync(
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken = default);
+
+    Task<VaultLocalGraphResult> GetLocalGraphAsync(
+        VaultLocalGraphQuery query,
+        CancellationToken cancellationToken = default);
+
     Task<VaultWriteResult> CreateNoteAsync(
         string title,
         string? folder,
@@ -97,6 +116,20 @@ public interface IVaultService : IAsyncDisposable
         Guid documentId,
         int expectedRevision,
         VaultNotePatch patch,
+        VaultAuditContext auditContext,
+        CancellationToken cancellationToken = default);
+
+    Task<VaultPatchResult> PatchNoteAsync(
+        Guid documentId,
+        int expectedRevision,
+        VaultNotePatchCommand command,
+        VaultActorKind actor = VaultActorKind.Mcp,
+        CancellationToken cancellationToken = default);
+
+    Task<VaultPatchResult> PatchNoteAsync(
+        Guid documentId,
+        int expectedRevision,
+        VaultNotePatchCommand command,
         VaultAuditContext auditContext,
         CancellationToken cancellationToken = default);
 
@@ -590,6 +623,130 @@ public sealed class VaultService : IVaultService
         }
     }
 
+    public async Task<VaultDocumentMap> GetDocumentMapAsync(
+        Guid documentId,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (documentId == Guid.Empty)
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "Document id is required.");
+        }
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+            var result = await DocumentLinkStore.GetDocumentMapAsync(
+                session.Connection,
+                documentId,
+                cancellationToken).ConfigureAwait(false);
+            await EnsureSessionStillValidAsync(session, cancellationToken).ConfigureAwait(false);
+            return result;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<VaultBacklinkPage> ListBacklinksAsync(
+        Guid documentId,
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (documentId == Guid.Empty || limit is < 1 or > 100)
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "Backlink query parameters are invalid.");
+        }
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+            var result = await DocumentLinkStore.ListBacklinksAsync(
+                session.Connection,
+                session.SessionId,
+                documentId,
+                cursor,
+                limit,
+                cancellationToken).ConfigureAwait(false);
+            await EnsureSessionStillValidAsync(session, cancellationToken).ConfigureAwait(false);
+            return result;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<VaultTagPage> ListTagsAsync(
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (limit is < 1 or > 100)
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "Tag query limit is invalid.");
+        }
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+            var result = await DocumentLinkStore.ListTagsAsync(
+                session.Connection,
+                session.SessionId,
+                cursor,
+                limit,
+                cancellationToken).ConfigureAwait(false);
+            await EnsureSessionStillValidAsync(session, cancellationToken).ConfigureAwait(false);
+            return result;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<VaultLocalGraphResult> GetLocalGraphAsync(
+        VaultLocalGraphQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (query.CenterDocumentId == Guid.Empty ||
+            query.Depth is < 1 or > 2 ||
+            query.MaxNodes is < 1 or > 200 ||
+            query.MaxEdges is < 1 or > 500 ||
+            query.Tags.Count > 50)
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "Local graph query parameters are invalid.");
+        }
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+            var result = await DocumentGraphStore.GetLocalGraphAsync(
+                session.Connection,
+                query,
+                cancellationToken).ConfigureAwait(false);
+            await EnsureSessionStillValidAsync(session, cancellationToken).ConfigureAwait(false);
+            return result;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     public async Task<VaultWriteResult> CreateNoteAsync(
         string title,
         string? folder,
@@ -724,6 +881,57 @@ public sealed class VaultService : IVaultService
                 documentId,
                 expectedRevision,
                 patch,
+                auditContext,
+                cancellationToken).ConfigureAwait(false);
+            await EnsureSessionStillValidAsync(session, cancellationToken).ConfigureAwait(false);
+            return result;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<VaultPatchResult> PatchNoteAsync(
+        Guid documentId,
+        int expectedRevision,
+        VaultNotePatchCommand command,
+        VaultActorKind actor = VaultActorKind.Mcp,
+        CancellationToken cancellationToken = default)
+    {
+        return await PatchNoteAsync(
+            documentId,
+            expectedRevision,
+            command,
+            new VaultAuditContext(actor),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<VaultPatchResult> PatchNoteAsync(
+        Guid documentId,
+        int expectedRevision,
+        VaultNotePatchCommand command,
+        VaultAuditContext auditContext,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (documentId == Guid.Empty || expectedRevision < 1)
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "Patch request is invalid.");
+        }
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+            var result = await DocumentWriter.PatchAsync(
+                session.Connection,
+                session.SessionId,
+                session.IntegrityKey,
+                documentId,
+                expectedRevision,
+                command,
                 auditContext,
                 cancellationToken).ConfigureAwait(false);
             await EnsureSessionStillValidAsync(session, cancellationToken).ConfigureAwait(false);

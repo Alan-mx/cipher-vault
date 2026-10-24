@@ -997,7 +997,7 @@ public sealed class DocumentStoreTests
             10);
 
         Assert.Contains(audit.Items, item => item.Action == "create");
-        Assert.True(before.Valid);
+        Assert.True(before.Valid, string.Join("; ", before.Problems));
         Assert.False(damaged.Valid);
         Assert.Equal(before.ActiveDocuments, rebuilt);
         Assert.True(after.Valid);
@@ -1516,20 +1516,27 @@ public sealed class DocumentStoreTests
                 command.CommandText =
                     """
                     INSERT INTO documents(
-                        document_id, title, source_path, source_path_norm, format,
-                        content, headings_json, tags_json, payload_hmac, revision,
+                        document_id, title, title_norm, source_path, source_path_norm,
+                        link_path_norm, format, content, headings_json, tags_json,
+                        payload_hmac, revision, links_indexed_revision,
                         created_at_ms, updated_at_ms, deleted_at_ms, purge_after_ms)
                     VALUES(
-                        $id, $title, $path, $pathNorm, 'md',
-                        $content, $headings, $tags, $hmac, 1,
+                        $id, $title, $titleNorm, $path, $pathNorm, $linkPathNorm,
+                        'md', $content, $headings, $tags, $hmac, 1, 1,
                         $created, $updated, NULL, NULL);
                     INSERT INTO documents_fts(document_id, title, source_path, headings, tags, content)
                     VALUES($id, $title, $path, $headings, $tags, $content);
                     """;
                 command.Parameters.AddWithValue("$id", documentId);
                 command.Parameters.AddWithValue("$title", title);
+                command.Parameters.AddWithValue(
+                    "$titleNorm",
+                    DocumentLinkKeys.NormalizeTitle(title));
                 command.Parameters.AddWithValue("$path", sourcePath);
                 command.Parameters.AddWithValue("$pathNorm", sourcePathNorm);
+                command.Parameters.AddWithValue(
+                    "$linkPathNorm",
+                    DocumentLinkKeys.NormalizeDocumentPath(sourcePath));
                 command.Parameters.AddWithValue("$content", content);
                 command.Parameters.AddWithValue("$headings", headingsJson);
                 command.Parameters.AddWithValue("$tags", tagsJson);

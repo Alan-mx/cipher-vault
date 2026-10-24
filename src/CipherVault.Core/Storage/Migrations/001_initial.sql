@@ -7,14 +7,17 @@ CREATE TABLE documents (
     rowid INTEGER PRIMARY KEY,
     document_id TEXT NOT NULL UNIQUE,
     title TEXT NOT NULL,
+    title_norm TEXT NOT NULL DEFAULT '',
     source_path TEXT NOT NULL,
     source_path_norm TEXT NOT NULL,
+    link_path_norm TEXT NOT NULL DEFAULT '',
     format TEXT NOT NULL CHECK (format IN ('md', 'txt')),
     content TEXT NOT NULL,
     headings_json TEXT NOT NULL DEFAULT '[]',
     tags_json TEXT NOT NULL DEFAULT '[]',
     payload_hmac BLOB NOT NULL,
     revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    links_indexed_revision INTEGER NOT NULL DEFAULT 0,
     created_at_ms INTEGER NOT NULL,
     updated_at_ms INTEGER NOT NULL,
     deleted_at_ms INTEGER,
@@ -33,6 +36,18 @@ CREATE UNIQUE INDEX ux_documents_active_path
 CREATE INDEX ix_documents_active_updated
     ON documents(updated_at_ms)
     WHERE deleted_at_ms IS NULL;
+
+CREATE INDEX ix_documents_active_title_norm
+    ON documents(title_norm)
+    WHERE deleted_at_ms IS NULL;
+
+CREATE INDEX ix_documents_active_link_path_norm
+    ON documents(link_path_norm)
+    WHERE deleted_at_ms IS NULL;
+
+CREATE INDEX ix_documents_pending_link_index
+    ON documents(links_indexed_revision, revision)
+    WHERE links_indexed_revision <> revision;
 
 CREATE INDEX ix_documents_purge_after
     ON documents(purge_after_ms)
@@ -83,6 +98,81 @@ CREATE TABLE document_tags (
 
 CREATE INDEX ix_document_tags_tag
     ON document_tags(tag_id, document_id);
+
+CREATE TABLE document_link_aliases (
+    document_id TEXT NOT NULL,
+    alias_kind TEXT NOT NULL CHECK (alias_kind IN ('path', 'title')),
+    alias_value TEXT NOT NULL,
+    alias_norm TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (document_id, alias_kind, alias_norm),
+    FOREIGN KEY (document_id)
+        REFERENCES documents(document_id)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX ix_document_link_aliases_lookup
+    ON document_link_aliases(alias_kind, alias_norm, document_id);
+
+CREATE TABLE document_links (
+    link_id TEXT PRIMARY KEY,
+    source_document_id TEXT NOT NULL,
+    source_revision INTEGER NOT NULL CHECK (source_revision >= 1),
+    target_document_id TEXT,
+    raw_target TEXT NOT NULL,
+    raw_target_norm TEXT NOT NULL,
+    display_text TEXT NOT NULL,
+    target_heading TEXT,
+    target_heading_norm TEXT,
+    relation_type TEXT NOT NULL DEFAULT 'references',
+    resolution_status TEXT NOT NULL CHECK (
+        resolution_status IN ('resolved', 'unresolved', 'ambiguous')
+    ),
+    start_offset INTEGER NOT NULL CHECK (start_offset >= 0),
+    end_offset INTEGER NOT NULL CHECK (end_offset > start_offset),
+    CHECK (
+        (
+            resolution_status = 'resolved'
+            AND target_document_id IS NOT NULL
+        )
+        OR
+        (
+            resolution_status IN ('unresolved', 'ambiguous')
+            AND target_document_id IS NULL
+        )
+    ),
+    UNIQUE (
+        source_document_id,
+        source_revision,
+        start_offset,
+        end_offset
+    ),
+    FOREIGN KEY (source_document_id)
+        REFERENCES documents(document_id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (target_document_id)
+        REFERENCES documents(document_id)
+        ON DELETE SET NULL
+);
+
+CREATE INDEX ix_document_links_source_revision
+    ON document_links(source_document_id, source_revision);
+
+CREATE INDEX ix_document_links_resolved_target
+    ON document_links(target_document_id, source_document_id)
+    WHERE target_document_id IS NOT NULL;
+
+CREATE INDEX ix_document_links_raw_target
+    ON document_links(raw_target_norm, resolution_status);
+
+CREATE TRIGGER trg_document_links_target_before_delete
+BEFORE DELETE ON documents
+BEGIN
+    UPDATE document_links
+    SET target_document_id = NULL,
+        resolution_status = 'unresolved'
+    WHERE target_document_id = OLD.document_id;
+END;
 
 CREATE VIRTUAL TABLE documents_fts USING fts5(
     document_id UNINDEXED,
@@ -175,4 +265,4 @@ CREATE TABLE export_jobs (
     error_json TEXT NOT NULL DEFAULT '{}'
 );
 
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;

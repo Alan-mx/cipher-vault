@@ -66,18 +66,25 @@ internal static class DocumentWriter
                 command.CommandText =
                     """
                     INSERT INTO documents(
-                        document_id, title, source_path, source_path_norm, format,
+                        document_id, title, title_norm, source_path, source_path_norm,
+                        link_path_norm, format,
                         content, headings_json, tags_json, payload_hmac, revision,
                         created_at_ms, updated_at_ms, deleted_at_ms, purge_after_ms)
                     VALUES(
-                        $id, $title, $path, $pathNorm, $format,
+                        $id, $title, $titleNorm, $path, $pathNorm, $linkPathNorm, $format,
                         $content, $headings, $tags, $hmac, 1,
                         $created, $updated, NULL, NULL);
                     """;
                 command.Parameters.AddWithValue("$id", documentIdValue);
                 command.Parameters.AddWithValue("$title", title);
+                command.Parameters.AddWithValue(
+                    "$titleNorm",
+                    DocumentLinkKeys.NormalizeTitle(title));
                 command.Parameters.AddWithValue("$path", sourcePath);
                 command.Parameters.AddWithValue("$pathNorm", sourcePathNorm);
+                command.Parameters.AddWithValue(
+                    "$linkPathNorm",
+                    DocumentLinkKeys.NormalizeDocumentPath(sourcePath));
                 command.Parameters.AddWithValue("$format", format);
                 command.Parameters.AddWithValue("$content", content);
                 command.Parameters.AddWithValue("$headings", headingsJson);
@@ -117,6 +124,22 @@ internal static class DocumentWriter
                 headingsJson,
                 tagsJson,
                 content,
+                cancellationToken).ConfigureAwait(false);
+            await DocumentLinkIndexer.IndexSourceAsync(
+                connection,
+                (SqliteTransaction)transaction,
+                documentId,
+                1,
+                title,
+                sourcePath,
+                format,
+                content,
+                timestamp,
+                cancellationToken).ConfigureAwait(false);
+            await DocumentLinkIndexer.ReconcileAsync(
+                connection,
+                (SqliteTransaction)transaction,
+                DocumentLinkIndexer.ResolutionKeys(title, sourcePath),
                 cancellationToken).ConfigureAwait(false);
             await AuditWriter.AppendAsync(
                 connection,
@@ -235,6 +258,17 @@ internal static class DocumentWriter
                 headingsJson,
                 current.TagsJson,
                 content,
+                cancellationToken).ConfigureAwait(false);
+            await DocumentLinkIndexer.IndexSourceAsync(
+                connection,
+                sqliteTransaction,
+                documentId,
+                newRevision,
+                current.Title,
+                current.SourcePath,
+                current.Format,
+                content,
+                timestamp,
                 cancellationToken).ConfigureAwait(false);
             await AuditWriter.AppendAsync(
                 connection,
@@ -381,6 +415,37 @@ internal static class DocumentWriter
                 tagsJson,
                 newContent,
                 cancellationToken).ConfigureAwait(false);
+            await DocumentLinkIndexer.RecordAliasesAsync(
+                connection,
+                sqliteTransaction,
+                documentId,
+                current.Title,
+                current.SourcePath,
+                newTitle,
+                sourcePath,
+                timestamp,
+                cancellationToken).ConfigureAwait(false);
+            await DocumentLinkIndexer.IndexSourceAsync(
+                connection,
+                sqliteTransaction,
+                documentId,
+                newRevision,
+                newTitle,
+                sourcePath,
+                current.Format,
+                newContent,
+                timestamp,
+                cancellationToken).ConfigureAwait(false);
+            await DocumentLinkIndexer.ReconcileAsync(
+                connection,
+                sqliteTransaction,
+                DocumentLinkIndexer.ResolutionKeys(
+                    current.Title,
+                    current.SourcePath)
+                    .Concat(DocumentLinkIndexer.ResolutionKeys(
+                        newTitle,
+                        sourcePath)),
+                cancellationToken).ConfigureAwait(false);
             await AuditWriter.AppendAsync(
                 connection,
                 sqliteTransaction,
@@ -402,6 +467,165 @@ internal static class DocumentWriter
                 VaultErrorCode.Conflict,
                 "An active document already uses this virtual path.",
                 exception);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    public static async Task<VaultPatchResult> PatchAsync(
+        SqliteConnection connection,
+        Guid sessionId,
+        byte[] integrityKey,
+        Guid documentId,
+        int expectedRevision,
+        VaultNotePatchCommand command,
+        VaultAuditContext auditContext,
+        CancellationToken cancellationToken)
+    {
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var sqliteTransaction = (SqliteTransaction)transaction;
+        try
+        {
+            var current = await ReadCurrentAsync(
+                connection,
+                sqliteTransaction,
+                integrityKey,
+                documentId,
+                cancellationToken).ConfigureAwait(false);
+            if (current.Revision != expectedRevision)
+            {
+                throw new VaultException(
+                    VaultErrorCode.Conflict,
+                    "Document revision changed.");
+            }
+            if (current.Format != "md")
+            {
+                throw new VaultException(
+                    VaultErrorCode.InvalidInput,
+                    "Precise patching is supported only for Markdown documents.");
+            }
+
+            var computation = DocumentPatchEngine.Apply(
+                current.Content,
+                command);
+            if (command.DryRun || !computation.Changed)
+            {
+                await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+                return new VaultPatchResult(
+                    documentId,
+                    current.Revision,
+                    current.Revision,
+                    command.DryRun,
+                    computation.Changed,
+                    computation.UnifiedDiff,
+                    computation.DiffTruncated,
+                    true);
+            }
+
+            if (Encoding.UTF8.GetByteCount(computation.Content) > MaxDocumentBytes)
+            {
+                throw new VaultException(
+                    VaultErrorCode.InvalidInput,
+                    "Document exceeds 4 MB.");
+            }
+            var newContent = computation.Content;
+            var headingsJson = MarkdownHeadings.Extract(newContent);
+            var newRevision = current.Revision + 1;
+            var documentIdValue = documentId.ToString("D").ToLowerInvariant();
+            var now = DateTimeOffset.UtcNow;
+            var timestamp = now.ToUnixTimeMilliseconds();
+            var hmac = DocumentHmac.Compute(
+                integrityKey,
+                documentIdValue,
+                newRevision,
+                current.Title,
+                current.SourcePath,
+                current.Format,
+                headingsJson,
+                current.TagsJson,
+                newContent);
+            var sourcePathNorm = current.SourcePath
+                .Normalize(NormalizationForm.FormC)
+                .ToLowerInvariant();
+
+            await UpdateCurrentFullAsync(
+                connection,
+                sqliteTransaction,
+                documentIdValue,
+                current.Title,
+                current.SourcePath,
+                sourcePathNorm,
+                newRevision,
+                headingsJson,
+                current.TagsJson,
+                hmac,
+                newContent,
+                timestamp,
+                cancellationToken).ConfigureAwait(false);
+            await InsertRevisionAsync(
+                connection,
+                sqliteTransaction,
+                documentIdValue,
+                current.Title,
+                current.SourcePath,
+                current.Format,
+                newContent,
+                headingsJson,
+                current.TagsJson,
+                hmac,
+                newRevision,
+                timestamp,
+                cancellationToken).ConfigureAwait(false);
+            await ReplaceFtsAsync(
+                connection,
+                sqliteTransaction,
+                documentIdValue,
+                current.Title,
+                current.SourcePath,
+                headingsJson,
+                current.TagsJson,
+                newContent,
+                cancellationToken).ConfigureAwait(false);
+            await DocumentLinkIndexer.IndexSourceAsync(
+                connection,
+                sqliteTransaction,
+                documentId,
+                newRevision,
+                current.Title,
+                current.SourcePath,
+                current.Format,
+                newContent,
+                timestamp,
+                cancellationToken).ConfigureAwait(false);
+            await AuditWriter.AppendAsync(
+                connection,
+                sqliteTransaction,
+                auditContext,
+                sessionId,
+                "patch",
+                documentId,
+                "success",
+                null,
+                JsonSerializer.Serialize(new
+                {
+                    targetKind = command.TargetKind,
+                    operation = command.Operation
+                }),
+                cancellationToken).ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return new VaultPatchResult(
+                documentId,
+                current.Revision,
+                newRevision,
+                false,
+                true,
+                computation.UnifiedDiff,
+                computation.DiffTruncated,
+                true);
         }
         catch
         {
@@ -534,8 +758,10 @@ internal static class DocumentWriter
                     UPDATE documents
                     SET source_path = $path,
                         source_path_norm = $pathNorm,
+                        link_path_norm = $linkPathNorm,
                         payload_hmac = $hmac,
                         revision = $revision,
+                        links_indexed_revision = 0,
                         updated_at_ms = $updated,
                         deleted_at_ms = NULL,
                         purge_after_ms = NULL
@@ -543,6 +769,9 @@ internal static class DocumentWriter
                     """;
                 command.Parameters.AddWithValue("$path", sourcePath);
                 command.Parameters.AddWithValue("$pathNorm", sourcePathNorm);
+                command.Parameters.AddWithValue(
+                    "$linkPathNorm",
+                    DocumentLinkKeys.NormalizeDocumentPath(sourcePath));
                 command.Parameters.AddWithValue("$hmac", hmac);
                 command.Parameters.AddWithValue("$revision", newRevision);
                 command.Parameters.AddWithValue("$updated", timestamp);
@@ -572,6 +801,37 @@ internal static class DocumentWriter
                 current.HeadingsJson,
                 current.TagsJson,
                 current.Content,
+                cancellationToken).ConfigureAwait(false);
+            await DocumentLinkIndexer.RecordAliasesAsync(
+                connection,
+                sqliteTransaction,
+                documentId,
+                current.Title,
+                current.SourcePath,
+                current.Title,
+                sourcePath,
+                timestamp,
+                cancellationToken).ConfigureAwait(false);
+            await DocumentLinkIndexer.IndexSourceAsync(
+                connection,
+                sqliteTransaction,
+                documentId,
+                newRevision,
+                current.Title,
+                sourcePath,
+                current.Format,
+                current.Content,
+                timestamp,
+                cancellationToken).ConfigureAwait(false);
+            await DocumentLinkIndexer.ReconcileAsync(
+                connection,
+                sqliteTransaction,
+                DocumentLinkIndexer.ResolutionKeys(
+                    current.Title,
+                    current.SourcePath)
+                    .Concat(DocumentLinkIndexer.ResolutionKeys(
+                        current.Title,
+                        sourcePath)),
                 cancellationToken).ConfigureAwait(false);
             await AuditWriter.AppendAsync(
                 connection,
@@ -765,6 +1025,37 @@ internal static class DocumentWriter
                 revision.HeadingsJson,
                 revision.TagsJson,
                 revision.Content,
+                cancellationToken).ConfigureAwait(false);
+            await DocumentLinkIndexer.RecordAliasesAsync(
+                connection,
+                sqliteTransaction,
+                documentId,
+                current.Title,
+                current.SourcePath,
+                revision.Title,
+                current.SourcePath,
+                timestamp,
+                cancellationToken).ConfigureAwait(false);
+            await DocumentLinkIndexer.IndexSourceAsync(
+                connection,
+                sqliteTransaction,
+                documentId,
+                newRevision,
+                revision.Title,
+                current.SourcePath,
+                current.Format,
+                revision.Content,
+                timestamp,
+                cancellationToken).ConfigureAwait(false);
+            await DocumentLinkIndexer.ReconcileAsync(
+                connection,
+                sqliteTransaction,
+                DocumentLinkIndexer.ResolutionKeys(
+                    current.Title,
+                    current.SourcePath)
+                    .Concat(DocumentLinkIndexer.ResolutionKeys(
+                        revision.Title,
+                        current.SourcePath)),
                 cancellationToken).ConfigureAwait(false);
             await AuditWriter.AppendAsync(
                 connection,
@@ -1096,6 +1387,7 @@ internal static class DocumentWriter
                 headings_json = $headings,
                 payload_hmac = $hmac,
                 revision = $revision,
+                links_indexed_revision = 0,
                 updated_at_ms = $updated
             WHERE document_id = $id;
             """;
@@ -1172,19 +1464,28 @@ internal static class DocumentWriter
             """
             UPDATE documents
             SET title = $title,
+                title_norm = $titleNorm,
                 source_path = $path,
                 source_path_norm = $pathNorm,
+                link_path_norm = $linkPathNorm,
                 content = $content,
                 headings_json = $headings,
                 tags_json = $tags,
                 payload_hmac = $hmac,
                 revision = $revision,
+                links_indexed_revision = 0,
                 updated_at_ms = $updated
             WHERE document_id = $id;
             """;
         command.Parameters.AddWithValue("$title", title);
+        command.Parameters.AddWithValue(
+            "$titleNorm",
+            DocumentLinkKeys.NormalizeTitle(title));
         command.Parameters.AddWithValue("$path", sourcePath);
         command.Parameters.AddWithValue("$pathNorm", sourcePathNorm);
+        command.Parameters.AddWithValue(
+            "$linkPathNorm",
+            DocumentLinkKeys.NormalizeDocumentPath(sourcePath));
         command.Parameters.AddWithValue("$content", content);
         command.Parameters.AddWithValue("$headings", headingsJson);
         command.Parameters.AddWithValue("$tags", tagsJson);

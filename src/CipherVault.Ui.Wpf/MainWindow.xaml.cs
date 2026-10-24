@@ -1,4 +1,5 @@
 using System.IO;
+using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Windows;
@@ -37,6 +38,11 @@ public partial class MainWindow : Window
     private string? _activeSearchQuery;
     private bool _searchMode;
     private bool _busy;
+    private bool _closingConfirmed;
+    private bool _suppressCatalogSelection;
+    private Guid? _activeDocumentId;
+    private int _lastMainTabIndex;
+    private bool _suppressMainTabChange;
 
     public MainWindow()
     {
@@ -111,10 +117,13 @@ public partial class MainWindow : Window
 
     private void InitializeWindow()
     {
+        _lastMainTabIndex = MainTabs.SelectedIndex;
         _statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _statusTimer.Tick += StatusTimer_Tick;
         Loaded += MainWindow_Loaded;
+        Closing += MainWindow_Closing;
         Closed += MainWindow_Closed;
+        DocumentWorkspace.Initialize(_service);
         ConfigureCredentialMode();
     }
 
@@ -167,6 +176,22 @@ public partial class MainWindow : Window
         if (_service is not null)
         {
             await _service.DisposeAsync();
+        }
+    }
+
+    private async void MainWindow_Closing(object? sender, CancelEventArgs e)
+    {
+        if (_closingConfirmed || !DocumentWorkspace.HasUnsavedChanges)
+        {
+            return;
+        }
+        e.Cancel = true;
+        if (await DocumentWorkspace.ConfirmDiscardAsync())
+        {
+            _closingConfirmed = true;
+            _ = Dispatcher.BeginInvoke(
+                DispatcherPriority.Background,
+                new Action(Close));
         }
     }
 
@@ -255,6 +280,11 @@ public partial class MainWindow : Window
         {
             return;
         }
+        if (!await DocumentWorkspace.ConfirmDiscardAsync())
+        {
+            return;
+        }
+        DocumentWorkspace.Clear();
         await RunBusyAsync(async () =>
         {
             await _service.LockAsync();
@@ -269,6 +299,11 @@ public partial class MainWindow : Window
         {
             return;
         }
+        if (!await DocumentWorkspace.ConfirmDiscardAsync())
+        {
+            return;
+        }
+        DocumentWorkspace.Clear();
         await RunBusyAsync(async () =>
         {
             await _service.LockAsync("desktop-exit");
@@ -311,15 +346,31 @@ public partial class MainWindow : Window
 
     private async void MainTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!IsLoaded || _busy || e.Source != MainTabs)
+        if (!IsLoaded || _busy || _suppressMainTabChange || e.Source != MainTabs)
         {
             return;
         }
-        if (MainTabs.SelectedIndex == 1)
+        var targetIndex = MainTabs.SelectedIndex;
+        if (_lastMainTabIndex == 1 &&
+            targetIndex != 1 &&
+            !await DocumentWorkspace.ConfirmDiscardAsync())
+        {
+            _suppressMainTabChange = true;
+            MainTabs.SelectedIndex = _lastMainTabIndex;
+            _suppressMainTabChange = false;
+            return;
+        }
+        if (_lastMainTabIndex == 1 && targetIndex != 1)
+        {
+            DocumentWorkspace.Clear();
+            _activeDocumentId = null;
+        }
+        _lastMainTabIndex = targetIndex;
+        if (targetIndex == 1)
         {
             await RunBusyAsync(RefreshCatalogAsync);
         }
-        else if (MainTabs.SelectedIndex == 2)
+        else if (targetIndex == 2)
         {
             await RunBusyAsync(RefreshTrashAsync);
         }
@@ -400,26 +451,27 @@ public partial class MainWindow : Window
 
     private async void CatalogGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_busy || CatalogGrid.SelectedItem is null)
+        if (_busy || _suppressCatalogSelection || CatalogGrid.SelectedItem is null)
         {
             return;
         }
-        var id = CatalogGrid.SelectedItem switch
-        {
-            VaultCatalogItem item => item.DocumentId,
-            VaultSearchHit hit => hit.DocumentId,
-            _ => Guid.Empty
-        };
+        var id = GetDocumentId(CatalogGrid.SelectedItem);
         if (id == Guid.Empty)
         {
             return;
         }
         await RunBusyAsync(async () =>
         {
-            var document = await _service.ReadNoteAsync(id, 0, 16_000);
-            DocumentViewer.Text =
-                $"{document.Title}\n{document.VirtualPath}\n版本 {document.Revision}\n\n{document.Content}" +
-                (document.Done ? string.Empty : "\n\n[... 内容未完全显示，请继续读取 ...]");
+            if (await DocumentWorkspace.LoadDocumentAsync(id))
+            {
+                _activeDocumentId = id;
+                return;
+            }
+            _suppressCatalogSelection = true;
+            CatalogGrid.SelectedItem = CatalogGrid.Items
+                .Cast<object>()
+                .FirstOrDefault(item => GetDocumentId(item) == _activeDocumentId);
+            _suppressCatalogSelection = false;
         });
     }
 
@@ -945,9 +997,10 @@ public partial class MainWindow : Window
         _activeSearchQuery = null;
         _searchMode = false;
         _importJobId = null;
+        _activeDocumentId = null;
         CatalogGrid.ItemsSource = null;
         TrashGrid.ItemsSource = null;
-        DocumentViewer.Clear();
+        DocumentWorkspace.Clear();
         MaintenanceOutput.Clear();
         CatalogSummaryText.Text = summary;
         TrashSummaryText.Text = summary;
@@ -980,6 +1033,16 @@ public partial class MainWindow : Window
         }
 
         return VaultPathState.Initialized;
+    }
+
+    private static Guid GetDocumentId(object item)
+    {
+        return item switch
+        {
+            VaultCatalogItem catalog => catalog.DocumentId,
+            VaultSearchHit hit => hit.DocumentId,
+            _ => Guid.Empty
+        };
     }
 
     private enum VaultPathState

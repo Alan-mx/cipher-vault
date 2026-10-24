@@ -6,7 +6,8 @@ public enum BridgeToolResultKind
 {
     VaultStatus,
     Page,
-    Document
+    Document,
+    Structured
 }
 
 public sealed record BridgeToolDefinition(
@@ -45,6 +46,26 @@ public static class BridgeToolCatalog
                 AccessGrantScope.Read,
                 BridgeToolResultKind.Page,
                 "admin.notes.scan"),
+            ["get_document_map"] = new BridgeToolDefinition(
+                "get_document_map",
+                AccessGrantScope.Read,
+                BridgeToolResultKind.Structured,
+                "admin.notes.map"),
+            ["get_backlinks"] = new BridgeToolDefinition(
+                "get_backlinks",
+                AccessGrantScope.Read,
+                BridgeToolResultKind.Page,
+                "admin.notes.backlinks"),
+            ["tag_list"] = new BridgeToolDefinition(
+                "tag_list",
+                AccessGrantScope.Read,
+                BridgeToolResultKind.Page,
+                "admin.tags.list"),
+            ["get_local_graph"] = new BridgeToolDefinition(
+                "get_local_graph",
+                AccessGrantScope.Read,
+                BridgeToolResultKind.Structured,
+                "admin.graph.local"),
             ["create_note"] = new BridgeToolDefinition(
                 "create_note",
                 AccessGrantScope.Write,
@@ -60,6 +81,11 @@ public static class BridgeToolCatalog
                 AccessGrantScope.Write,
                 BridgeToolResultKind.Document,
                 "admin.notes.update"),
+            ["patch_note"] = new BridgeToolDefinition(
+                "patch_note",
+                AccessGrantScope.Write,
+                BridgeToolResultKind.Structured,
+                "admin.notes.patch"),
             ["delete_note"] = new BridgeToolDefinition(
                 "delete_note",
                 AccessGrantScope.Delete,

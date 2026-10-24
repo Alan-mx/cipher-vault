@@ -43,6 +43,11 @@ public static class BridgeToolEnvelope
         return Serialize(new { ok = true, document });
     }
 
+    public static string Structured(JsonElement result)
+    {
+        return Serialize(new { ok = true, result });
+    }
+
     public static string Error(string code, string message)
     {
         return Serialize(new

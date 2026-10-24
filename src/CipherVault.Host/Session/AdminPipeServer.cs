@@ -375,15 +375,45 @@ public sealed class AdminPipeServer : IAsyncDisposable
         {
             return PipeRpcCodec.Failure(
                 request.RequestId,
-                exception is AdminPipeRpcException rpcException
-                    ? rpcException.Code
-                    : exception is InvalidDataException or
-                HostException { Code: HostErrorCode.InvalidInput } or
-                VaultException { Code: VaultErrorCode.InvalidInput }
-                    ? "invalid_input"
-                    : "storage_error",
+                ToErrorCode(exception),
                 exception.Message);
         }
+    }
+
+    private static string ToErrorCode(Exception exception)
+    {
+        return exception switch
+        {
+            AdminPipeRpcException rpcException => rpcException.Code,
+            InvalidDataException => "invalid_input",
+            HostException hostException => hostException.Code switch
+            {
+                HostErrorCode.InvalidInput => "invalid_input",
+                HostErrorCode.AccessGrantRevoked => "access_grant_revoked",
+                _ => "storage_error"
+            },
+            VaultException vaultException => vaultException.Code switch
+            {
+                VaultErrorCode.InvalidInput => "invalid_input",
+                VaultErrorCode.AlreadyExists => "already_exists",
+                VaultErrorCode.NotFound => "not_found",
+                VaultErrorCode.InvalidCredential => "invalid_credential",
+                VaultErrorCode.AccessDenied => "access_denied",
+                VaultErrorCode.Conflict => "revision_conflict",
+                VaultErrorCode.CorruptVault => "corrupt_vault",
+                VaultErrorCode.SessionLocked => "session_locked",
+                VaultErrorCode.SessionExpired => "session_expired",
+                VaultErrorCode.RecoveryVerificationRequired =>
+                    "recovery_verification_required",
+                VaultErrorCode.UnsupportedPlatform => "unsupported_platform",
+                VaultErrorCode.PatchTargetNotFound => "patch_target_not_found",
+                VaultErrorCode.FrontMatterInvalid => "frontmatter_invalid",
+                VaultErrorCode.LinkIndexTooLarge => "link_index_too_large",
+                VaultErrorCode.InvalidCursor => "invalid_cursor",
+                _ => "storage_error"
+            },
+            _ => "storage_error"
+        };
     }
 
     private static bool TryParseCredentialPreference(

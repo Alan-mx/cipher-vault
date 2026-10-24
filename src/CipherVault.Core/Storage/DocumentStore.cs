@@ -469,6 +469,10 @@ internal static partial class DocumentStore
             integrityKey,
             problems,
             cancellationToken).ConfigureAwait(false);
+        await VerifyLinkIndexAsync(
+            connection,
+            problems,
+            cancellationToken).ConfigureAwait(false);
         return new VaultIntegrityReport(
             problems.Count == 0,
             activeDocuments,
@@ -1187,6 +1191,81 @@ internal static partial class DocumentStore
             {
                 problems.Add($"revision_metadata_invalid={reader.GetString(0)}");
             }
+        }
+    }
+
+    private static async Task VerifyLinkIndexAsync(
+        SqliteConnection connection,
+        ICollection<string> problems,
+        CancellationToken cancellationToken)
+    {
+        var stale = await CountAsync(
+            connection,
+            """
+            SELECT count(*)
+            FROM documents
+            WHERE links_indexed_revision <> revision;
+            """,
+            cancellationToken).ConfigureAwait(false);
+        if (stale > 0)
+        {
+            problems.Add($"link_index_stale={stale}");
+        }
+
+        var revisionMismatch = await CountAsync(
+            connection,
+            """
+            SELECT count(*)
+            FROM document_links
+            JOIN documents
+              ON documents.document_id = document_links.source_document_id
+            WHERE document_links.source_revision <> documents.revision;
+            """,
+            cancellationToken).ConfigureAwait(false);
+        if (revisionMismatch > 0)
+        {
+            problems.Add($"link_source_revision_mismatch={revisionMismatch}");
+        }
+
+        using (var foreignKeys = connection.CreateCommand())
+        {
+            foreignKeys.CommandText = "PRAGMA foreign_key_check;";
+            await using var reader = await foreignKeys.ExecuteReaderAsync(cancellationToken)
+                .ConfigureAwait(false);
+            if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                problems.Add("foreign_key_check_failed");
+            }
+        }
+
+        var derivedMismatch = 0;
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText =
+                """
+                SELECT document_id, title, source_path, title_norm, link_path_norm
+                FROM documents;
+                """;
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken)
+                .ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                if (!string.Equals(
+                        reader.GetString(3),
+                        DocumentLinkKeys.NormalizeTitle(reader.GetString(1)),
+                        StringComparison.Ordinal) ||
+                    !string.Equals(
+                        reader.GetString(4),
+                        DocumentLinkKeys.NormalizeDocumentPath(reader.GetString(2)),
+                        StringComparison.Ordinal))
+                {
+                    derivedMismatch++;
+                }
+            }
+        }
+        if (derivedMismatch > 0)
+        {
+            problems.Add($"link_key_derived_mismatch={derivedMismatch}");
         }
     }
 

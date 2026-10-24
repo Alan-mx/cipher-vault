@@ -1,9 +1,11 @@
 using System.Buffers.Binary;
 using System.Diagnostics;
 using System.IO.Pipes;
+using System.Reflection;
 using System.Security.Principal;
 using System.Text;
 using CipherVault.Core.Documents;
+using CipherVault.Core.Errors;
 using CipherVault.Core.Session;
 using CipherVault.Host.Client;
 using CipherVault.Host.Contracts;
@@ -16,6 +18,28 @@ namespace CipherVault.Host.Tests;
 
 public sealed class AdminPipeTests
 {
+    [Theory]
+    [InlineData(VaultErrorCode.Conflict, "revision_conflict")]
+    [InlineData(VaultErrorCode.NotFound, "not_found")]
+    [InlineData(VaultErrorCode.InvalidCursor, "invalid_cursor")]
+    [InlineData(VaultErrorCode.LinkIndexTooLarge, "link_index_too_large")]
+    public void AdminPipeMapsDomainErrors(
+        VaultErrorCode code,
+        string expected)
+    {
+        var method = typeof(AdminPipeServer).GetMethod(
+            "ToErrorCode",
+            BindingFlags.Static | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException(
+                "Admin error mapping method was not found.");
+
+        Assert.Equal(
+            expected,
+            method.Invoke(
+                obj: null,
+                [new VaultException(code, "test")]));
+    }
+
     [Fact]
     public async Task NamedPipeHostVaultClientReturnsStatusFromAdminPipe()
     {

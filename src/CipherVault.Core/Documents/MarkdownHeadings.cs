@@ -45,10 +45,36 @@ internal static partial class MarkdownHeadings
 
     public static IReadOnlyList<string> Parse(string json)
     {
-        var headings = JsonSerializer.Deserialize<List<MarkdownHeading>>(
+        var headings = ParseRecords(json);
+        return headings.Select(heading => $"H{heading.Level}: {heading.Text}").ToList();
+    }
+
+    public static IReadOnlyList<VaultDocumentHeading> ParseWithPaths(string json)
+    {
+        var headings = ParseRecords(json);
+        var stack = new List<MarkdownHeading>();
+        var result = new List<VaultDocumentHeading>(headings.Count);
+        foreach (var heading in headings)
+        {
+            while (stack.Count > 0 &&
+                   stack[^1].Level >= heading.Level)
+            {
+                stack.RemoveAt(stack.Count - 1);
+            }
+            stack.Add(heading);
+            result.Add(new VaultDocumentHeading(
+                heading.Level,
+                heading.Text,
+                stack.Select(value => value.Text).ToArray()));
+        }
+        return result;
+    }
+
+    private static List<MarkdownHeading> ParseRecords(string json)
+    {
+        return JsonSerializer.Deserialize<List<MarkdownHeading>>(
             json,
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? [];
-        return headings.Select(heading => $"H{heading.Level}: {heading.Text}").ToList();
     }
 
     [GeneratedRegex(@"^(#{1,6})[ \t]+(.+?)[ \t]*$")]

@@ -133,6 +133,29 @@ WPF 提供日常读写、回收站、版本、备份、导出、导入和审计�
 
 `host-stop` 会先锁定 Vault，再触发 Windows Service 停止。
 
+## Knowledge network
+
+Markdown 文档支持文档级 Wiki Link：
+
+```markdown
+[[目标文档]]
+[[目标文档|显示名]]
+[[目标文档#标题]]
+```
+
+WPF 的文档工作区提供：
+
+- 安全 Markdown 预览和可点击内部链接。
+- 纯文本编辑、条件保存和 revision 冲突保护。
+- 已解析反向链接、未解析链接和歧义候选。
+- 1～2 跳局部关系图，支持标签 AND 和文件夹过滤。
+
+链接关系与正文、版本、标签和 FTS 在同一个 SQLCipher 事务中更新。项目尚未上线，
+schema 直接使用当前规范结构；旧开发 Vault 需要重新初始化。
+
+精准修改支持按完整标题路径或顶层 frontmatter 字段执行 `append`、`prepend`、
+`replace` 和 `delete`。dry-run 只返回 diff，不写入正文。
+
 ## MCP strict bridge
 
 MCP 客户端使用 `CipherVault.Mcp.exe`：
@@ -150,6 +173,14 @@ Bridge 启动后会验证 Host 和自身进程身份，请求用户批准 Access
 
 `--scopes read` 请求只读；`--scopes read,write` 请求读写；`delete` 必须显式加入
 scope。Agent 不接受长期 Bearer token，也不使用 direct HTTP MCP。
+
+当前 MCP 工具：
+
+- 读取：`vault_status`、`list_catalog`、`search_notes`、`read_note`、
+  `scan_notes`、`tag_list`、`get_document_map`、`get_backlinks`、
+  `get_local_graph`。
+- 写入：`create_note`、`append_note`、`update_note`、`patch_note`。
+- 删除：`delete_note`，语义为移入加密回收站。
 
 ## Restore
 
@@ -172,6 +203,7 @@ scope。Agent 不接受长期 Bearer token，也不使用 direct HTTP MCP。
 | --- | --- | --- | --- | --- |
 | [Obsidian](https://obsidian.md/) | 闭源产品，不锁定版本 | 闭源专有 | `[[笔记名]]`、反向链接、局部图谱、以标签过滤知识网络 | 把文件夹或全库图谱作为唯一主导航 |
 | [Local REST API](https://github.com/coddingtonbear/obsidian-local-rest-api) | `5.5.2` | MIT | MCP 活集成、按标题/块/frontmatter 精准修改、条件写、当前文档上下文 | 回环 HTTP、Bearer Token 直连、任意命令执行；CipherVault 继续使用签名命名管道和短期 Grant |
+| [Markdig](https://github.com/xoofx/markdig) | `1.4.2` | BSD-2-Clause | 安全的 Markdown AST 解析，用于 WPF 原生预览和链接注解 | 执行原始 HTML、脚本或远程资源 |
 | [Basic Memory](https://github.com/basicmachines-co/basic-memory) | `v0.24.1` | AGPL-3.0 | Markdown 与 SQLite 索引并存、MCP 原生知识图谱、稳定 permalink、工具行为标注、文件/索引一致性检查 | 明文知识库、外部 Python 进程、云端记忆服务 |
 | [Logseq](https://github.com/logseq/logseq) | `2.0.2`（DB beta） | AGPL-3.0 | 页面/块级引用、属性查询、图谱过滤思路；为未来块引用预留模型 | 直接采用 beta DB 实现，或把全库图谱作为主要入口 |
 | [SiYuan](https://github.com/siyuan-note/siyuan) | `v3.8.8` | AGPL-3.0 | 稳定块 ID、块级双向链接、文档地图、CLI/API、`--dry-run` 预览修改 | 向 Agent 暴露任意 SQL；首版直接实现块级模型 |

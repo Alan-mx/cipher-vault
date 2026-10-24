@@ -9,6 +9,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Markdig" Version="1.4.2" />
+    <PackageReference Include="Msagl.WpfGraphControl" Version="1.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\CipherVault.Auth.Win\CipherVault.Auth.Win.csproj" />
     <ProjectReference Include="..\CipherVault.Core\CipherVault.Core.csproj" />
     <ProjectReference Include="..\CipherVault.Host.Client\CipherVault.Host.Client.csproj" />

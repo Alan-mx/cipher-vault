@@ -53,14 +53,17 @@ public sealed class MainWindowTests
                     TimeSpan.FromSeconds(10));
                 Assert.Empty(Find<PasswordBox>(window, "PasswordBox").Password);
 
-                Find<TextBox>(window, "DocumentViewer").Text = "decrypted content";
+                var workspace = Find<DocumentWorkspaceView>(
+                    window,
+                    "DocumentWorkspace");
+                Find<TextBox>(workspace, "EditorBox").Text = "decrypted content";
                 Find<Button>(window, "LockButton").RaiseEvent(
                     new RoutedEventArgs(Button.ClickEvent));
                 await WaitUntilAsync(
                     () => Find<TextBlock>(window, "StatusText").Text == "已锁定",
                     TimeSpan.FromSeconds(10));
 
-                Assert.Empty(Find<TextBox>(window, "DocumentViewer").Text);
+                Assert.Empty(Find<TextBox>(workspace, "EditorBox").Text);
                 Assert.Null(Find<DataGrid>(window, "CatalogGrid").ItemsSource);
                 Assert.Equal("资料库已锁定。", Find<TextBlock>(window, "CatalogSummaryText").Text);
             }
@@ -413,7 +416,10 @@ public sealed class MainWindowTests
             var window = fixture.CreateWindow();
             try
             {
-                Find<TextBox>(window, "DocumentViewer").Text = "decrypted document";
+                var workspace = Find<DocumentWorkspaceView>(
+                    window,
+                    "DocumentWorkspace");
+                Find<TextBox>(workspace, "EditorBox").Text = "decrypted document";
                 Find<TextBox>(window, "MaintenanceOutput").Text = "decrypted output";
                 Find<TextBlock>(window, "CatalogSummaryText").Text = "catalog";
                 Find<TextBlock>(window, "TrashSummaryText").Text = "trash";
@@ -423,7 +429,7 @@ public sealed class MainWindowTests
 
                 InvokePrivate(window, "ClearSensitiveUi", "资料库已锁定。");
 
-                Assert.Empty(Find<TextBox>(window, "DocumentViewer").Text);
+                Assert.Empty(Find<TextBox>(workspace, "EditorBox").Text);
                 Assert.Empty(Find<TextBox>(window, "MaintenanceOutput").Text);
                 Assert.Equal("资料库已锁定。", Find<TextBlock>(window, "CatalogSummaryText").Text);
                 Assert.Equal("资料库已锁定。", Find<TextBlock>(window, "TrashSummaryText").Text);
@@ -434,6 +440,99 @@ public sealed class MainWindowTests
             finally
             {
                 await fixture.DisposeWindowAsync(window);
+            }
+        });
+    }
+
+    [Fact]
+    public Task MarkdownPreviewEnablesDocumentInteractions()
+    {
+        return RunOnStaAsync(() =>
+        {
+            var workspace = new DocumentWorkspaceView();
+            var preview = Find<RichTextBox>(workspace, "PreviewBox");
+            Assert.True(preview.IsDocumentEnabled);
+            return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public async Task DocumentWorkspaceLoadsBacklinksAndSavesEdits()
+    {
+        if (!ShouldRunInteractiveUiTests())
+        {
+            return;
+        }
+
+        using var uiLock = UiAutomationLock.Acquire();
+        await RunOnStaAsync(async () =>
+        {
+            using var fixture = new WindowFixture();
+            await fixture.InitializeVaultAsync();
+            var window = fixture.CreateWindow();
+            try
+            {
+                window.Show();
+                await UnlockWindowAsync(window, fixture.Root);
+                var service = Assert.IsAssignableFrom<IHostVaultClient>(
+                    GetField(window, "_service"));
+                var target = await service.CreateNoteAsync(
+                    "目标",
+                    null,
+                    "md",
+                    "# 目标\n正文",
+                    null);
+                await service.CreateNoteAsync(
+                    "来源",
+                    null,
+                    "md",
+                    "[[目标]]",
+                    null);
+
+                var workspace = Find<DocumentWorkspaceView>(
+                    window,
+                    "DocumentWorkspace");
+                Assert.True(await workspace.LoadDocumentAsync(target.DocumentId));
+                Assert.Equal(
+                    "目标",
+                    Find<TextBlock>(workspace, "DocumentTitle").Text);
+                Assert.Single(Find<ListBox>(workspace, "BacklinkList").Items);
+                Find<TabControl>(workspace, "ContextTabs").SelectedIndex = 2;
+                InvokePrivate(
+                    workspace,
+                    "RefreshGraphButton_Click",
+                    workspace,
+                    new RoutedEventArgs());
+                await WaitUntilAsync(
+                    () => Find<TextBlock>(workspace, "GraphSummary").Text.Contains(
+                        "2 个节点",
+                        StringComparison.Ordinal),
+                    TimeSpan.FromSeconds(10));
+
+                Find<Button>(workspace, "EditButton").RaiseEvent(
+                    new RoutedEventArgs(Button.ClickEvent));
+                var editor = Find<TextBox>(workspace, "EditorBox");
+                editor.Text += "\n修改内容";
+                Assert.True(workspace.HasUnsavedChanges);
+                Find<Button>(workspace, "SaveButton").RaiseEvent(
+                    new RoutedEventArgs(Button.ClickEvent));
+
+                await WaitUntilAsync(
+                    async () =>
+                    {
+                        var read = await service.ReadNoteAsync(
+                            target.DocumentId,
+                            0,
+                            16_000);
+                        return read.Revision == 2 &&
+                            read.Content.Contains("修改内容", StringComparison.Ordinal);
+                    },
+                    TimeSpan.FromSeconds(10));
+            }
+            finally
+            {
+                await fixture.DisposeWindowAsync(window);
+                window.Close();
             }
         });
     }
@@ -648,6 +747,22 @@ public sealed class MainWindowTests
             if (DateTimeOffset.UtcNow >= deadline)
             {
                 throw new TimeoutException("WPF condition was not met before timeout.");
+            }
+            await Task.Delay(25);
+        }
+    }
+
+    private static async Task WaitUntilAsync(
+        Func<Task<bool>> condition,
+        TimeSpan timeout)
+    {
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        while (!await condition())
+        {
+            if (DateTimeOffset.UtcNow >= deadline)
+            {
+                throw new TimeoutException(
+                    "WPF asynchronous condition was not met before timeout.");
             }
             await Task.Delay(25);
         }

@@ -13,6 +13,10 @@ public enum VaultErrorCode
     SessionExpired,
     RecoveryVerificationRequired,
     UnsupportedPlatform,
+    PatchTargetNotFound,
+    FrontMatterInvalid,
+    LinkIndexTooLarge,
+    InvalidCursor,
     StorageError
 }
 

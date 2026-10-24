@@ -144,6 +144,55 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
             cancellationToken);
     }
 
+    public Task<VaultDocumentMap> GetDocumentMapAsync(
+        Guid documentId,
+        CancellationToken cancellationToken = default)
+    {
+        return CallAsync<VaultDocumentMap>(
+            "admin.notes.map",
+            new AdminDocumentMapRequest(documentId),
+            cancellationToken);
+    }
+
+    public Task<VaultBacklinkPage> ListBacklinksAsync(
+        Guid documentId,
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        return CallAsync<VaultBacklinkPage>(
+            "admin.notes.backlinks",
+            new AdminBacklinksRequest(documentId, cursor, limit),
+            cancellationToken);
+    }
+
+    public Task<VaultTagPage> ListTagsAsync(
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        return CallAsync<VaultTagPage>(
+            "admin.tags.list",
+            new AdminTagListRequest(cursor, limit),
+            cancellationToken);
+    }
+
+    public Task<VaultLocalGraphResult> GetLocalGraphAsync(
+        VaultLocalGraphQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        return CallAsync<VaultLocalGraphResult>(
+            "admin.graph.local",
+            new AdminLocalGraphRequest(
+                query.CenterDocumentId,
+                query.Depth,
+                query.Tags,
+                query.Folder,
+                query.MaxNodes,
+                query.MaxEdges),
+            cancellationToken);
+    }
+
     public Task<VaultWriteResult> CreateNoteAsync(
         string title,
         string? folder,
@@ -188,6 +237,28 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
                     patch.Folder,
                     patch.Content,
                     patch.Tags)),
+            cancellationToken);
+    }
+
+    public Task<VaultPatchResult> PatchNoteAsync(
+        Guid documentId,
+        int expectedRevision,
+        VaultNotePatchCommand command,
+        CancellationToken cancellationToken = default)
+    {
+        return CallAsync<VaultPatchResult>(
+            "admin.notes.patch",
+            new AdminPatchNoteRequest(
+                documentId,
+                new HostPatchNoteRequest(
+                    expectedRevision,
+                    command.TargetKind,
+                    command.HeadingPath,
+                    command.FrontMatterKey,
+                    command.Operation,
+                    command.ContentMarkdown,
+                    command.Value,
+                    command.DryRun)),
             cancellationToken);
     }
 

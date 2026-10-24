@@ -95,6 +95,93 @@ public sealed class StrictAdminVaultRpcProvider(
                         scanRequest.Limit,
                         token),
                     cancellationToken).ConfigureAwait(false);
+            case "admin.notes.map":
+                var mapRequest = PipeRpcCodec.ReadPayload<AdminDocumentMapRequest>(
+                    new PipeRpcRequest(
+                        PipeProtocol.Version,
+                        Guid.Empty,
+                        method,
+                        payload));
+                if (mapRequest.DocumentId == Guid.Empty)
+                {
+                    throw new AdminPipeRpcException(
+                        "invalid_input",
+                        "Document id is required.");
+                }
+                return await vault.ExecuteAsync(
+                    (service, token) => service.GetDocumentMapAsync(
+                        mapRequest.DocumentId,
+                        token),
+                    cancellationToken).ConfigureAwait(false);
+            case "admin.notes.backlinks":
+                var backlinksRequest =
+                    PipeRpcCodec.ReadPayload<AdminBacklinksRequest>(
+                        new PipeRpcRequest(
+                            PipeProtocol.Version,
+                            Guid.Empty,
+                            method,
+                            payload));
+                if (backlinksRequest.DocumentId == Guid.Empty ||
+                    backlinksRequest.Limit is < 1 or > 100)
+                {
+                    throw new AdminPipeRpcException(
+                        "invalid_input",
+                        "Backlink request is invalid.");
+                }
+                return await vault.ExecuteAsync(
+                    (service, token) => service.ListBacklinksAsync(
+                        backlinksRequest.DocumentId,
+                        backlinksRequest.Cursor,
+                        backlinksRequest.Limit,
+                        token),
+                    cancellationToken).ConfigureAwait(false);
+            case "admin.tags.list":
+                var tagsRequest = PipeRpcCodec.ReadPayload<AdminTagListRequest>(
+                    new PipeRpcRequest(
+                        PipeProtocol.Version,
+                        Guid.Empty,
+                        method,
+                        payload));
+                if (tagsRequest.Limit is < 1 or > 100)
+                {
+                    throw new AdminPipeRpcException(
+                        "invalid_input",
+                        "Tag request is invalid.");
+                }
+                return await vault.ExecuteAsync(
+                    (service, token) => service.ListTagsAsync(
+                        tagsRequest.Cursor,
+                        tagsRequest.Limit,
+                        token),
+                    cancellationToken).ConfigureAwait(false);
+            case "admin.graph.local":
+                var graphRequest =
+                    PipeRpcCodec.ReadPayload<AdminLocalGraphRequest>(
+                        new PipeRpcRequest(
+                            PipeProtocol.Version,
+                            Guid.Empty,
+                            method,
+                            payload));
+                if (graphRequest.DocumentId == Guid.Empty ||
+                    graphRequest.Depth is < 1 or > 2 ||
+                    graphRequest.MaxNodes is < 1 or > 200 ||
+                    graphRequest.MaxEdges is < 1 or > 500)
+                {
+                    throw new AdminPipeRpcException(
+                        "invalid_input",
+                        "Local graph request is invalid.");
+                }
+                return await vault.ExecuteAsync(
+                    (service, token) => service.GetLocalGraphAsync(
+                        new VaultLocalGraphQuery(
+                            graphRequest.DocumentId,
+                            graphRequest.Depth,
+                            graphRequest.Tags ?? [],
+                            graphRequest.Folder,
+                            graphRequest.MaxNodes,
+                            graphRequest.MaxEdges),
+                        token),
+                    cancellationToken).ConfigureAwait(false);
             case "admin.notes.create":
                 var createRequest = PipeRpcCodec.ReadPayload<HostCreateNoteRequest>(
                     new PipeRpcRequest(
@@ -166,6 +253,36 @@ public sealed class StrictAdminVaultRpcProvider(
                             updateRequest.Request.Folder,
                             updateRequest.Request.Content,
                             updateRequest.Request.Tags),
+                        Actor(session),
+                        token),
+                    cancellationToken).ConfigureAwait(false);
+            case "admin.notes.patch":
+                var patchRequest =
+                    PipeRpcCodec.ReadPayload<AdminPatchNoteRequest>(
+                        new PipeRpcRequest(
+                            PipeProtocol.Version,
+                            Guid.Empty,
+                            method,
+                            payload));
+                if (patchRequest.DocumentId == Guid.Empty ||
+                    patchRequest.Request.ExpectedRevision < 1)
+                {
+                    throw new AdminPipeRpcException(
+                        "invalid_input",
+                        "Patch request is invalid.");
+                }
+                return await vault.ExecuteAsync(
+                    (service, token) => service.PatchNoteAsync(
+                        patchRequest.DocumentId,
+                        patchRequest.Request.ExpectedRevision,
+                        new VaultNotePatchCommand(
+                            patchRequest.Request.TargetKind,
+                            patchRequest.Request.HeadingPath,
+                            patchRequest.Request.FrontMatterKey,
+                            patchRequest.Request.Operation,
+                            patchRequest.Request.ContentMarkdown,
+                            patchRequest.Request.Value,
+                            patchRequest.Request.DryRun),
                         Actor(session),
                         token),
                     cancellationToken).ConfigureAwait(false);

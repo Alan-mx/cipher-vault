@@ -35,7 +35,7 @@ internal static class SqlCipherVaultStore
 
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         using var transaction = connection.BeginTransaction();
-        SetMeta(connection, transaction, "schema_version", "1");
+        SetMeta(connection, transaction, "schema_version", "2");
         SetMeta(connection, transaction, "vault_id", material.VaultId.ToString("D"));
         SetMeta(connection, transaction, "created_at_ms", now.ToString());
         SetMeta(connection, transaction, "recovery_verified_at_ms", "0");
@@ -62,6 +62,7 @@ internal static class SqlCipherVaultStore
             var connection = OpenConnection(databasePath, material.DbKey, create: false);
             ConfigureConnection(connection);
             VerifyVaultIdentity(connection, material.VaultId);
+            VerifySchemaVersion(connection);
             VaultFileSecurity.ProtectFile(databasePath);
             return Task.FromResult(connection);
         }
@@ -180,6 +181,20 @@ internal static class SqlCipherVaultStore
         }
     }
 
+    private static void VerifySchemaVersion(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT value FROM vault_meta WHERE key = 'schema_version';";
+        var version = Convert.ToString(command.ExecuteScalar());
+        if (!string.Equals(version, "2", StringComparison.Ordinal))
+        {
+            throw new VaultException(
+                VaultErrorCode.CorruptVault,
+                "This Vault schema is not supported. Reinitialize the development Vault.");
+        }
+    }
+
     private static async Task<string> LoadSchemaAsync(CancellationToken cancellationToken)
     {
         var assembly = typeof(SqlCipherVaultStore).Assembly;
@@ -211,4 +226,5 @@ internal static class SqlCipherVaultStore
         command.CommandText = sql;
         command.ExecuteNonQuery();
     }
+
 }

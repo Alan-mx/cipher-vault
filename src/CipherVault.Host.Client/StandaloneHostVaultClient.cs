@@ -97,6 +97,113 @@ public sealed class StandaloneHostVaultClient : IHostVaultClient
             cancellationToken);
     }
 
+    public Task<VaultDocumentMap> GetDocumentMapAsync(
+        Guid documentId,
+        CancellationToken cancellationToken = default)
+    {
+        return _vault.GetDocumentMapAsync(documentId, cancellationToken);
+    }
+
+    public Task<VaultBacklinkPage> ListBacklinksAsync(
+        Guid documentId,
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        return _vault.ListBacklinksAsync(
+            documentId,
+            cursor,
+            limit,
+            cancellationToken);
+    }
+
+    public Task<VaultTagPage> ListTagsAsync(
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        return _vault.ListTagsAsync(cursor, limit, cancellationToken);
+    }
+
+    public Task<VaultLocalGraphResult> GetLocalGraphAsync(
+        VaultLocalGraphQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        return _vault.GetLocalGraphAsync(query, cancellationToken);
+    }
+
+    public Task<VaultWriteResult> CreateNoteAsync(
+        string title,
+        string? folder,
+        string format,
+        string content,
+        IReadOnlyList<string>? tags,
+        CancellationToken cancellationToken = default)
+    {
+        return _vault.CreateNoteAsync(
+            title,
+            folder,
+            format,
+            content,
+            tags,
+            _actor,
+            cancellationToken);
+    }
+
+    public Task<VaultWriteResult> AppendNoteAsync(
+        Guid documentId,
+        int expectedRevision,
+        string content,
+        CancellationToken cancellationToken = default)
+    {
+        return _vault.AppendNoteAsync(
+            documentId,
+            expectedRevision,
+            content,
+            _actor,
+            cancellationToken);
+    }
+
+    public Task<VaultWriteResult> UpdateNoteAsync(
+        Guid documentId,
+        int expectedRevision,
+        VaultNotePatch patch,
+        CancellationToken cancellationToken = default)
+    {
+        return _vault.UpdateNoteAsync(
+            documentId,
+            expectedRevision,
+            patch,
+            _actor,
+            cancellationToken);
+    }
+
+    public Task<VaultPatchResult> PatchNoteAsync(
+        Guid documentId,
+        int expectedRevision,
+        VaultNotePatchCommand command,
+        CancellationToken cancellationToken = default)
+    {
+        return _vault.PatchNoteAsync(
+            documentId,
+            expectedRevision,
+            command,
+            _actor,
+            cancellationToken);
+    }
+
+    public Task<VaultDeleteResult> DeleteNoteAsync(
+        Guid documentId,
+        int expectedRevision,
+        CancellationToken cancellationToken = default)
+    {
+        return _vault.DeleteNoteAsync(
+            documentId,
+            expectedRevision,
+            _actor,
+            cancellationToken);
+    }
+
     public Task<VaultTrashPage> ListTrashAsync(
         string? cursor,
         int limit,

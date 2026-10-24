@@ -141,6 +141,54 @@ public sealed class BridgeToolContractTests
     }
 
     [Fact]
+    public async Task KnowledgeToolsForwardStructuredContractsAndAnnotations()
+    {
+        var bridge = new RecordingMcpBridgeClient();
+        var tools = new BridgeVaultTools(bridge);
+        const string id = "d80c2e83-636f-47a8-a3f2-e473beec9922";
+
+        await tools.TagList("tag-cursor", 25);
+        await tools.GetDocumentMap(id);
+        await tools.GetBacklinks(id, "backlink-cursor", 10);
+        await tools.GetLocalGraph(
+            id,
+            2,
+            ["tag"],
+            "folder",
+            100,
+            250);
+        await tools.PatchNote(
+            id,
+            5,
+            "heading",
+            "append",
+            ["Heading"],
+            content: "text",
+            dryRun: true);
+
+        Assert.Equal(
+            ["tag_list", "get_document_map", "get_backlinks", "get_local_graph", "patch_note"],
+            bridge.Calls.Select(call => call.ToolName));
+        Assert.Equal(25, bridge.Calls[0].Arguments["limit"]);
+        Assert.Equal(id, bridge.Calls[1].Arguments["documentId"]);
+        Assert.Equal(10, bridge.Calls[2].Arguments["limit"]);
+        Assert.Equal(2, bridge.Calls[3].Arguments["depth"]);
+        Assert.Equal(5, bridge.Calls[4].Arguments["expectedRevision"]);
+        Assert.Equal(true, bridge.Calls[4].Arguments["dryRun"]);
+
+        var readAnnotations = BridgeVaultTools.AnnotationsFor("get_backlinks");
+        Assert.True(readAnnotations.ReadOnlyHint);
+        Assert.False(readAnnotations.DestructiveHint);
+        Assert.True(readAnnotations.IdempotentHint);
+        Assert.False(readAnnotations.OpenWorldHint);
+
+        var writeAnnotations = BridgeVaultTools.AnnotationsFor("patch_note");
+        Assert.False(writeAnnotations.ReadOnlyHint);
+        Assert.True(writeAnnotations.DestructiveHint);
+        Assert.False(writeAnnotations.IdempotentHint);
+    }
+
+    [Fact]
     public async Task ReadOnlyBridgeBlocksWriteWithoutCallingBridge()
     {
         var bridge = new RecordingMcpBridgeClient

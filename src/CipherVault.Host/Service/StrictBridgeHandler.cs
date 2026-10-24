@@ -207,9 +207,17 @@ public sealed class StrictBridgeHandler(
                 mapped.AdminPayload,
                 cancellationToken).ConfigureAwait(false);
             var resultElement = BridgeToolEnvelope.SerializeResult(result);
-            return definition.ResultKind == BridgeToolResultKind.Page
-                ? BridgeToolEnvelope.Page(resultElement)
-                : BridgeToolEnvelope.Document(resultElement);
+            return definition.ResultKind switch
+            {
+                BridgeToolResultKind.Page =>
+                    BridgeToolEnvelope.Page(resultElement),
+                BridgeToolResultKind.Document =>
+                    BridgeToolEnvelope.Document(resultElement),
+                BridgeToolResultKind.Structured =>
+                    BridgeToolEnvelope.Structured(resultElement),
+                _ => throw new InvalidOperationException(
+                    "Unsupported bridge tool result kind.")
+            };
         }
         catch (OperationCanceledException)
         {

@@ -54,6 +54,12 @@ try
                         BridgeVaultTools.IsToolAvailable(
                             tool.Name,
                             scopes))
+                    .Select(tool =>
+                    {
+                        tool.Annotations = BridgeVaultTools.AnnotationsFor(
+                            tool.Name);
+                        return tool;
+                    })
                     .ToList();
                 return result;
             });
@@ -521,7 +527,11 @@ public sealed class StrictMcpBridgeClient : IMcpBridgeClient
             "list_catalog" or
             "search_notes" or
             "read_note" or
-            "scan_notes";
+            "scan_notes" or
+            "get_document_map" or
+            "get_backlinks" or
+            "tag_list" or
+            "get_local_graph";
     }
 
     private static bool RequiresGrant(string name)
@@ -640,6 +650,71 @@ public sealed class BridgeVaultTools
             cancellationToken);
     }
 
+    [McpServerTool(Name = "tag_list")]
+    [Description("List active document tags and usage counts with cursor pagination.")]
+    public Task<string> TagList(
+        string? cursor = null,
+        int limit = 50,
+        CancellationToken cancellationToken = default)
+    {
+        return CallAsync(
+            "tag_list",
+            Arguments(("cursor", cursor), ("limit", limit)),
+            cancellationToken);
+    }
+
+    [McpServerTool(Name = "get_document_map")]
+    [Description("Return headings, top-level frontmatter, outgoing Wiki Links and backlink count without document content.")]
+    public Task<string> GetDocumentMap(
+        string documentId,
+        CancellationToken cancellationToken = default)
+    {
+        return CallAsync(
+            "get_document_map",
+            Arguments(("documentId", documentId)),
+            cancellationToken);
+    }
+
+    [McpServerTool(Name = "get_backlinks")]
+    [Description("Return active documents that link to the requested document, grouped by source and cursor paginated.")]
+    public Task<string> GetBacklinks(
+        string documentId,
+        string? cursor = null,
+        int limit = 50,
+        CancellationToken cancellationToken = default)
+    {
+        return CallAsync(
+            "get_backlinks",
+            Arguments(
+                ("documentId", documentId),
+                ("cursor", cursor),
+                ("limit", limit)),
+            cancellationToken);
+    }
+
+    [McpServerTool(Name = "get_local_graph")]
+    [Description("Return a bounded one- or two-hop directed graph around one document. Tags use AND semantics.")]
+    public Task<string> GetLocalGraph(
+        string documentId,
+        int depth = 1,
+        string[]? tags = null,
+        string? folder = null,
+        int maxNodes = 200,
+        int maxEdges = 500,
+        CancellationToken cancellationToken = default)
+    {
+        return CallAsync(
+            "get_local_graph",
+            Arguments(
+                ("documentId", documentId),
+                ("depth", depth),
+                ("tags", tags),
+                ("folder", folder),
+                ("maxNodes", maxNodes),
+                ("maxEdges", maxEdges)),
+            cancellationToken);
+    }
+
     [McpServerTool(Name = "create_note")]
     [Description("Create an encrypted Markdown or TXT document in the Vault.")]
     public Task<string> CreateNote(
@@ -698,6 +773,35 @@ public sealed class BridgeVaultTools
                 ("folder", folder),
                 ("content", content),
                 ("tags", tags)),
+            cancellationToken);
+    }
+
+    [McpServerTool(Name = "patch_note")]
+    [Description("Patch a heading or top-level frontmatter field using optimistic revision concurrency. Set dryRun to preview the diff.")]
+    public Task<string> PatchNote(
+        string documentId,
+        int expectedRevision,
+        string targetKind,
+        string operation,
+        string[]? headingPath = null,
+        string? frontmatterKey = null,
+        string? content = null,
+        string? valueJson = null,
+        bool dryRun = false,
+        CancellationToken cancellationToken = default)
+    {
+        return CallAsync(
+            "patch_note",
+            Arguments(
+                ("documentId", documentId),
+                ("expectedRevision", expectedRevision),
+                ("targetKind", targetKind),
+                ("operation", operation),
+                ("headingPath", headingPath),
+                ("frontmatterKey", frontmatterKey),
+                ("content", content),
+                ("valueJson", valueJson),
+                ("dryRun", dryRun)),
             cancellationToken);
     }
 
@@ -773,11 +877,37 @@ public sealed class BridgeVaultTools
     {
         var required = name switch
         {
-            "create_note" or "append_note" or "update_note" => "write",
+            "create_note" or "append_note" or "update_note" or "patch_note" => "write",
             "delete_note" => "delete",
             _ => "read"
         };
         return scopes.Contains(required);
+    }
+
+    public static ToolAnnotations AnnotationsFor(string name)
+    {
+        var readOnly = name is
+            "vault_status" or
+            "list_catalog" or
+            "search_notes" or
+            "read_note" or
+            "scan_notes" or
+            "tag_list" or
+            "get_document_map" or
+            "get_backlinks" or
+            "get_local_graph";
+        var destructive = name is
+            "append_note" or
+            "update_note" or
+            "patch_note" or
+            "delete_note";
+        return new ToolAnnotations
+        {
+            ReadOnlyHint = readOnly,
+            DestructiveHint = destructive,
+            IdempotentHint = readOnly,
+            OpenWorldHint = false
+        };
     }
 
     private static string AccessDenied(string name)

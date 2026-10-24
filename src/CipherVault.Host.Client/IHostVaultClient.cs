@@ -48,6 +48,56 @@ public interface IHostVaultClient : IAsyncDisposable
         int maxChars,
         CancellationToken cancellationToken = default);
 
+    Task<VaultDocumentMap> GetDocumentMapAsync(
+        Guid documentId,
+        CancellationToken cancellationToken = default);
+
+    Task<VaultBacklinkPage> ListBacklinksAsync(
+        Guid documentId,
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken = default);
+
+    Task<VaultTagPage> ListTagsAsync(
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken = default);
+
+    Task<VaultLocalGraphResult> GetLocalGraphAsync(
+        VaultLocalGraphQuery query,
+        CancellationToken cancellationToken = default);
+
+    Task<VaultWriteResult> CreateNoteAsync(
+        string title,
+        string? folder,
+        string format,
+        string content,
+        IReadOnlyList<string>? tags,
+        CancellationToken cancellationToken = default);
+
+    Task<VaultWriteResult> AppendNoteAsync(
+        Guid documentId,
+        int expectedRevision,
+        string content,
+        CancellationToken cancellationToken = default);
+
+    Task<VaultWriteResult> UpdateNoteAsync(
+        Guid documentId,
+        int expectedRevision,
+        VaultNotePatch patch,
+        CancellationToken cancellationToken = default);
+
+    Task<VaultPatchResult> PatchNoteAsync(
+        Guid documentId,
+        int expectedRevision,
+        VaultNotePatchCommand command,
+        CancellationToken cancellationToken = default);
+
+    Task<VaultDeleteResult> DeleteNoteAsync(
+        Guid documentId,
+        int expectedRevision,
+        CancellationToken cancellationToken = default);
+
     Task<VaultTrashPage> ListTrashAsync(
         string? cursor,
         int limit,
