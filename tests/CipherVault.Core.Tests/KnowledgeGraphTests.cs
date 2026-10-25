@@ -54,6 +54,23 @@ public sealed class KnowledgeGraphTests
         Assert.Equal(["Security", "MCP"], tags);
     }
 
+    [Theory]
+    [InlineData("\n", "tags: [Java, Backend] # programming", "Java|Backend")]
+    [InlineData("\r\n", "tags:\n- 'Java'\n- \"machine learning\" # note", "Java|machine learning")]
+    [InlineData("\r\n", "tags:\n- Java\n# between items\n- MCP", "Java|MCP")]
+    public void FrontMatterTagsParseYamlCommentsAndQuotes(
+        string newline,
+        string yaml,
+        string expected)
+    {
+        var content = "---" + newline +
+            yaml.Replace("\n", newline, StringComparison.Ordinal) +
+            newline + "---" + newline + "# body";
+
+        Assert.True(FrontMatterTags.TryExtract(content, out var tags));
+        Assert.Equal(expected.Split('|'), tags);
+    }
+
     [Fact]
     public async Task LinksBacklinksTagsAndGraphAreQueryable()
     {
@@ -458,9 +475,9 @@ public sealed class KnowledgeGraphTests
             "md",
             """
             ---
-            status: open
+            status: open # current
             items:
-            - one
+            - one # first
             ---
             # 项目
             正文
@@ -533,6 +550,8 @@ public sealed class KnowledgeGraphTests
         Assert.Contains("- 新内容", read.Content, StringComparison.Ordinal);
         Assert.Contains("status: done", read.Content, StringComparison.Ordinal);
         Assert.Contains("- two", read.Content, StringComparison.Ordinal);
+        Assert.DoesNotContain("# current", read.Content, StringComparison.Ordinal);
+        Assert.DoesNotContain("# first", read.Content, StringComparison.Ordinal);
         Assert.Equal(items.Revision, read.Revision);
         var map = await fixture.Service.GetDocumentMapAsync(created.DocumentId);
         Assert.Contains(
@@ -568,7 +587,7 @@ public sealed class KnowledgeGraphTests
             "md",
             """
             ---
-            tags: [Java, Backend]
+            tags: [Java, Backend] # original
             ---
             # 标签同步
             """,
@@ -640,6 +659,14 @@ public sealed class KnowledgeGraphTests
         Assert.Contains("MCP", replacedItem.Tags);
         Assert.DoesNotContain("Java", replacedItem.Tags);
         Assert.DoesNotContain("Backend", replacedItem.Tags);
+        var replacedContent = await fixture.Service.ReadNoteAsync(
+            created.DocumentId,
+            0,
+            16_000);
+        Assert.DoesNotContain(
+            "# original",
+            replacedContent.Content,
+            StringComparison.Ordinal);
 
         await fixture.Service.PatchNoteAsync(
             created.DocumentId,

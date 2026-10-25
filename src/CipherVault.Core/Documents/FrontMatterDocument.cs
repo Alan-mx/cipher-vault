@@ -1,10 +1,14 @@
+using System.Collections;
 using System.Globalization;
 using System.Text.Json;
-using System.Text.RegularExpressions;
+using CipherVault.Core.Errors;
+using YamlDotNet.Core;
+using YamlDotNet.RepresentationModel;
+using YamlDotNet.Serialization;
 
 namespace CipherVault.Core.Documents;
 
-internal static partial class FrontMatterDocument
+internal static class FrontMatterDocument
 {
     public static bool TryParse(
         string content,
@@ -22,77 +26,107 @@ internal static partial class FrontMatterDocument
             return false;
         }
         var bodyStart = NextLineStart(content, openingEnd);
-        var cursor = bodyStart;
-        var fields = new List<FrontMatterField>();
-        while (cursor < content.Length)
+        var closingStart = FindClosingDelimiter(content, bodyStart);
+        if (closingStart < 0)
         {
-            var lineEnd = FindLineEnd(content, cursor);
-            var line = content.AsSpan(cursor, lineEnd - cursor);
-            if (IsDelimiter(line))
-            {
-                snapshot = new FrontMatterSnapshot(
-                    bodyStart,
-                    cursor,
-                    NextLineStart(content, lineEnd),
-                    fields);
-                return true;
-            }
-            if (line.Length == 0 || char.IsWhiteSpace(line[0]) || line[0] == '#')
-            {
-                cursor = NextLineStart(content, lineEnd);
-                continue;
-            }
-
-            var match = FieldKeyRegex().Match(line.ToString());
-            if (!match.Success)
-            {
-                cursor = NextLineStart(content, lineEnd);
-                continue;
-            }
-
-            var key = match.Groups[1].Value;
-            var inlineValue = match.Groups[2].Value.Trim();
-            var fieldStart = cursor;
-            var fieldEnd = lineEnd;
-            var valueText = inlineValue;
-            if (inlineValue.Length == 0)
-            {
-                var next = NextLineStart(content, lineEnd);
-                var items = new List<string>();
-                while (next < content.Length)
-                {
-                    var itemEnd = FindLineEnd(content, next);
-                    var itemLine = content.AsSpan(next, itemEnd - next);
-                    if (itemLine.Length == 0)
-                    {
-                        break;
-                    }
-                    var trimmed = itemLine.TrimStart();
-                    if (!trimmed.StartsWith("- ", StringComparison.Ordinal))
-                    {
-                        break;
-                    }
-                    items.Add(trimmed[2..].Trim().ToString());
-                    fieldEnd = itemEnd;
-                    next = NextLineStart(content, itemEnd);
-                }
-                if (items.Count > 0)
-                {
-                    valueText = "[" + string.Join(", ", items) + "]";
-                }
-            }
-
-            var (valueType, value) = ParseValue(valueText);
-            fields.Add(new FrontMatterField(
-                key,
-                valueType,
-                value,
-                fieldStart,
-                fieldEnd));
-            cursor = NextLineStart(content, fieldEnd);
+            return false;
+        }
+        var closingEnd = FindLineEnd(content, closingStart);
+        var end = NextLineStart(content, closingEnd);
+        var yaml = content[bodyStart..closingStart];
+        if (string.IsNullOrWhiteSpace(yaml))
+        {
+            snapshot = new FrontMatterSnapshot(
+                bodyStart,
+                closingStart,
+                end,
+                []);
+            return true;
         }
 
-        return false;
+        Dictionary<string, object?> values;
+        YamlMappingNode root;
+        try
+        {
+            values = new DeserializerBuilder()
+                .WithDuplicateKeyChecking()
+                .Build()
+                .Deserialize<Dictionary<string, object?>>(yaml) ?? [];
+            var stream = new YamlStream();
+            stream.Load(new StringReader(yaml));
+            if (stream.Documents.Count != 1 ||
+                stream.Documents[0].RootNode is not YamlMappingNode mapping)
+            {
+                throw InvalidFrontMatter(
+                    "Frontmatter must contain one top-level mapping.");
+            }
+            root = mapping;
+        }
+        catch (VaultException)
+        {
+            throw;
+        }
+        catch (YamlException exception)
+        {
+            throw InvalidFrontMatter(
+                "Frontmatter YAML is invalid.",
+                exception);
+        }
+
+        var fields = new List<FrontMatterField>();
+        var entries = root.Children.ToArray();
+        for (var index = 0; index < entries.Length; index++)
+        {
+            var pair = entries[index];
+            if (pair.Key is not YamlScalarNode keyNode ||
+                string.IsNullOrEmpty(keyNode.Value))
+            {
+                throw InvalidFrontMatter(
+                    "Frontmatter keys must be non-empty scalars.");
+            }
+            var key = keyNode.Value;
+            if (!values.TryGetValue(key, out var value))
+            {
+                throw InvalidFrontMatter(
+                    $"Frontmatter value for {key} could not be resolved.");
+            }
+            var fieldStart = bodyStart + checked((int)keyNode.Start.Index);
+            var nextFieldStart = index + 1 < entries.Length
+                ? bodyStart + checked((int)entries[index + 1].Key.Start.Index)
+                : closingStart;
+            var fieldEnd = TrimTrailingLineBreaks(
+                content,
+                fieldStart,
+                nextFieldStart);
+            var jsonValue = ToJsonElement(value);
+            fields.Add(new FrontMatterField(
+                key,
+                ValueTypeOf(jsonValue),
+                jsonValue,
+                fieldStart,
+                fieldEnd));
+        }
+
+        snapshot = new FrontMatterSnapshot(
+            bodyStart,
+            closingStart,
+            end,
+            fields);
+        return true;
+    }
+
+    private static int TrimTrailingLineBreaks(
+        string content,
+        int fieldStart,
+        int boundary)
+    {
+        var end = Math.Clamp(boundary, fieldStart, content.Length);
+        while (end > fieldStart &&
+               content[end - 1] is '\r' or '\n')
+        {
+            end--;
+        }
+        return end;
     }
 
     public static string RenderField(
@@ -111,69 +145,80 @@ internal static partial class FrontMatterDocument
         return $"{field.Key}: {RenderScalar(value)}";
     }
 
-    private static (string Type, JsonElement Value) ParseValue(string text)
+    private static int FindClosingDelimiter(
+        string content,
+        int start)
     {
-        if (text.Length == 0 ||
-            string.Equals(text, "null", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(text, "~", StringComparison.Ordinal))
+        var cursor = start;
+        while (cursor < content.Length)
         {
-            return ("null", JsonSerializer.SerializeToElement<string?>(null));
-        }
-        if (string.Equals(text, "true", StringComparison.OrdinalIgnoreCase))
-        {
-            return ("boolean", JsonSerializer.SerializeToElement(true));
-        }
-        if (string.Equals(text, "false", StringComparison.OrdinalIgnoreCase))
-        {
-            return ("boolean", JsonSerializer.SerializeToElement(false));
-        }
-        if (long.TryParse(
-                text,
-                NumberStyles.Integer,
-                CultureInfo.InvariantCulture,
-                out var integer))
-        {
-            return ("number", JsonSerializer.SerializeToElement(integer));
-        }
-        if (double.TryParse(
-                text,
-                NumberStyles.Float,
-                CultureInfo.InvariantCulture,
-                out var number))
-        {
-            return ("number", JsonSerializer.SerializeToElement(number));
-        }
-        if (text.StartsWith('[') && text.EndsWith(']'))
-        {
-            try
+            var lineEnd = FindLineEnd(content, cursor);
+            if (IsDelimiter(content.AsSpan(cursor, lineEnd - cursor)))
             {
-                using var document = JsonDocument.Parse(text);
-                if (document.RootElement.ValueKind == JsonValueKind.Array)
-                {
-                    return ("array", document.RootElement.Clone());
-                }
+                return cursor;
             }
-            catch (JsonException)
-            {
-                var items = text[1..^1]
-                    .Split(',', StringSplitOptions.RemoveEmptyEntries)
-                    .Select(item => Unquote(item.Trim()))
-                    .ToArray();
-                return ("array", JsonSerializer.SerializeToElement(items));
-            }
+            cursor = NextLineStart(content, lineEnd);
         }
-        return ("string", JsonSerializer.SerializeToElement(Unquote(text)));
+        return -1;
     }
 
-    private static string Unquote(string value)
+    private static JsonElement ToJsonElement(object? value)
     {
-        if (value.Length >= 2 &&
-            ((value[0] == '"' && value[^1] == '"') ||
-             (value[0] == '\'' && value[^1] == '\'')))
+        return JsonSerializer.SerializeToElement(ToPlainValue(value));
+    }
+
+    private static object? ToPlainValue(object? value)
+    {
+        if (value is null or string or bool ||
+            value is byte or sbyte or short or ushort or int or uint or
+                long or ulong or float or double or decimal)
         {
-            return value[1..^1];
+            return value;
         }
-        return value;
+        if (value is DateTime dateTime)
+        {
+            return dateTime.ToString("O", CultureInfo.InvariantCulture);
+        }
+        if (value is DateTimeOffset dateTimeOffset)
+        {
+            return dateTimeOffset.ToString("O", CultureInfo.InvariantCulture);
+        }
+        if (value is IDictionary dictionary)
+        {
+            var result = new Dictionary<string, object?>(StringComparer.Ordinal);
+            foreach (DictionaryEntry entry in dictionary)
+            {
+                result[Convert.ToString(
+                    entry.Key,
+                    CultureInfo.InvariantCulture) ?? string.Empty] =
+                    ToPlainValue(entry.Value);
+            }
+            return result;
+        }
+        if (value is IEnumerable enumerable)
+        {
+            var result = new List<object?>();
+            foreach (var item in enumerable)
+            {
+                result.Add(ToPlainValue(item));
+            }
+            return result;
+        }
+        return Convert.ToString(value, CultureInfo.InvariantCulture);
+    }
+
+    private static string ValueTypeOf(JsonElement value)
+    {
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => "string",
+            JsonValueKind.Number => "number",
+            JsonValueKind.True or JsonValueKind.False => "boolean",
+            JsonValueKind.Array => "array",
+            JsonValueKind.Object => "object",
+            JsonValueKind.Null => "null",
+            _ => "unknown"
+        };
     }
 
     private static string RenderScalar(JsonElement value)
@@ -235,8 +280,19 @@ internal static partial class FrontMatterDocument
         return Math.Min(start, content.Length);
     }
 
-    [GeneratedRegex(@"^([A-Za-z0-9_.-]+):[ \t]*(.*)$")]
-    private static partial Regex FieldKeyRegex();
+    private static VaultException InvalidFrontMatter(
+        string message,
+        Exception? innerException = null)
+    {
+        return innerException is null
+            ? new VaultException(
+                VaultErrorCode.FrontMatterInvalid,
+                message)
+            : new VaultException(
+                VaultErrorCode.FrontMatterInvalid,
+                message,
+                innerException);
+    }
 }
 
 internal sealed record FrontMatterField(

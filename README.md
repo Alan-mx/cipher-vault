@@ -228,7 +228,8 @@ scope。Agent 不接受长期 Bearer token，也不使用 direct HTTP MCP。
 
 ## 参考项目与借鉴边界
 
-> 版本快照：2026-10-24。以下项目仅用于产品或架构参考，不构成当前运行时依赖。
+> 版本快照：2026-10-24。以下项目用于产品或架构参考；表格中列出的库版本同时作为
+> 当前运行时依赖登记。
 > AGPL 项目只阅读其公开设计，不复制源码。具体规划见
 > [`docs/specs/knowledge-graph-mcp/clarify.md`](docs/specs/knowledge-graph-mcp/clarify.md)。
 
@@ -237,6 +238,7 @@ scope。Agent 不接受长期 Bearer token，也不使用 direct HTTP MCP。
 | [Obsidian](https://obsidian.md/) | 闭源产品，不锁定版本 | 闭源专有 | `[[笔记名]]`、反向链接、局部图谱、以标签过滤知识网络 | 把文件夹或全库图谱作为唯一主导航 |
 | [Local REST API](https://github.com/coddingtonbear/obsidian-local-rest-api) | `5.5.2` | MIT | MCP 活集成、按标题/块/frontmatter 精准修改、条件写、当前文档上下文 | 回环 HTTP、Bearer Token 直连、任意命令执行；CipherVault 继续使用签名命名管道和短期 Grant |
 | [Markdig](https://github.com/xoofx/markdig) | `1.4.2` | BSD-2-Clause | 安全的 Markdown AST 解析，用于 WPF 原生预览和链接注解 | 执行原始 HTML、脚本或远程资源 |
+| [YamlDotNet](https://github.com/aaubry/YamlDotNet) | `18.1.0` | MIT | 标准 YAML Frontmatter 解析、注释/引号/块列表兼容 | 执行自定义 YAML 标签或脚本 |
 | [Basic Memory](https://github.com/basicmachines-co/basic-memory) | `v0.24.1` | AGPL-3.0 | Markdown 与 SQLite 索引并存、MCP 原生知识图谱、稳定 permalink、工具行为标注、文件/索引一致性检查 | 明文知识库、外部 Python 进程、云端记忆服务 |
 | [Logseq](https://github.com/logseq/logseq) | `2.0.2`（DB beta） | AGPL-3.0 | 页面/块级引用、属性查询、图谱过滤思路；为未来块引用预留模型 | 直接采用 beta DB 实现，或把全库图谱作为主要入口 |
 | [SiYuan](https://github.com/siyuan-note/siyuan) | `v3.8.8` | AGPL-3.0 | 稳定块 ID、块级双向链接、文档地图、CLI/API、`--dry-run` 预览修改 | 向 Agent 暴露任意 SQL；首版直接实现块级模型 |
