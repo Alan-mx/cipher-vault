@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using CipherVault.Auth.Win;
 using CipherVault.Core;
+using CipherVault.Core.Backup;
 using CipherVault.Core.Configuration;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
@@ -80,7 +81,7 @@ try
         "rotate-recovery" => await RotateRecoveryAsync(service, Require(vaultPath)),
         "confirm-recovery" => await ConfirmRecoveryAsync(service, Require(vaultPath)),
         "host-stop" => await StopHostAsync(service),
-        "audit" => await AuditAsync(service, Require(vaultPath), jsonOptions),
+        "audit" => await AuditAsync(service, Require(vaultPath), args, jsonOptions),
         "search" => await SearchAsync(service, Require(vaultPath), RequireOption(args, "--query"), jsonOptions),
         "import-preview" => await ImportPreviewAsync(service, Require(vaultPath), RequireOption(args, "--source"), jsonOptions),
         "import-apply" => await ImportApplyAsync(service, Require(vaultPath), RequireOption(args, "--job"), jsonOptions),
@@ -277,10 +278,23 @@ static async Task<int> StopHostAsync(IHostVaultClient service)
 static async Task<int> AuditAsync(
     IHostVaultClient service,
     string vaultPath,
+    string[] arguments,
     JsonSerializerOptions options)
 {
     await EnsureUnlockedAsync(service, vaultPath);
-    var page = await service.GetAuditPageAsync(null, 100);
+    var page = await service.GetAuditPageAsync(
+        new VaultAuditQuery(
+            DocumentId: ParseOptionalGuid(
+                GetOption(arguments, "--document"),
+                "--document"),
+            Action: GetOption(arguments, "--action"),
+            CorrelationId: ParseOptionalGuid(
+                GetOption(arguments, "--correlation"),
+                "--correlation"),
+            Cursor: GetOption(arguments, "--cursor"),
+            Limit: ParseOptionalInteger(
+                GetOption(arguments, "--limit"),
+                "--limit") ?? 100));
     PrintJson(page, options);
     return 0;
 }
@@ -829,6 +843,23 @@ static int? ParseOptionalInteger(
     return parsed;
 }
 
+static Guid? ParseOptionalGuid(
+    string? value,
+    string option)
+{
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        return null;
+    }
+    if (!Guid.TryParse(value, out var parsed))
+    {
+        throw new VaultException(
+            VaultErrorCode.InvalidInput,
+            $"{option} must be a UUID.");
+    }
+    return parsed;
+}
+
 static void PrintJson<T>(T value, JsonSerializerOptions options)
 {
     Console.WriteLine(JsonSerializer.Serialize(value, options));
@@ -865,7 +896,8 @@ static void PrintHelp()
           rotate-recovery     --vault <directory>
           confirm-recovery    --vault <directory>
           host-stop
-          audit               --vault <directory>
+          audit               --vault <directory> [--document <id>] [--action <name>]
+                              [--correlation <id>] [--cursor <cursor>] [--limit <n>]
           search              --vault <directory> --query <text>
           import-preview      --vault <directory> --source <directory>
           import-apply        --vault <directory> --job <job-id>

@@ -345,11 +345,10 @@ internal sealed class InProcessHostVaultClient : IHostVaultClient
     }
 
     public Task<VaultAuditPage> GetAuditPageAsync(
-        string? cursor,
-        int limit,
+        VaultAuditQuery query,
         CancellationToken cancellationToken = default)
     {
-        return _vault.GetAuditPageAsync(cursor, limit, cancellationToken);
+        return _vault.GetAuditPageAsync(query, cancellationToken);
     }
 
     public Task ChangePasswordAsync(

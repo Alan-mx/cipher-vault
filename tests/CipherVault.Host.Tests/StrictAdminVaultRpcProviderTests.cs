@@ -258,6 +258,9 @@ public sealed class StrictAdminVaultRpcProviderTests
             "admin.maintenance.audit",
             JsonSerializer.SerializeToElement(
                 new AdminAuditListRequest(
+                    DocumentId: null,
+                    Action: null,
+                    CorrelationId: null,
                     Cursor: null,
                     Limit: 100),
                 new JsonSerializerOptions(JsonSerializerDefaults.Web)),

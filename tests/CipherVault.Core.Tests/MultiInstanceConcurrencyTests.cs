@@ -1,4 +1,5 @@
 using CipherVault.Core;
+using CipherVault.Core.Backup;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
 using CipherVault.Core.Session;
@@ -114,7 +115,8 @@ public sealed class MultiInstanceConcurrencyTests
         var catalog = await fixture.First.ListCatalogAsync("instances", null, 10);
         Assert.Contains(catalog.Items, item => item.Title == "first instance");
         Assert.Contains(catalog.Items, item => item.Title == "second instance");
-        var audit = await fixture.First.GetAuditPageAsync(null, 20);
+        var audit = await fixture.First.GetAuditPageAsync(
+            new VaultAuditQuery(Limit: 20));
         Assert.Equal(2, audit.Items.Count(item => item.Action == "create"));
     }
 

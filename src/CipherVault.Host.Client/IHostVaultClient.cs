@@ -158,8 +158,7 @@ public interface IHostVaultClient : IAsyncDisposable
         CancellationToken cancellationToken = default);
 
     Task<VaultAuditPage> GetAuditPageAsync(
-        string? cursor,
-        int limit,
+        VaultAuditQuery query,
         CancellationToken cancellationToken = default);
 
     Task ChangePasswordAsync(

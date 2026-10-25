@@ -419,13 +419,17 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
     }
 
     public Task<VaultAuditPage> GetAuditPageAsync(
-        string? cursor,
-        int limit,
+        VaultAuditQuery query,
         CancellationToken cancellationToken = default)
     {
         return CallAsync<VaultAuditPage>(
             "admin.maintenance.audit",
-            new AdminAuditListRequest(cursor, limit),
+            new AdminAuditListRequest(
+                query.DocumentId,
+                query.Action,
+                query.CorrelationId,
+                query.Cursor,
+                query.Limit),
             cancellationToken);
     }
 

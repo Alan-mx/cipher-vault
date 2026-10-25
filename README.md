@@ -128,9 +128,12 @@ WPF 提供日常读写、回收站、版本、备份、导出、导入和审计�
 .\CipherVault.Cli.exe search --query "invoice"
 .\CipherVault.Cli.exe backup --to D:\backups\vault.cvbackup
 .\CipherVault.Cli.exe export --to D:\backups\plaintext
+.\CipherVault.Cli.exe audit --action backlink_rewrite --limit 20
+.\CipherVault.Cli.exe audit --correlation <uuid>
 .\CipherVault.Cli.exe host-stop
 ```
 
+`audit` 支持按文档 ID、动作、correlation ID、游标和数量过滤；游标会绑定当前过滤条件。
 `host-stop` 会先锁定 Vault，再触发 Windows Service 停止。
 
 ## Knowledge network

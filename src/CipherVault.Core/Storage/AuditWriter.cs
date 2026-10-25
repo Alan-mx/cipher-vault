@@ -1,6 +1,7 @@
 using Microsoft.Data.Sqlite;
 using CipherVault.Core.Documents;
 using System.Diagnostics;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace CipherVault.Core.Storage;
@@ -138,10 +139,12 @@ internal static class AuditWriter
             """
             INSERT INTO audit_events(
                 event_id, occurred_at_ms, actor_kind, client_name, session_id,
-                action, document_id, result, bytes_returned, details_json)
+                action, document_id, correlation_id, result, bytes_returned,
+                details_json)
             VALUES(
                 $eventId, $occurredAt, $actor, $clientName, $sessionId,
-                $action, $documentId, $result, $bytesReturned, $details);
+                $action, $documentId, $correlationId, $result, $bytesReturned,
+                $details);
             """;
         command.Parameters.AddWithValue("$eventId", Guid.NewGuid().ToString("D"));
         command.Parameters.AddWithValue("$occurredAt", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
@@ -154,12 +157,30 @@ internal static class AuditWriter
         command.Parameters.AddWithValue("$sessionId", sessionId?.ToString("D") ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("$action", action);
         command.Parameters.AddWithValue("$documentId", documentId?.ToString("D") ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue(
+            "$correlationId",
+            ExtractCorrelationId(detailsJson) ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("$result", result);
         command.Parameters.AddWithValue("$bytesReturned", bytesReturned ?? (object)DBNull.Value);
         command.Parameters.AddWithValue(
             "$details",
             MergeDetails(detailsJson, auditContext));
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static string? ExtractCorrelationId(string detailsJson)
+    {
+        try
+        {
+            return JsonNode.Parse(detailsJson)?
+                ["correlationId"]?
+                .GetValue<string>();
+        }
+        catch (Exception exception) when (
+            exception is JsonException or InvalidOperationException)
+        {
+            return null;
+        }
     }
 
     private static string MergeDetails(

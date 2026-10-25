@@ -352,14 +352,17 @@ internal static partial class DocumentStore
     public static async Task<VaultAuditPage> ListAuditAsync(
         SqliteConnection connection,
         Guid sessionId,
-        string? cursor,
-        int limit,
+        VaultAuditQuery query,
         CancellationToken cancellationToken)
     {
-        var effectiveLimit = Math.Clamp(limit, 1, 200);
-        var fingerprint = CursorCodec.Fingerprint(string.Empty);
+        var effectiveLimit = Math.Clamp(query.Limit, 1, 200);
+        var action = string.IsNullOrWhiteSpace(query.Action)
+            ? null
+            : query.Action.Trim();
+        var fingerprint = CursorCodec.Fingerprint(
+            $"{query.DocumentId?.ToString("D")}|{action}|{query.CorrelationId?.ToString("D")}");
         var hasCursor = CursorCodec.TryDecode(
-            cursor,
+            query.Cursor,
             sessionId,
             "audit",
             fingerprint,
@@ -367,24 +370,59 @@ internal static partial class DocumentStore
         var sql = new StringBuilder(
             """
             SELECT event_id, occurred_at_ms, actor_kind, client_name, action,
-                   document_id, result, bytes_returned, details_json
+                   document_id, correlation_id, result, bytes_returned,
+                   details_json
             FROM audit_events
             """);
+        var filters = new List<string>();
+        if (query.DocumentId is not null)
+        {
+            filters.Add("document_id = $documentId");
+        }
+        if (action is not null)
+        {
+            filters.Add("action = $action");
+        }
+        if (query.CorrelationId is not null)
+        {
+            filters.Add("correlation_id = $correlationId");
+        }
         if (hasCursor)
         {
-            sql.Append(
+            filters.Add(
                 """
-                 WHERE (
-                    occurred_at_ms < $afterOccurredAt
-                    OR (occurred_at_ms = $afterOccurredAt AND event_id > $afterEventId)
-                 )
+                (
+                  occurred_at_ms < $afterOccurredAt
+                  OR (occurred_at_ms = $afterOccurredAt AND event_id > $afterEventId)
+                )
                 """);
+        }
+        if (filters.Count > 0)
+        {
+            sql.Append(" WHERE ")
+                .Append(string.Join(" AND ", filters));
         }
         sql.Append(" ORDER BY occurred_at_ms DESC, event_id LIMIT $limit;");
 
         using var command = connection.CreateCommand();
         command.CommandText = sql.ToString();
         command.Parameters.AddWithValue("$limit", effectiveLimit + 1);
+        if (query.DocumentId is not null)
+        {
+            command.Parameters.AddWithValue(
+                "$documentId",
+                query.DocumentId.Value.ToString("D"));
+        }
+        if (action is not null)
+        {
+            command.Parameters.AddWithValue("$action", action);
+        }
+        if (query.CorrelationId is not null)
+        {
+            command.Parameters.AddWithValue(
+                "$correlationId",
+                query.CorrelationId.Value.ToString("D"));
+        }
         if (hasCursor)
         {
             command.Parameters.AddWithValue("$afterOccurredAt", position.OccurredAtMs);
@@ -403,9 +441,10 @@ internal static partial class DocumentStore
                     reader.IsDBNull(3) ? null : reader.GetString(3),
                     reader.GetString(4),
                     reader.IsDBNull(5) ? null : Guid.Parse(reader.GetString(5)),
-                    reader.GetString(6),
-                    reader.IsDBNull(7) ? null : reader.GetInt32(7),
-                    reader.GetString(8)),
+                    reader.GetString(7),
+                    reader.IsDBNull(8) ? null : reader.GetInt32(8),
+                    reader.IsDBNull(6) ? null : Guid.Parse(reader.GetString(6)),
+                    reader.GetString(9)),
                 new AuditCursor(reader.GetInt64(1), reader.GetString(0))));
         }
         var hasMore = items.Count > effectiveLimit;

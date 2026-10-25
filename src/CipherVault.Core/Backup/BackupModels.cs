@@ -21,7 +21,15 @@ public sealed record VaultAuditItem(
     Guid? DocumentId,
     string Result,
     int? BytesReturned,
+    Guid? CorrelationId,
     string DetailsJson);
+
+public sealed record VaultAuditQuery(
+    Guid? DocumentId = null,
+    string? Action = null,
+    Guid? CorrelationId = null,
+    string? Cursor = null,
+    int Limit = 100);
 
 public sealed record VaultAuditPage(
     IReadOnlyList<VaultAuditItem> Items,

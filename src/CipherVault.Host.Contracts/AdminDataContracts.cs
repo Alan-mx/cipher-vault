@@ -87,6 +87,9 @@ public sealed record AdminRestoreRevisionRequest(
     HostRestoreRevisionRequest Request);
 
 public sealed record AdminAuditListRequest(
+    Guid? DocumentId,
+    string? Action,
+    Guid? CorrelationId,
     string? Cursor,
     int Limit);
 

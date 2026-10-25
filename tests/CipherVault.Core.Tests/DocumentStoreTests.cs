@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using CipherVault.Core;
+using CipherVault.Core.Backup;
 using CipherVault.Core.Crypto;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
@@ -476,7 +477,8 @@ public sealed class DocumentStoreTests
             "two",
             [],
             VaultActorKind.Mcp);
-        var first = await fixture.Service.GetAuditPageAsync(null, 1);
+        var first = await fixture.Service.GetAuditPageAsync(
+            new VaultAuditQuery(Limit: 1));
         Assert.Single(first.Items);
         Assert.NotNull(first.NextCursor);
 
@@ -487,11 +489,21 @@ public sealed class DocumentStoreTests
             "three",
             [],
             VaultActorKind.Mcp);
-        var second = await fixture.Service.GetAuditPageAsync(first.NextCursor, 1);
+        var second = await fixture.Service.GetAuditPageAsync(
+            new VaultAuditQuery(
+                Cursor: first.NextCursor,
+                Limit: 1));
+        var mismatchedCursor = await Assert.ThrowsAsync<VaultException>(() =>
+            fixture.Service.GetAuditPageAsync(
+                new VaultAuditQuery(
+                    Action: "update",
+                    Cursor: first.NextCursor,
+                    Limit: 1)));
 
         Assert.DoesNotContain(
             second.Items,
             item => item.EventId == first.Items[0].EventId);
+        Assert.Equal(VaultErrorCode.InvalidInput, mismatchedCursor.Code);
     }
 
     [Fact]
@@ -934,7 +946,8 @@ public sealed class DocumentStoreTests
         var targetPath = Path.Combine(fixture.RootPath, "restored");
 
         var backup = await fixture.Service.CreateBackupAsync(backupPath);
-        var sourceAudit = await fixture.Service.GetAuditPageAsync(null, 100);
+        var sourceAudit = await fixture.Service.GetAuditPageAsync(
+            new VaultAuditQuery(Limit: 100));
         var backupEvent = Assert.Single(
             sourceAudit.Items,
             item => item.Action == "backup_create");
@@ -953,7 +966,8 @@ public sealed class DocumentStoreTests
             created.DocumentId,
             0,
             100);
-        var restoredAudit = await restoredService.GetAuditPageAsync(null, 100);
+        var restoredAudit = await restoredService.GetAuditPageAsync(
+            new VaultAuditQuery(Limit: 100));
         var restoreEvent = Assert.Single(
             restoredAudit.Items,
             item => item.Action == "backup_restore");
@@ -989,7 +1003,8 @@ public sealed class DocumentStoreTests
             [],
             VaultActorKind.Mcp);
 
-        var audit = await fixture.Service.GetAuditPageAsync(null, 100);
+        var audit = await fixture.Service.GetAuditPageAsync(
+            new VaultAuditQuery(Limit: 100));
         var before = await fixture.Service.VerifyVaultAsync();
         await fixture.DeleteAllFtsRowsAsync();
         var damaged = await fixture.Service.VerifyVaultAsync();
@@ -1071,7 +1086,8 @@ public sealed class DocumentStoreTests
         Assert.True(File.Exists(Path.Combine(destination, "vault-export-checksums.txt")));
         Assert.True(File.Exists(Path.Combine(destination, "导出", "导出文档.md")));
         Assert.True(result.ExportedDocuments > 0);
-        var audit = await fixture.Service.GetAuditPageAsync(null, 100);
+        var audit = await fixture.Service.GetAuditPageAsync(
+            new VaultAuditQuery(Limit: 100));
         var exportEvent = Assert.Single(
             audit.Items,
             item => item.Action == "export_snapshot");

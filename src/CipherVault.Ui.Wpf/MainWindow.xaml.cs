@@ -8,6 +8,7 @@ using System.Windows.Threading;
 using Microsoft.Win32;
 using CipherVault.Auth.Win;
 using CipherVault.Core;
+using CipherVault.Core.Backup;
 using CipherVault.Core.Configuration;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
@@ -771,7 +772,9 @@ public partial class MainWindow : Window
         {
             return;
         }
-        await RunBusyAsync(async () => PrintJson(await _service.GetAuditPageAsync(null, 100)));
+        await RunBusyAsync(async () => PrintJson(
+            await _service.GetAuditPageAsync(
+                new VaultAuditQuery(Limit: 100))));
     }
 
     private async void StopHostButton_Click(object sender, RoutedEventArgs e)

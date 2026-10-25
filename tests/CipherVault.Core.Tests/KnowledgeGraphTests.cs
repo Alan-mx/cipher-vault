@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Security.Cryptography;
+using CipherVault.Core.Backup;
 using CipherVault.Core.Crypto;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
@@ -214,7 +215,8 @@ public sealed class KnowledgeGraphTests
         Assert.Equal(2, rewrittenMap.OutgoingLinks.Count);
         Assert.All(rewrittenMap.OutgoingLinks, link =>
             Assert.Equal(target.DocumentId, link.Target?.DocumentId));
-        var audit = await fixture.Service.GetAuditPageAsync(null, 100);
+        var audit = await fixture.Service.GetAuditPageAsync(
+            new VaultAuditQuery(Limit: 100));
         var updateEvent = Assert.Single(
             audit.Items,
             item => item.Action == "update" &&
@@ -272,6 +274,25 @@ public sealed class KnowledgeGraphTests
             secondSourceDetails.RootElement
                 .GetProperty("rewrittenLinks")
                 .GetInt32());
+
+        var correlationKey = Guid.Parse(
+            Assert.IsType<string>(correlationId));
+        var correlated = await fixture.Service.GetAuditPageAsync(
+            new VaultAuditQuery(
+                CorrelationId: correlationKey,
+                Limit: 100));
+        Assert.Equal(3, correlated.Items.Count);
+        Assert.All(
+            correlated.Items,
+            item => Assert.Equal(correlationKey, item.CorrelationId));
+
+        var filtered = await fixture.Service.GetAuditPageAsync(
+            new VaultAuditQuery(
+                DocumentId: titleSource.DocumentId,
+                Action: "backlink_rewrite",
+                Limit: 100));
+        Assert.Single(filtered.Items);
+        Assert.Equal(correlationKey, filtered.Items[0].CorrelationId);
     }
 
     [Fact]

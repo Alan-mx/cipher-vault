@@ -417,8 +417,12 @@ public sealed class StrictAdminVaultRpcProvider(
                             payload));
                 return await vault.ExecuteAsync(
                     (service, token) => service.GetAuditPageAsync(
-                        auditRequest.Cursor,
-                        auditRequest.Limit,
+                        new VaultAuditQuery(
+                            auditRequest.DocumentId,
+                            auditRequest.Action,
+                            auditRequest.CorrelationId,
+                            auditRequest.Cursor,
+                            auditRequest.Limit),
                         token),
                     cancellationToken).ConfigureAwait(false);
             case "admin.maintenance.change_password":

@@ -189,8 +189,7 @@ public interface IVaultService : IAsyncDisposable
         CancellationToken cancellationToken = default);
 
     Task<VaultAuditPage> GetAuditPageAsync(
-        string? cursor,
-        int limit,
+        VaultAuditQuery query,
         CancellationToken cancellationToken = default);
 
     Task<VaultIntegrityReport> VerifyVaultAsync(
@@ -1187,11 +1186,19 @@ public sealed class VaultService : IVaultService
     }
 
     public async Task<VaultAuditPage> GetAuditPageAsync(
-        string? cursor,
-        int limit,
+        VaultAuditQuery query,
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
+        if (query.Limit is < 1 or > 200 ||
+            query.DocumentId == Guid.Empty ||
+            query.CorrelationId == Guid.Empty ||
+            query.Action?.Trim().Length > 100)
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "Audit query parameters are invalid.");
+        }
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -1199,8 +1206,7 @@ public sealed class VaultService : IVaultService
             var page = await DocumentStore.ListAuditAsync(
                 session.Connection,
                 session.SessionId,
-                cursor,
-                limit,
+                query,
                 cancellationToken).ConfigureAwait(false);
             await EnsureSessionStillValidAsync(session, cancellationToken).ConfigureAwait(false);
             return page;

@@ -92,7 +92,10 @@ public sealed class CliCrashRecoveryTests
         string? cursor = null;
         do
         {
-            var page = await service.GetAuditPageAsync(cursor, 100);
+            var page = await service.GetAuditPageAsync(
+                new VaultAuditQuery(
+                    Cursor: cursor,
+                    Limit: 100));
             items.AddRange(page.Items);
             cursor = page.NextCursor;
         }

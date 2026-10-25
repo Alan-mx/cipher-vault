@@ -194,6 +194,7 @@ CREATE TABLE audit_events (
     session_id TEXT,
     action TEXT NOT NULL,
     document_id TEXT,
+    correlation_id TEXT,
     result TEXT NOT NULL CHECK (
         result IN ('success', 'denied', 'failed', 'cancelled')
     ),
@@ -206,6 +207,12 @@ CREATE INDEX ix_audit_occurred
 
 CREATE INDEX ix_audit_document
     ON audit_events(document_id, occurred_at_ms);
+
+CREATE INDEX ix_audit_action
+    ON audit_events(action, occurred_at_ms);
+
+CREATE INDEX ix_audit_correlation
+    ON audit_events(correlation_id, occurred_at_ms);
 
 CREATE TRIGGER trg_audit_no_update
 BEFORE UPDATE ON audit_events
