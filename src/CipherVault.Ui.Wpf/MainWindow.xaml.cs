@@ -124,7 +124,27 @@ public partial class MainWindow : Window
         Closing += MainWindow_Closing;
         Closed += MainWindow_Closed;
         DocumentWorkspace.Initialize(_service);
+        DocumentWorkspace.DocumentSaved += DocumentWorkspace_DocumentSaved;
         ConfigureCredentialMode();
+    }
+
+    private async void DocumentWorkspace_DocumentSaved(object? sender, EventArgs e)
+    {
+        var activeDocumentId = _activeDocumentId;
+        await RunBusyAsync(async () =>
+        {
+            await RefreshCatalogAsync();
+            if (activeDocumentId is null)
+            {
+                return;
+            }
+            _suppressCatalogSelection = true;
+            CatalogGrid.SelectedItem = CatalogGrid.Items
+                .Cast<object>()
+                .FirstOrDefault(item =>
+                    GetDocumentId(item) == activeDocumentId);
+            _suppressCatalogSelection = false;
+        });
     }
 
     private void ConfigureCredentialMode()

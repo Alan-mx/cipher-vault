@@ -398,6 +398,14 @@ internal static class DocumentWriter
             {
                 throw new VaultException(VaultErrorCode.InvalidInput, "Title must contain 1 to 200 characters.");
             }
+            if (patch.UpdateBacklinks &&
+                !string.Equals(current.Title, newTitle, StringComparison.Ordinal) &&
+                newTitle.IndexOfAny(['[', ']', '|', '#']) >= 0)
+            {
+                throw new VaultException(
+                    VaultErrorCode.InvalidInput,
+                    "A synchronized title cannot contain wiki-link syntax characters.");
+            }
             var newContent = patch.Content ?? current.Content;
             if (patch.Content is not null &&
                 Encoding.UTF8.GetByteCount(newContent) > MaxContentBytes)
@@ -504,6 +512,20 @@ internal static class DocumentWriter
                 newContent,
                 timestamp,
                 cancellationToken).ConfigureAwait(false);
+            var rewrittenBacklinks = 0;
+            if (patch.UpdateBacklinks &&
+                !string.Equals(current.Title, newTitle, StringComparison.Ordinal))
+            {
+                rewrittenBacklinks = await RewriteBacklinksAsync(
+                    connection,
+                    sqliteTransaction,
+                    integrityKey,
+                    documentId,
+                    current.Title,
+                    newTitle,
+                    timestamp,
+                    cancellationToken).ConfigureAwait(false);
+            }
             await DocumentLinkIndexer.ReconcileAsync(
                 connection,
                 sqliteTransaction,
@@ -523,7 +545,7 @@ internal static class DocumentWriter
                 documentId,
                 "success",
                 null,
-                "{}",
+                JsonSerializer.Serialize(new { rewrittenBacklinks }),
                 cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             return new VaultWriteResult(documentId, newRevision, now);
@@ -1280,6 +1302,194 @@ internal static class DocumentWriter
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    private static async Task<int> RewriteBacklinksAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        byte[] integrityKey,
+        Guid targetDocumentId,
+        string oldTitle,
+        string newTitle,
+        long timestamp,
+        CancellationToken cancellationToken)
+    {
+        var targetId = targetDocumentId.ToString("D").ToLowerInvariant();
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            """
+            SELECT links.source_document_id, links.raw_target,
+                   links.display_text, links.target_heading,
+                   links.start_offset, links.end_offset
+            FROM document_links AS links
+            JOIN documents AS source
+              ON source.document_id = links.source_document_id
+            WHERE links.target_document_id = $targetId
+              AND links.raw_target_norm = $oldTitleNorm
+              AND links.source_document_id <> $targetId
+              AND source.deleted_at_ms IS NULL
+            ORDER BY links.source_document_id, links.start_offset DESC;
+            """;
+        command.Parameters.AddWithValue("$targetId", targetId);
+        command.Parameters.AddWithValue(
+            "$oldTitleNorm",
+            DocumentLinkKeys.NormalizeTitle(oldTitle));
+        var rows = new List<BacklinkRewriteRow>();
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken)
+            .ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                rows.Add(new BacklinkRewriteRow(
+                    Guid.Parse(reader.GetString(0)),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.IsDBNull(3) ? null : reader.GetString(3),
+                    reader.GetInt32(4),
+                    reader.GetInt32(5)));
+            }
+        }
+
+        var rewrittenDocuments = 0;
+        foreach (var group in rows.GroupBy(row => row.SourceDocumentId))
+        {
+            var current = await ReadCurrentAsync(
+                connection,
+                transaction,
+                integrityKey,
+                group.Key,
+                cancellationToken).ConfigureAwait(false);
+            if (current.Format != "md")
+            {
+                continue;
+            }
+            var content = new StringBuilder(current.Content);
+            foreach (var row in group.OrderByDescending(item => item.StartOffset))
+            {
+                RewriteBacklinkSpan(content, row, oldTitle, newTitle);
+            }
+            var newContent = content.ToString();
+            if (Encoding.UTF8.GetByteCount(newContent) > MaxDocumentBytes)
+            {
+                throw new VaultException(
+                    VaultErrorCode.InvalidInput,
+                    "Rewriting backlinks would make a document exceed 4 MB.");
+            }
+            var newRevision = current.Revision + 1;
+            var documentIdValue = group.Key.ToString("D").ToLowerInvariant();
+            var (_, sourcePathNorm) = VirtualPathPolicy.NormalizeDocumentPath(
+                current.SourcePath,
+                current.Format);
+            var hmac = DocumentHmac.Compute(
+                integrityKey,
+                documentIdValue,
+                newRevision,
+                current.Title,
+                current.SourcePath,
+                current.Format,
+                current.HeadingsJson,
+                current.TagsJson,
+                newContent);
+            await UpdateCurrentFullAsync(
+                connection,
+                transaction,
+                documentIdValue,
+                current.Title,
+                current.SourcePath,
+                sourcePathNorm,
+                newRevision,
+                current.HeadingsJson,
+                current.TagsJson,
+                hmac,
+                newContent,
+                timestamp,
+                cancellationToken).ConfigureAwait(false);
+            await InsertRevisionAsync(
+                connection,
+                transaction,
+                documentIdValue,
+                current.Title,
+                current.SourcePath,
+                current.Format,
+                newContent,
+                current.HeadingsJson,
+                current.TagsJson,
+                hmac,
+                newRevision,
+                timestamp,
+                cancellationToken).ConfigureAwait(false);
+            await ReplaceFtsAsync(
+                connection,
+                transaction,
+                documentIdValue,
+                current.Title,
+                current.SourcePath,
+                current.HeadingsJson,
+                current.TagsJson,
+                newContent,
+                cancellationToken).ConfigureAwait(false);
+            await DocumentLinkIndexer.IndexSourceAsync(
+                connection,
+                transaction,
+                group.Key,
+                newRevision,
+                current.Title,
+                current.SourcePath,
+                current.Format,
+                newContent,
+                timestamp,
+                cancellationToken).ConfigureAwait(false);
+            rewrittenDocuments++;
+        }
+        return rewrittenDocuments;
+    }
+
+    private static void RewriteBacklinkSpan(
+        StringBuilder content,
+        BacklinkRewriteRow row,
+        string oldTitle,
+        string newTitle)
+    {
+        if (row.StartOffset < 0 ||
+            row.EndOffset <= row.StartOffset ||
+            row.EndOffset > content.Length)
+        {
+            throw new VaultException(
+                VaultErrorCode.CorruptVault,
+                "Backlink offset is outside the source document.");
+        }
+        var original = content.ToString(
+            row.StartOffset,
+            row.EndOffset - row.StartOffset);
+        var parsed = WikiLinkParser.Parse(original);
+        if (parsed.Count != 1 ||
+            parsed[0].StartOffset != 0 ||
+            parsed[0].EndOffset != original.Length ||
+            !string.Equals(
+                DocumentLinkKeys.NormalizeWikiTarget(parsed[0].RawTarget),
+                DocumentLinkKeys.NormalizeTitle(oldTitle),
+                StringComparison.Ordinal))
+        {
+            throw new VaultException(
+                VaultErrorCode.CorruptVault,
+                "Backlink span does not match the indexed link.");
+        }
+        var heading = row.TargetHeading is null
+            ? string.Empty
+            : $"#{row.TargetHeading}";
+        var display = string.Equals(
+            row.DisplayText,
+            row.RawTarget,
+            StringComparison.Ordinal)
+            ? string.Empty
+            : $"|{row.DisplayText}";
+        content.Remove(
+            row.StartOffset,
+            row.EndOffset - row.StartOffset);
+        content.Insert(
+            row.StartOffset,
+            $"[[{newTitle}{heading}{display}]]");
+    }
+
     private static async Task<CurrentDocument> ReadCurrentAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -1623,6 +1833,14 @@ internal static class DocumentWriter
         string TagsJson,
         byte[] PayloadHmac,
         int Revision);
+
+    private sealed record BacklinkRewriteRow(
+        Guid SourceDocumentId,
+        string RawTarget,
+        string DisplayText,
+        string? TargetHeading,
+        int StartOffset,
+        int EndOffset);
 
     private sealed record RevisionDocument(
         string Title,

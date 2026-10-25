@@ -236,7 +236,8 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
                     patch.Title,
                     patch.Folder,
                     patch.Content,
-                    patch.Tags)),
+                    patch.Tags,
+                    patch.UpdateBacklinks)),
             cancellationToken);
     }
 

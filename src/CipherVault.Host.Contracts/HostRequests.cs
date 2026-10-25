@@ -28,7 +28,8 @@ public sealed record HostUpdateNoteRequest(
     string? Title,
     string? Folder,
     string? Content,
-    IReadOnlyList<string>? Tags);
+    IReadOnlyList<string>? Tags,
+    bool UpdateBacklinks = false);
 
 public sealed record HostTrashNoteRequest(
     int ExpectedRevision);

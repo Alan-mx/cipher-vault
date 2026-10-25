@@ -252,7 +252,8 @@ public sealed class StrictAdminVaultRpcProvider(
                             updateRequest.Request.Title,
                             updateRequest.Request.Folder,
                             updateRequest.Request.Content,
-                            updateRequest.Request.Tags),
+                            updateRequest.Request.Tags,
+                            updateRequest.Request.UpdateBacklinks),
                         Actor(session),
                         token),
                     cancellationToken).ConfigureAwait(false);

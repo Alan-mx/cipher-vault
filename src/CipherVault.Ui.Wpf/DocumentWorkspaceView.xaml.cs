@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -23,7 +24,11 @@ public partial class DocumentWorkspaceView : UserControl
     private string _originalContent = string.Empty;
     private string? _backlinkCursor;
     private bool _suppressDirty;
+    private bool _suppressTitleDirty;
     private bool _busy;
+    private bool _linkTargetsLoading;
+    private List<VaultCatalogItem>? _linkTargets;
+    private WikiLinkCompletion? _linkCompletion;
     private GraphViewer? _graphViewer;
 
     public DocumentWorkspaceView()
@@ -31,12 +36,19 @@ public partial class DocumentWorkspaceView : UserControl
         InitializeComponent();
     }
 
+    public event EventHandler? DocumentSaved;
+
     public bool HasUnsavedChanges =>
         _documentId is not null &&
-        !string.Equals(
+        _map is not null &&
+        (!string.Equals(
             EditorBox.Text,
             _originalContent,
-            StringComparison.Ordinal);
+            StringComparison.Ordinal) ||
+         !string.Equals(
+             TitleEditorBox.Text.Trim(),
+             _map.Title,
+             StringComparison.Ordinal));
 
     public void Initialize(IHostVaultClient service)
     {
@@ -49,9 +61,14 @@ public partial class DocumentWorkspaceView : UserControl
         _map = null;
         _originalContent = string.Empty;
         _backlinkCursor = null;
+        _linkTargets = null;
         _suppressDirty = true;
+        _suppressTitleDirty = true;
         EditorBox.Clear();
+        TitleEditorBox.Clear();
         _suppressDirty = false;
+        _suppressTitleDirty = false;
+        SyncBacklinksCheckBox.IsChecked = true;
         PreviewBox.Document = new FlowDocument();
         DocumentTitle.Text = "选择一篇文档";
         DocumentMeta.Text = string.Empty;
@@ -60,6 +77,7 @@ public partial class DocumentWorkspaceView : UserControl
         BacklinkSummary.Text = "尚无反向链接";
         UnresolvedSummary.Text = "没有未解析链接";
         LoadMoreBacklinksButton.IsEnabled = false;
+        CloseLinkSuggestions();
         ResetGraph();
         SetEditMode(false);
         UpdateButtons();
@@ -89,8 +107,12 @@ public partial class DocumentWorkspaceView : UserControl
             _map = map;
             _originalContent = content;
             _suppressDirty = true;
+            _suppressTitleDirty = true;
             EditorBox.Text = content;
+            TitleEditorBox.Text = map.Title;
             _suppressDirty = false;
+            _suppressTitleDirty = false;
+            _linkTargets = null;
             DocumentTitle.Text = map.Title;
             DocumentMeta.Text =
                 $"{map.VirtualPath}  |  版本 {map.Revision}  |  " +
@@ -234,8 +256,11 @@ public partial class DocumentWorkspaceView : UserControl
 
     private async void EditButton_Click(object sender, RoutedEventArgs e)
     {
+        _linkTargets = null;
+        SyncBacklinksCheckBox.IsChecked = true;
         SetEditMode(true);
-        EditorBox.Focus();
+        TitleEditorBox.Focus();
+        TitleEditorBox.SelectAll();
         await Task.CompletedTask;
     }
 
@@ -251,8 +276,11 @@ public partial class DocumentWorkspaceView : UserControl
             return;
         }
         _suppressDirty = true;
+        _suppressTitleDirty = true;
         EditorBox.Text = _originalContent;
+        TitleEditorBox.Text = _map?.Title ?? string.Empty;
         _suppressDirty = false;
+        _suppressTitleDirty = false;
         SetEditMode(false);
         UpdateButtons();
     }
@@ -267,17 +295,32 @@ public partial class DocumentWorkspaceView : UserControl
         }
         try
         {
+            var title = TitleEditorBox.Text.Trim();
+            var titlePatch = string.Equals(
+                title,
+                _map.Title,
+                StringComparison.Ordinal)
+                ? null
+                : title;
             await _service.UpdateNoteAsync(
                 _documentId.Value,
                 _map.Revision,
                 new VaultNotePatch(
-                    Title: null,
+                    Title: titlePatch,
                     Folder: null,
                     Content: EditorBox.Text,
-                    Tags: null)).ConfigureAwait(true);
+                    Tags: null,
+                    UpdateBacklinks: SyncBacklinksCheckBox.IsChecked == true))
+                .ConfigureAwait(true);
+            _linkTargets = null;
             _documentId = null;
-            await LoadDocumentAsync(_map.DocumentId).ConfigureAwait(true);
-            return true;
+            var loaded = await LoadDocumentAsync(_map.DocumentId)
+                .ConfigureAwait(true);
+            if (loaded)
+            {
+                DocumentSaved?.Invoke(this, EventArgs.Empty);
+            }
+            return loaded;
         }
         catch (Exception exception) when (IsRevisionConflict(exception))
         {
@@ -303,12 +346,230 @@ public partial class DocumentWorkspaceView : UserControl
             return;
         }
         UpdateButtons();
+        UpdateLinkSuggestions();
+    }
+
+    private void EditorBox_SelectionChanged(
+        object sender,
+        RoutedEventArgs e)
+    {
+        UpdateLinkSuggestions();
+    }
+
+    private void TitleEditorBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_suppressTitleDirty)
+        {
+            return;
+        }
+        UpdateButtons();
+    }
+
+    private async Task EnsureLinkTargetsAsync()
+    {
+        if (_service is null || _linkTargets is not null || _linkTargetsLoading)
+        {
+            return;
+        }
+        _linkTargetsLoading = true;
+        try
+        {
+            var items = new List<VaultCatalogItem>();
+            string? cursor = null;
+            do
+            {
+                var page = await _service.ListCatalogAsync(
+                    null,
+                    cursor,
+                    100).ConfigureAwait(true);
+                items.AddRange(page.Items);
+                cursor = page.NextCursor;
+            }
+            while (cursor is not null);
+            _linkTargets = items;
+            if (EditorBox.Visibility == Visibility.Visible)
+            {
+                UpdateLinkSuggestions();
+            }
+        }
+        catch
+        {
+            _linkTargets = [];
+            CloseLinkSuggestions();
+        }
+        finally
+        {
+            _linkTargetsLoading = false;
+        }
+    }
+
+    private void UpdateLinkSuggestions()
+    {
+        if (_service is null ||
+            EditorBox.Visibility != Visibility.Visible ||
+            _suppressDirty)
+        {
+            CloseLinkSuggestions();
+            return;
+        }
+        var completion = LinkSuggestionEngine.FindCompletion(
+            EditorBox.Text,
+            EditorBox.CaretIndex);
+        if (completion is null)
+        {
+            CloseLinkSuggestions();
+            return;
+        }
+        _linkCompletion = completion;
+        if (_linkTargets is null)
+        {
+            CloseLinkSuggestions(preserveCompletion: true);
+            _ = EnsureLinkTargetsAsync();
+            return;
+        }
+        var suggestions = LinkSuggestionEngine.Rank(
+            _linkTargets,
+            _documentId,
+            completion.Query);
+        if (suggestions.Count == 0)
+        {
+            CloseLinkSuggestions();
+            return;
+        }
+        LinkSuggestionList.ItemsSource = suggestions;
+        LinkSuggestionList.SelectedIndex = 0;
+        PositionLinkSuggestions();
+    }
+
+    private void PositionLinkSuggestions()
+    {
+        var rect = EditorBox.GetRectFromCharacterIndex(EditorBox.CaretIndex);
+        if (rect.IsEmpty)
+        {
+            LinkSuggestionPopup.HorizontalOffset = 0;
+            LinkSuggestionPopup.VerticalOffset = Math.Max(0, EditorBox.ActualHeight);
+        }
+        else
+        {
+            LinkSuggestionPopup.HorizontalOffset = Math.Max(0, rect.Left);
+            LinkSuggestionPopup.VerticalOffset = Math.Max(0, rect.Bottom + 2);
+        }
+        LinkSuggestionPopup.IsOpen = true;
+    }
+
+    private void CloseLinkSuggestions(bool preserveCompletion = false)
+    {
+        LinkSuggestionPopup.IsOpen = false;
+        LinkSuggestionList.ItemsSource = null;
+        if (!preserveCompletion)
+        {
+            _linkCompletion = null;
+        }
+    }
+
+    private void EditorBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (!LinkSuggestionPopup.IsOpen ||
+            LinkSuggestionList.Items.Count == 0)
+        {
+            return;
+        }
+        switch (e.Key)
+        {
+            case Key.Down:
+                LinkSuggestionList.SelectedIndex = Math.Min(
+                    LinkSuggestionList.SelectedIndex + 1,
+                    LinkSuggestionList.Items.Count - 1);
+                LinkSuggestionList.ScrollIntoView(
+                    LinkSuggestionList.SelectedItem);
+                e.Handled = true;
+                break;
+            case Key.Up:
+                LinkSuggestionList.SelectedIndex = Math.Max(
+                    LinkSuggestionList.SelectedIndex - 1,
+                    0);
+                LinkSuggestionList.ScrollIntoView(
+                    LinkSuggestionList.SelectedItem);
+                e.Handled = true;
+                break;
+            case Key.Enter:
+            case Key.Tab:
+                if (LinkSuggestionList.SelectedItem is LinkSuggestion suggestion)
+                {
+                    AcceptLinkSuggestion(suggestion);
+                }
+                e.Handled = true;
+                break;
+            case Key.Escape:
+                CloseLinkSuggestions();
+                e.Handled = true;
+                break;
+        }
+    }
+
+    private void LinkSuggestionList_PreviewMouseLeftButtonUp(
+        object sender,
+        MouseButtonEventArgs e)
+    {
+        var container = ItemsControl.ContainerFromElement(
+            LinkSuggestionList,
+            e.OriginalSource as DependencyObject) as ListBoxItem;
+        if (container?.DataContext is not LinkSuggestion suggestion)
+        {
+            return;
+        }
+        AcceptLinkSuggestion(suggestion);
+        e.Handled = true;
+    }
+
+    private void AcceptLinkSuggestion(LinkSuggestion suggestion)
+    {
+        if (_linkCompletion is not { } completion)
+        {
+            return;
+        }
+        var text = EditorBox.Text;
+        if (completion.StartOffset < 0 ||
+            completion.CaretOffset > text.Length ||
+            completion.StartOffset >= completion.CaretOffset)
+        {
+            CloseLinkSuggestions();
+            return;
+        }
+        var hasClosing = completion.CaretOffset + 1 < text.Length &&
+            text[completion.CaretOffset] == ']' &&
+            text[completion.CaretOffset + 1] == ']';
+        var replacement = $"[[{suggestion.InsertTarget}" +
+            (hasClosing ? string.Empty : "]]");
+        var newCaret = completion.StartOffset +
+            replacement.Length +
+            (hasClosing ? 2 : 0);
+        _suppressDirty = true;
+        EditorBox.Text = text
+            .Remove(
+                completion.StartOffset,
+                completion.CaretOffset - completion.StartOffset)
+            .Insert(completion.StartOffset, replacement);
+        EditorBox.CaretIndex = newCaret;
+        _suppressDirty = false;
+        CloseLinkSuggestions();
+        UpdateButtons();
+        EditorBox.Focus();
     }
 
     private void SetEditMode(bool editing)
     {
         EditorBox.Visibility = editing ? Visibility.Visible : Visibility.Collapsed;
         PreviewBox.Visibility = editing ? Visibility.Collapsed : Visibility.Visible;
+        DocumentTitle.Visibility = editing ? Visibility.Collapsed : Visibility.Visible;
+        TitleEditorBox.Visibility = editing ? Visibility.Visible : Visibility.Collapsed;
+        SyncBacklinksCheckBox.Visibility = editing
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        if (!editing)
+        {
+            CloseLinkSuggestions();
+        }
         EditButton.IsEnabled = !editing && HasDocument();
         SaveButton.IsEnabled = editing && HasUnsavedChanges;
         CancelButton.IsEnabled = editing;
@@ -402,6 +663,7 @@ public partial class DocumentWorkspaceView : UserControl
                 "md",
                 $"# {title}\n",
                 null).ConfigureAwait(true);
+            _linkTargets = null;
             await LoadDocumentAsync(result.DocumentId).ConfigureAwait(true);
         }
         catch (Exception exception)

@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Threading;
 using CipherVault.Auth.Win;
 using CipherVault.Core;
@@ -453,6 +454,178 @@ public sealed class MainWindowTests
             var preview = Find<RichTextBox>(workspace, "PreviewBox");
             Assert.True(preview.IsDocumentEnabled);
             return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public Task DocumentWorkspaceExposesLinkAuthoringControls()
+    {
+        return RunOnStaAsync(() =>
+        {
+            var workspace = new DocumentWorkspaceView();
+            Assert.NotNull(Find<TextBox>(workspace, "TitleEditorBox"));
+            Assert.NotNull(Find<CheckBox>(workspace, "SyncBacklinksCheckBox"));
+            Assert.NotNull(Find<Popup>(workspace, "LinkSuggestionPopup"));
+            Assert.NotNull(Find<ListBox>(workspace, "LinkSuggestionList"));
+            return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public async Task DocumentWorkspaceAutocompletesWikiLinks()
+    {
+        await RunOnStaAsync(async () =>
+        {
+            await using var service = new InProcessHostVaultClient();
+            var workspace = new DocumentWorkspaceView();
+            workspace.Initialize(service);
+            var window = new Window
+            {
+                Width = 1000,
+                Height = 700,
+                Content = workspace
+            };
+            try
+            {
+                window.Show();
+                SetField(
+                    workspace,
+                    "_linkTargets",
+                    new List<VaultCatalogItem>
+                    {
+                        new(
+                            Guid.NewGuid(),
+                            "目标文档",
+                            "目标文档.md",
+                            "md",
+                            1,
+                            [],
+                            [],
+                            DateTimeOffset.Parse("2026-10-25T00:00:00Z"))
+                    });
+                InvokePrivate(workspace, "SetEditMode", true);
+                var editor = Find<TextBox>(workspace, "EditorBox");
+                editor.Text = "参见 [[目";
+                editor.CaretIndex = editor.Text.Length;
+                InvokePrivate(workspace, "UpdateLinkSuggestions");
+                var popup = Find<Popup>(workspace, "LinkSuggestionPopup");
+                var list = Find<ListBox>(workspace, "LinkSuggestionList");
+                Assert.True(popup.IsOpen);
+                var suggestion = Assert.IsType<LinkSuggestion>(
+                    Assert.Single(list.Items));
+                InvokePrivate(workspace, "AcceptLinkSuggestion", suggestion);
+
+                Assert.Equal("参见 [[目标文档]]", editor.Text);
+                Assert.False(popup.IsOpen);
+            }
+            finally
+            {
+                workspace.Clear();
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task DocumentWorkspaceLoadsLinkTargetCatalog()
+    {
+        await RunOnStaAsync(async () =>
+        {
+            using var fixture = new WindowFixture();
+            await fixture.InitializeVaultAsync();
+            await using var service = new InProcessHostVaultClient();
+            await service.UnlockAsync(
+                fixture.VaultPath,
+                Password,
+                VaultCredentialType.Password);
+            await service.CreateNoteAsync("候选一", null, "md", "one", null);
+            await service.CreateNoteAsync("候选二", null, "md", "two", null);
+            var workspace = new DocumentWorkspaceView();
+            workspace.Initialize(service);
+
+            await (Task)(InvokePrivate(
+                workspace,
+                "EnsureLinkTargetsAsync")
+                ?? throw new InvalidOperationException(
+                    "EnsureLinkTargetsAsync returned null."));
+            var targets = Assert.IsAssignableFrom<List<VaultCatalogItem>>(
+                GetField(workspace, "_linkTargets"));
+
+            Assert.Equal(2, targets.Count);
+            workspace.Clear();
+        });
+    }
+
+    [Fact]
+    public async Task DocumentWorkspaceRenamesAndSynchronizesBacklinks()
+    {
+        if (!ShouldRunInteractiveUiTests())
+        {
+            return;
+        }
+
+        using var uiLock = UiAutomationLock.Acquire();
+        await RunOnStaAsync(async () =>
+        {
+            using var fixture = new WindowFixture();
+            await fixture.InitializeVaultAsync();
+            var window = fixture.CreateWindow();
+            try
+            {
+                window.Show();
+                await UnlockWindowAsync(window, fixture.Root);
+                var service = Assert.IsAssignableFrom<IHostVaultClient>(
+                    GetField(window, "_service"));
+                var target = await service.CreateNoteAsync(
+                    "旧目标",
+                    null,
+                    "md",
+                    "# 旧目标",
+                    null);
+                var source = await service.CreateNoteAsync(
+                    "来源",
+                    null,
+                    "md",
+                    "[[旧目标]]",
+                    null);
+                var workspace = Find<DocumentWorkspaceView>(
+                    window,
+                    "DocumentWorkspace");
+                Assert.True(await workspace.LoadDocumentAsync(target.DocumentId));
+                Find<Button>(workspace, "EditButton").RaiseEvent(
+                    new RoutedEventArgs(Button.ClickEvent));
+                var titleEditor = Find<TextBox>(workspace, "TitleEditorBox");
+                titleEditor.Text = "新目标";
+                Assert.True(Find<CheckBox>(workspace, "SyncBacklinksCheckBox").IsChecked);
+                Find<Button>(workspace, "SaveButton").RaiseEvent(
+                    new RoutedEventArgs(Button.ClickEvent));
+
+                await WaitUntilAsync(
+                    async () =>
+                    {
+                        var read = await service.ReadNoteAsync(
+                            source.DocumentId,
+                            0,
+                            16_000);
+                        return read.Revision == 2 &&
+                            read.Content == "[[新目标]]";
+                    },
+                    TimeSpan.FromSeconds(10));
+                await WaitUntilAsync(
+                    () => Find<DataGrid>(window, "CatalogGrid")
+                        .Items
+                        .Cast<VaultCatalogItem>()
+                        .Any(item => item.Title == "新目标"),
+                    TimeSpan.FromSeconds(10));
+                Assert.Equal(
+                    "新目标",
+                    Find<TextBlock>(workspace, "DocumentTitle").Text);
+            }
+            finally
+            {
+                await fixture.DisposeWindowAsync(window);
+                window.Close();
+            }
         });
     }
 

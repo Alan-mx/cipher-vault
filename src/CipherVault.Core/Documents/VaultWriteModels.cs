@@ -25,7 +25,8 @@ public sealed record VaultNotePatch(
     string? Title = null,
     string? Folder = null,
     string? Content = null,
-    IReadOnlyList<string>? Tags = null);
+    IReadOnlyList<string>? Tags = null,
+    bool UpdateBacklinks = false);
 
 public sealed record VaultDeleteResult(
     Guid DocumentId,

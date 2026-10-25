@@ -129,6 +129,124 @@ public sealed class KnowledgeGraphTests
     }
 
     [Fact]
+    public async Task RenameWithBacklinkSyncRewritesOnlyMatchingTitleLinks()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var target = await fixture.Service.CreateNoteAsync(
+            "旧目标",
+            "folder",
+            "md",
+            "# 旧目标",
+            null,
+            VaultActorKind.UserUi);
+        var titleSource = await fixture.Service.CreateNoteAsync(
+            "标题引用",
+            null,
+            "md",
+            "[[旧目标]]\n[[旧目标#章节|显示名]]",
+            null,
+            VaultActorKind.UserUi);
+        var pathSource = await fixture.Service.CreateNoteAsync(
+            "路径引用",
+            null,
+            "md",
+            "[[folder/旧目标]]",
+            null,
+            VaultActorKind.UserUi);
+
+        var updated = await fixture.Service.UpdateNoteAsync(
+            target.DocumentId,
+            target.Revision,
+            new VaultNotePatch(
+                Title: "新目标",
+                UpdateBacklinks: true),
+            VaultActorKind.UserUi);
+        var rewritten = await fixture.Service.ReadNoteAsync(
+            titleSource.DocumentId,
+            0,
+            16_000);
+        var unchanged = await fixture.Service.ReadNoteAsync(
+            pathSource.DocumentId,
+            0,
+            16_000);
+        var rewrittenMap = await fixture.Service.GetDocumentMapAsync(
+            titleSource.DocumentId);
+
+        Assert.True(updated.Revision > target.Revision);
+        Assert.Equal(2, rewritten.Revision);
+        Assert.Equal(
+            "[[新目标]]\n[[新目标#章节|显示名]]",
+            rewritten.Content);
+        Assert.Equal(1, unchanged.Revision);
+        Assert.Equal("[[folder/旧目标]]", unchanged.Content);
+        Assert.Equal(2, rewrittenMap.OutgoingLinks.Count);
+        Assert.All(rewrittenMap.OutgoingLinks, link =>
+            Assert.Equal(target.DocumentId, link.Target?.DocumentId));
+    }
+
+    [Fact]
+    public async Task RenameWithoutBacklinkSyncKeepsReferences()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var target = await fixture.Service.CreateNoteAsync(
+            "旧目标",
+            null,
+            "md",
+            "# 旧目标",
+            null,
+            VaultActorKind.UserUi);
+        var source = await fixture.Service.CreateNoteAsync(
+            "来源",
+            null,
+            "md",
+            "[[旧目标]]",
+            null,
+            VaultActorKind.UserUi);
+
+        await fixture.Service.UpdateNoteAsync(
+            target.DocumentId,
+            target.Revision,
+            new VaultNotePatch(Title: "新目标"),
+            VaultActorKind.UserUi);
+        var unchanged = await fixture.Service.ReadNoteAsync(
+            source.DocumentId,
+            0,
+            16_000);
+        var map = await fixture.Service.GetDocumentMapAsync(source.DocumentId);
+
+        Assert.Equal(1, unchanged.Revision);
+        Assert.Equal("[[旧目标]]", unchanged.Content);
+        Assert.Equal(target.DocumentId, Assert.Single(map.OutgoingLinks).Target?.DocumentId);
+    }
+
+    [Fact]
+    public async Task SynchronizedRenameRejectsUnsafeWikiTitle()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var target = await fixture.Service.CreateNoteAsync(
+            "安全标题",
+            null,
+            "md",
+            "# 安全标题",
+            null,
+            VaultActorKind.UserUi);
+
+        var exception = await Assert.ThrowsAsync<VaultException>(() =>
+            fixture.Service.UpdateNoteAsync(
+                target.DocumentId,
+                target.Revision,
+                new VaultNotePatch(
+                    Title: "bad#title",
+                    UpdateBacklinks: true),
+                VaultActorKind.UserUi));
+
+        Assert.Equal(VaultErrorCode.InvalidInput, exception.Code);
+        var read = await fixture.Service.ReadNoteAsync(target.DocumentId, 0, 16_000);
+        Assert.Equal("安全标题", read.Title);
+        Assert.Equal(1, read.Revision);
+    }
+
+    [Fact]
     public async Task DuplicateTitlesProduceAmbiguousCandidates()
     {
         await using var fixture = await KnowledgeFixture.CreateAsync();

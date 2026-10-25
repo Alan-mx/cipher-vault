@@ -21,8 +21,16 @@
             <StackPanel>
                 <TextBlock x:Name="DocumentTitle" FontSize="20"
                            FontWeight="SemiBold" Text="选择一篇文档" />
+                <TextBox x:Name="TitleEditorBox" Visibility="Collapsed"
+                         FontSize="20" FontWeight="SemiBold"
+                         MinWidth="320" Padding="4,2"
+                         TextChanged="TitleEditorBox_TextChanged" />
                 <TextBlock x:Name="DocumentMeta" Foreground="#667085"
                            Margin="0,3,0,0" Text="" />
+                <CheckBox x:Name="SyncBacklinksCheckBox"
+                          Margin="0,7,0,0" Visibility="Collapsed"
+                          IsChecked="True"
+                          Content="同步更新引用" />
             </StackPanel>
         </DockPanel>
 
@@ -46,7 +54,9 @@
                          HorizontalScrollBarVisibility="Auto"
                          FontFamily="Cascadia Mono, Consolas"
                          Padding="12"
-                         TextChanged="EditorBox_TextChanged" />
+                         TextChanged="EditorBox_TextChanged"
+                         SelectionChanged="EditorBox_SelectionChanged"
+                         PreviewKeyDown="EditorBox_PreviewKeyDown" />
             </Grid>
 
             <GridSplitter Grid.Column="1" Width="8"
@@ -153,5 +163,38 @@
                 </TabItem>
             </TabControl>
         </Grid>
+
+        <Popup x:Name="LinkSuggestionPopup"
+               PlacementTarget="{Binding ElementName=EditorBox}"
+               Placement="Relative"
+               AllowsTransparency="True"
+               StaysOpen="True"
+               PopupAnimation="Fade">
+            <Border Width="380" MaxHeight="280"
+                    Background="White"
+                    BorderBrush="#C7CDD5"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="4">
+                <ListBox x:Name="LinkSuggestionList"
+                         BorderThickness="0"
+                         Focusable="False"
+                         PreviewMouseLeftButtonUp="LinkSuggestionList_PreviewMouseLeftButtonUp">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Margin="2">
+                                <TextBlock Text="{Binding Title}"
+                                           FontWeight="SemiBold"
+                                           TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding VirtualPath}"
+                                           Foreground="#667085"
+                                           FontSize="11"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Border>
+        </Popup>
     </Grid>
 </UserControl>
