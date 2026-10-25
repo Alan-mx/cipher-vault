@@ -153,6 +153,13 @@ public sealed class KnowledgeGraphTests
             "[[folder/旧目标]]",
             null,
             VaultActorKind.UserUi);
+        var secondTitleSource = await fixture.Service.CreateNoteAsync(
+            "第二标题引用",
+            null,
+            "md",
+            "[[旧目标]]",
+            null,
+            VaultActorKind.UserUi);
 
         var updated = await fixture.Service.UpdateNoteAsync(
             target.DocumentId,
@@ -169,6 +176,10 @@ public sealed class KnowledgeGraphTests
             pathSource.DocumentId,
             0,
             16_000);
+        var secondRewritten = await fixture.Service.ReadNoteAsync(
+            secondTitleSource.DocumentId,
+            0,
+            16_000);
         var rewrittenMap = await fixture.Service.GetDocumentMapAsync(
             titleSource.DocumentId);
 
@@ -179,6 +190,8 @@ public sealed class KnowledgeGraphTests
             rewritten.Content);
         Assert.Equal(1, unchanged.Revision);
         Assert.Equal("[[folder/旧目标]]", unchanged.Content);
+        Assert.Equal(2, secondRewritten.Revision);
+        Assert.Equal("[[新目标]]", secondRewritten.Content);
         Assert.Equal(2, rewrittenMap.OutgoingLinks.Count);
         Assert.All(rewrittenMap.OutgoingLinks, link =>
             Assert.Equal(target.DocumentId, link.Target?.DocumentId));
@@ -189,11 +202,57 @@ public sealed class KnowledgeGraphTests
                 item.DocumentId == target.DocumentId);
         using var details = JsonDocument.Parse(updateEvent.DetailsJson);
         Assert.Equal(
-            1,
+            2,
             details.RootElement.GetProperty("rewrittenDocuments").GetInt32());
         Assert.Equal(
-            2,
+            3,
             details.RootElement.GetProperty("rewrittenLinks").GetInt32());
+        var correlationId = details.RootElement
+            .GetProperty("correlationId")
+            .GetString();
+        Assert.False(string.IsNullOrWhiteSpace(correlationId));
+        var sourceEvents = audit.Items
+            .Where(item => item.Action == "backlink_rewrite")
+            .ToArray();
+        Assert.Equal(2, sourceEvents.Length);
+        Assert.DoesNotContain(
+            sourceEvents,
+            item => item.DocumentId == pathSource.DocumentId);
+        foreach (var sourceEvent in sourceEvents)
+        {
+            using var sourceDetails = JsonDocument.Parse(
+                sourceEvent.DetailsJson);
+            Assert.Equal(
+                target.DocumentId.ToString("D").ToLowerInvariant(),
+                sourceDetails.RootElement
+                    .GetProperty("targetDocumentId")
+                    .GetString());
+            Assert.Equal(
+                correlationId,
+                sourceDetails.RootElement
+                    .GetProperty("correlationId")
+                    .GetString());
+        }
+        var firstSourceEvent = Assert.Single(
+            sourceEvents,
+            item => item.DocumentId == titleSource.DocumentId);
+        using var firstSourceDetails = JsonDocument.Parse(
+            firstSourceEvent.DetailsJson);
+        Assert.Equal(
+            2,
+            firstSourceDetails.RootElement
+                .GetProperty("rewrittenLinks")
+                .GetInt32());
+        var secondSourceEvent = Assert.Single(
+            sourceEvents,
+            item => item.DocumentId == secondTitleSource.DocumentId);
+        using var secondSourceDetails = JsonDocument.Parse(
+            secondSourceEvent.DetailsJson);
+        Assert.Equal(
+            1,
+            secondSourceDetails.RootElement
+                .GetProperty("rewrittenLinks")
+                .GetInt32());
     }
 
     [Fact]

@@ -522,16 +522,21 @@ internal static class DocumentWriter
                 timestamp,
                 cancellationToken).ConfigureAwait(false);
             var backlinkRewrite = new BacklinkRewriteResult(0, 0);
+            Guid? backlinkCorrelationId = null;
             if (patch.UpdateBacklinks &&
                 !string.Equals(current.Title, newTitle, StringComparison.Ordinal))
             {
+                backlinkCorrelationId = Guid.NewGuid();
                 backlinkRewrite = await RewriteBacklinksAsync(
                     connection,
                     sqliteTransaction,
                     integrityKey,
+                    sessionId,
+                    auditContext,
                     documentId,
                     current.Title,
                     newTitle,
+                    backlinkCorrelationId.Value,
                     timestamp,
                     cancellationToken).ConfigureAwait(false);
             }
@@ -557,7 +562,8 @@ internal static class DocumentWriter
                 JsonSerializer.Serialize(new
                 {
                     rewrittenDocuments = backlinkRewrite.Documents,
-                    rewrittenLinks = backlinkRewrite.Links
+                    rewrittenLinks = backlinkRewrite.Links,
+                    correlationId = backlinkCorrelationId?.ToString("D")
                 }),
                 cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -1332,9 +1338,12 @@ internal static class DocumentWriter
         SqliteConnection connection,
         SqliteTransaction transaction,
         byte[] integrityKey,
+        Guid sessionId,
+        VaultAuditContext auditContext,
         Guid targetDocumentId,
         string oldTitle,
         string newTitle,
+        Guid correlationId,
         long timestamp,
         CancellationToken cancellationToken)
     {
@@ -1465,6 +1474,26 @@ internal static class DocumentWriter
                 current.Format,
                 newContent,
                 timestamp,
+                cancellationToken).ConfigureAwait(false);
+            await AuditWriter.AppendAsync(
+                connection,
+                transaction,
+                auditContext,
+                sessionId,
+                "backlink_rewrite",
+                group.Key,
+                "success",
+                null,
+                JsonSerializer.Serialize(new
+                {
+                    targetDocumentId = targetId,
+                    oldTitle,
+                    newTitle,
+                    oldRevision = current.Revision,
+                    newRevision,
+                    rewrittenLinks = links.Length,
+                    correlationId = correlationId.ToString("D")
+                }),
                 cancellationToken).ConfigureAwait(false);
             rewrittenDocuments++;
             rewrittenLinks += links.Length;

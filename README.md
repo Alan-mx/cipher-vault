@@ -162,6 +162,10 @@ Markdown 存在 Frontmatter `tags` 字段时，该字段是标签索引的权威
 完整性检查会继续比对当前文档和历史 revision 的 Frontmatter 标签、`tags_json`、
 `document_tags` 与 FTS 标签副本，并报告具体文档或 revision 的问题码。
 
+重命名并同步引用时，目标文档写 `update` 汇总事件，每个被自动改写的来源文档写
+`backlink_rewrite` 事件；同一事务内的事件共享 `correlationId`，可追溯到具体来源、
+旧标题和新标题。
+
 维护页可以全量重建链接索引；操作在单个 SQLCipher 事务内完成并写入审计。需要建立
 本地性能基线时可运行：
 
