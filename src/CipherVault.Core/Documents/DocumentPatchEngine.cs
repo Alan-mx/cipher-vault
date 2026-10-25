@@ -158,7 +158,7 @@ internal static class DocumentPatchEngine
             "string" => value.ValueKind == JsonValueKind.String,
             "number" => value.ValueKind == JsonValueKind.Number,
             "boolean" => value.ValueKind is JsonValueKind.True or JsonValueKind.False,
-            "array" => value.ValueKind == JsonValueKind.Array,
+            "array" => IsScalarArray(value),
             "null" => value.ValueKind is
                 JsonValueKind.String or
                 JsonValueKind.Number or
@@ -196,7 +196,29 @@ internal static class DocumentPatchEngine
         var merged = prepend
             ? additions.Concat(existing).ToArray()
             : existing.Concat(additions).ToArray();
-        return JsonSerializer.SerializeToElement(merged);
+        var mergedValue = JsonSerializer.SerializeToElement(merged);
+        EnsureScalarArray(mergedValue);
+        return mergedValue;
+    }
+
+    private static bool IsScalarArray(JsonElement value)
+    {
+        return value.ValueKind == JsonValueKind.Array &&
+            value.EnumerateArray().All(item =>
+                item.ValueKind is not (
+                    JsonValueKind.Object or
+                    JsonValueKind.Array or
+                    JsonValueKind.Undefined));
+    }
+
+    private static void EnsureScalarArray(JsonElement value)
+    {
+        if (!IsScalarArray(value))
+        {
+            throw new VaultException(
+                VaultErrorCode.FrontMatterInvalid,
+                "Frontmatter arrays support only scalar values.");
+        }
     }
 
     private static void ValidateCommand(VaultNotePatchCommand command)
@@ -261,9 +283,7 @@ internal static class DocumentPatchEngine
     {
         var headings = new List<HeadingLocation>();
         var open = new List<HeadingLocation>();
-        var inFence = false;
-        char fenceMarker = default;
-        var fenceLength = 0;
+        MarkdownFence? openingFence = null;
         var lineStart = 0;
         while (lineStart < content.Length)
         {
@@ -272,30 +292,16 @@ internal static class DocumentPatchEngine
             var line = content.AsSpan(lineStart, lineEnd - lineStart)
                 .TrimEnd('\r');
             var trimmed = line.TrimStart();
-            if (trimmed.Length >= 3 &&
-                (trimmed[0] == '`' || trimmed[0] == '~'))
+            if (openingFence is { } opening)
             {
-                var marker = trimmed[0];
-                var length = 0;
-                while (length < trimmed.Length && trimmed[length] == marker)
+                if (MarkdownFenceSyntax.IsClosing(trimmed, opening))
                 {
-                    length++;
-                }
-                if (length >= 3)
-                {
-                    if (!inFence)
-                    {
-                        inFence = true;
-                        fenceMarker = marker;
-                        fenceLength = length;
-                    }
-                    else if (marker == fenceMarker && length >= fenceLength)
-                    {
-                        inFence = false;
-                    }
+                    openingFence = null;
                 }
             }
-            else if (!inFence)
+            else if (!MarkdownFenceSyntax.TryReadOpening(
+                         trimmed,
+                         out var fence))
             {
                 var level = 0;
                 while (level < line.Length && line[level] == '#')
@@ -334,6 +340,10 @@ internal static class DocumentPatchEngine
                         open.Add(heading);
                     }
                 }
+            }
+            else
+            {
+                openingFence = fence;
             }
             if (lineEnd >= content.Length)
             {

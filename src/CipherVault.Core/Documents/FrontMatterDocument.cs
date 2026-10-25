@@ -94,7 +94,7 @@ internal static class FrontMatterDocument
             var nextFieldStart = index + 1 < entries.Length
                 ? bodyStart + checked((int)entries[index + 1].Key.Start.Index)
                 : closingStart;
-            var fieldEnd = TrimTrailingLineBreaks(
+            var fieldEnd = FindFieldEnd(
                 content,
                 fieldStart,
                 nextFieldStart);
@@ -127,6 +127,53 @@ internal static class FrontMatterDocument
             end--;
         }
         return end;
+    }
+
+    private static int FindFieldEnd(
+        string content,
+        int fieldStart,
+        int boundary)
+    {
+        var end = TrimTrailingLineBreaks(
+            content,
+            fieldStart,
+            Math.Clamp(boundary, fieldStart, content.Length));
+        var separatorStart = end;
+        var hasComment = false;
+        // Preserve column-zero comment blocks that document the next field.
+        while (end > fieldStart)
+        {
+            var lineEnd = end;
+            if (content[lineEnd - 1] == '\n')
+            {
+                lineEnd--;
+            }
+            if (lineEnd > fieldStart && content[lineEnd - 1] == '\r')
+            {
+                lineEnd--;
+            }
+            var relativeLineStart = content
+                .AsSpan(fieldStart, lineEnd - fieldStart)
+                .LastIndexOf('\n');
+            var lineStart = relativeLineStart < 0
+                ? fieldStart
+                : fieldStart + relativeLineStart + 1;
+            var line = content.AsSpan(lineStart, lineEnd - lineStart);
+            if (line.Trim().Length == 0)
+            {
+                end = lineStart;
+                continue;
+            }
+            if (line[0] != '#')
+            {
+                break;
+            }
+            hasComment = true;
+            end = lineStart;
+        }
+        return hasComment
+            ? TrimTrailingLineBreaks(content, fieldStart, end)
+            : separatorStart;
     }
 
     public static string RenderField(
@@ -230,7 +277,8 @@ internal static class FrontMatterDocument
             JsonValueKind.False => "false",
             JsonValueKind.Number => value.GetRawText(),
             JsonValueKind.Null => "null",
-            _ => JsonSerializer.Serialize(value.GetRawText())
+            _ => throw InvalidFrontMatter(
+                "Frontmatter values must be scalar.")
         };
     }
 
@@ -255,7 +303,7 @@ internal static class FrontMatterDocument
 
     private static bool IsDelimiter(ReadOnlySpan<char> line)
     {
-        return line.Trim().SequenceEqual("---");
+        return line.TrimEnd().SequenceEqual("---");
     }
 
     private static int FindLineEnd(string content, int start)

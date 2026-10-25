@@ -36,6 +36,27 @@ public sealed class KnowledgeGraphTests
     }
 
     [Theory]
+    [InlineData('`')]
+    [InlineData('~')]
+    public void WikiLinkParserRequiresWhitespaceOnlyClosingFence(
+        char marker)
+    {
+        var fence = new string(marker, 3);
+        var content =
+            $"{fence}csharp\n" +
+            "var example = 1;\n" +
+            $"{fence}text\n" +
+            "[[代码示例]]\n" +
+            $"{fence}\n" +
+            "[[真实链接]]";
+
+        var links = WikiLinkParser.Parse(content);
+
+        var link = Assert.Single(links);
+        Assert.Equal("真实链接", link.RawTarget);
+    }
+
+    [Theory]
     [InlineData("\n")]
     [InlineData("\r\n")]
     public void FrontMatterTagsParseBlockListsAcrossLineEndings(
@@ -49,6 +70,29 @@ public sealed class KnowledgeGraphTests
             "- MCP",
             "---",
             "# 标签同步");
+
+        Assert.True(FrontMatterTags.TryExtract(content, out var tags));
+        Assert.Equal(["Security", "MCP"], tags);
+    }
+
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r\n")]
+    public void FrontMatterTagsIgnoreIndentedDelimiterInBlockScalar(
+        string newline)
+    {
+        var content = string.Join(
+            newline,
+            "---",
+            "description: |",
+            "  第一行说明",
+            "  ---",
+            "  第二行说明",
+            "tags:",
+            "  - Security",
+            "  - MCP",
+            "---",
+            "# 正文");
 
         Assert.True(FrontMatterTags.TryExtract(content, out var tags));
         Assert.Equal(["Security", "MCP"], tags);
@@ -578,6 +622,211 @@ public sealed class KnowledgeGraphTests
     }
 
     [Fact]
+    public async Task PatchingFrontMatterPreservesIndependentComment()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var created = await fixture.Service.CreateNoteAsync(
+            "注释保留",
+            null,
+            "md",
+            """
+            ---
+            title: CipherVault
+            # 这个注释用于说明下面的 tags
+            tags: [Security, MCP]
+            ---
+            # 注释保留
+            """,
+            null,
+            VaultActorKind.UserUi);
+
+        await fixture.Service.PatchNoteAsync(
+            created.DocumentId,
+            created.Revision,
+            new VaultNotePatchCommand(
+                "frontmatter",
+                null,
+                "title",
+                "replace",
+                null,
+                JsonSerializer.SerializeToElement("Updated"),
+                false),
+            VaultActorKind.UserUi);
+
+        var read = await fixture.Service.ReadNoteAsync(
+            created.DocumentId,
+            0,
+            16_000);
+        Assert.Equal(
+            "---\n" +
+            "title: Updated\n" +
+            "# 这个注释用于说明下面的 tags\n" +
+            "tags: [Security, MCP]\n" +
+            "---\n" +
+            "# 注释保留",
+            read.Content);
+        var catalog = await fixture.Service.ListCatalogAsync(null, null, 10);
+        var item = Assert.Single(catalog.Items);
+        Assert.Contains("Security", item.Tags);
+        Assert.Contains("MCP", item.Tags);
+    }
+
+    [Fact]
+    public async Task PatchingBlockScalarPreservesFollowingComment()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var created = await fixture.Service.CreateNoteAsync(
+            "块标量注释保留",
+            null,
+            "md",
+            """
+            ---
+            description: |
+              第一行说明
+              ---
+              第二行说明
+            # 这个注释用于说明下面的 tags
+            tags: [Security]
+            ---
+            # 块标量注释保留
+            """,
+            null,
+            VaultActorKind.UserUi);
+
+        await fixture.Service.PatchNoteAsync(
+            created.DocumentId,
+            created.Revision,
+            new VaultNotePatchCommand(
+                "frontmatter",
+                null,
+                "description",
+                "replace",
+                null,
+                JsonSerializer.SerializeToElement("Updated"),
+                false),
+            VaultActorKind.UserUi);
+
+        var read = await fixture.Service.ReadNoteAsync(
+            created.DocumentId,
+            0,
+            16_000);
+        Assert.Equal(
+            "---\n" +
+            "description: Updated\n" +
+            "# 这个注释用于说明下面的 tags\n" +
+            "tags: [Security]\n" +
+            "---\n" +
+            "# 块标量注释保留",
+            read.Content);
+    }
+
+    [Fact]
+    public async Task PatchingMultilineFlowArrayKeepsClosingBracket()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var created = await fixture.Service.CreateNoteAsync(
+            "多行数组",
+            null,
+            "md",
+            """
+            ---
+            items: [
+              one,
+              two
+            ]
+            # 这个注释用于说明下面的 tags
+            tags: [Security]
+            ---
+            # 多行数组
+            """,
+            null,
+            VaultActorKind.UserUi);
+
+        await fixture.Service.PatchNoteAsync(
+            created.DocumentId,
+            created.Revision,
+            new VaultNotePatchCommand(
+                "frontmatter",
+                null,
+                "items",
+                "replace",
+                null,
+                JsonSerializer.SerializeToElement(new[] { "three" }),
+                false),
+            VaultActorKind.UserUi);
+
+        var read = await fixture.Service.ReadNoteAsync(
+            created.DocumentId,
+            0,
+            16_000);
+        Assert.Equal(
+            "---\n" +
+            "items:\n" +
+            "- three\n" +
+            "# 这个注释用于说明下面的 tags\n" +
+            "tags: [Security]\n" +
+            "---\n" +
+            "# 多行数组",
+            read.Content);
+    }
+
+    [Fact]
+    public async Task HeadingPatchIgnoresLanguageLikeFenceClosingLine()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var created = await fixture.Service.CreateNoteAsync(
+            "围栏标题",
+            null,
+            "md",
+            """
+            # 主标题
+            ```csharp
+            # 代码内一级标题
+            ```text
+            ## 代码内二级标题
+            ```
+            ## 真实标题
+            正文
+            """,
+            null,
+            VaultActorKind.UserUi);
+
+        var notFound = await Assert.ThrowsAsync<VaultException>(() =>
+            fixture.Service.PatchNoteAsync(
+                created.DocumentId,
+                created.Revision,
+                new VaultNotePatchCommand(
+                    "heading",
+                    ["主标题", "代码内二级标题"],
+                    null,
+                    "append",
+                    "- 不应写入",
+                    null,
+                    false),
+                VaultActorKind.UserUi));
+        Assert.Equal(VaultErrorCode.PatchTargetNotFound, notFound.Code);
+
+        var patched = await fixture.Service.PatchNoteAsync(
+            created.DocumentId,
+            created.Revision,
+            new VaultNotePatchCommand(
+                "heading",
+                ["主标题", "真实标题"],
+                null,
+                "append",
+                "- 已写入",
+                null,
+                false),
+            VaultActorKind.UserUi);
+        Assert.Equal(created.Revision + 1, patched.Revision);
+        var read = await fixture.Service.ReadNoteAsync(
+            created.DocumentId,
+            0,
+            16_000);
+        Assert.Contains("- 已写入", read.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task FrontMatterTagsDriveTagIndexAcrossCreateAndUpdate()
     {
         await using var fixture = await KnowledgeFixture.CreateAsync();
@@ -615,6 +864,43 @@ public sealed class KnowledgeGraphTests
         Assert.DoesNotContain(updatedTags.Items, tag => tag.Name == "Backend");
         Assert.Contains(updatedTags.Items, tag => tag.Name == "Security");
         Assert.Contains(updatedTags.Items, tag => tag.Name == "MCP");
+        Assert.True(
+            (await fixture.Service.VerifyVaultAsync()).Valid);
+    }
+
+    [Fact]
+    public async Task FrontMatterBlockScalarTagsDriveIndexAndIntegrity()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var created = await fixture.Service.CreateNoteAsync(
+            "块标量标签",
+            null,
+            "md",
+            """
+            ---
+            description: |
+              第一行说明
+              ---
+              第二行说明
+            tags:
+              - Security
+              - MCP
+            ---
+            # 块标量标签
+            """,
+            null,
+            VaultActorKind.UserUi);
+
+        var tags = await fixture.Service.ListTagsAsync(null, 50);
+        Assert.Contains(tags.Items, tag => tag.Name == "Security");
+        Assert.Contains(tags.Items, tag => tag.Name == "MCP");
+        var map = await fixture.Service.GetDocumentMapAsync(created.DocumentId);
+        Assert.Contains(
+            map.FrontMatterFields,
+            field => field.Key == "description");
+        Assert.Contains(
+            map.FrontMatterFields,
+            field => field.Key == "tags");
         Assert.True(
             (await fixture.Service.VerifyVaultAsync()).Valid);
     }
@@ -691,6 +977,68 @@ public sealed class KnowledgeGraphTests
         Assert.Empty((await fixture.Service.ListTagsAsync(null, 50)).Items);
         Assert.True(
             (await fixture.Service.VerifyVaultAsync()).Valid);
+    }
+
+    [Fact]
+    public async Task PatchingFrontMatterRejectsNestedArrayValues()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var created = await fixture.Service.CreateNoteAsync(
+            "嵌套字段",
+            null,
+            "md",
+            """
+            ---
+            items: [one]
+            ---
+            # 嵌套字段
+            """,
+            null,
+            VaultActorKind.UserUi);
+        var attempts = new (string Operation, JsonElement Value)[]
+        {
+            (
+                "replace",
+                JsonSerializer.SerializeToElement(
+                    new[] { new { name = "first", enabled = true } })),
+            (
+                "replace",
+                JsonSerializer.SerializeToElement(
+                    new[] { new[] { "nested" } })),
+            (
+                "append",
+                JsonSerializer.SerializeToElement(
+                    new { name = "appended", enabled = false }))
+        };
+
+        foreach (var (operation, value) in attempts)
+        {
+            var exception = await Assert.ThrowsAsync<VaultException>(() =>
+                fixture.Service.PatchNoteAsync(
+                    created.DocumentId,
+                    created.Revision,
+                    new VaultNotePatchCommand(
+                        "frontmatter",
+                        null,
+                        "items",
+                        operation,
+                        null,
+                        value,
+                        false),
+                    VaultActorKind.UserUi));
+            Assert.Equal(
+                VaultErrorCode.FrontMatterInvalid,
+                exception.Code);
+        }
+
+        var read = await fixture.Service.ReadNoteAsync(
+            created.DocumentId,
+            0,
+            16_000);
+        Assert.Equal(created.Revision, read.Revision);
+        Assert.Equal(
+            "---\nitems: [one]\n---\n# 嵌套字段",
+            read.Content);
     }
 
     [Fact]

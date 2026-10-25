@@ -139,14 +139,20 @@ internal static class WikiLinkParser
             var newline = content.IndexOf('\n', lineStart);
             var lineEnd = newline >= 0 ? newline : content.Length;
             var line = content.AsSpan(lineStart, lineEnd - lineStart).TrimStart();
-            if (openFence is null && TryReadFence(line, out var fence))
+            if (openFence is null &&
+                MarkdownFenceSyntax.TryReadOpening(line, out var fence))
             {
-                openFence = fence with { Start = lineStart };
+                openFence = new Fence(
+                    fence.Marker,
+                    fence.Length,
+                    lineStart);
             }
             else if (openFence is not null &&
-                     TryReadFence(line, out fence) &&
-                     fence.Marker == openFence.Value.Marker &&
-                     fence.Length >= openFence.Value.Length)
+                     MarkdownFenceSyntax.IsClosing(
+                         line,
+                         new MarkdownFence(
+                             openFence.Value.Marker,
+                             openFence.Value.Length)))
             {
                 var end = newline >= 0 ? newline + 1 : lineEnd;
                 ranges.Add(new TextRange(openFence.Value.Start, end));
@@ -163,29 +169,6 @@ internal static class WikiLinkParser
         {
             ranges.Add(new TextRange(openFence.Value.Start, content.Length));
         }
-    }
-
-    private static bool TryReadFence(
-        ReadOnlySpan<char> line,
-        out Fence fence)
-    {
-        fence = default;
-        if (line.Length < 3 || (line[0] != '`' && line[0] != '~'))
-        {
-            return false;
-        }
-        var marker = line[0];
-        var length = 0;
-        while (length < line.Length && line[length] == marker)
-        {
-            length++;
-        }
-        if (length < 3)
-        {
-            return false;
-        }
-        fence = new Fence(marker, length, 0);
-        return true;
     }
 
     private static void AddDelimitedRanges(
@@ -274,7 +257,10 @@ internal static class WikiLinkParser
         return merged;
     }
 
-    private readonly record struct Fence(char Marker, int Length, int Start);
+    private readonly record struct Fence(
+        char Marker,
+        int Length,
+        int Start);
 
     private sealed record TextRange(int Start, int End);
 }
