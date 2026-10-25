@@ -26,6 +26,86 @@ internal static class DocumentWriter
         VaultAuditContext auditContext,
         CancellationToken cancellationToken)
     {
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        try
+        {
+            var result = await CreateInTransactionAsync(
+                connection,
+                (SqliteTransaction)transaction,
+                sessionId,
+                integrityKey,
+                documentId,
+                title,
+                folder,
+                format,
+                content,
+                tags,
+                auditContext,
+                cancellationToken).ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return result;
+        }
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    public static async Task<VaultWriteResult> CreateInTransactionAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid sessionId,
+        byte[] integrityKey,
+        Guid documentId,
+        string title,
+        string? folder,
+        string format,
+        string content,
+        IReadOnlyList<string>? tags,
+        VaultAuditContext auditContext,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await CreateCoreAsync(
+                connection,
+                transaction,
+                sessionId,
+                integrityKey,
+                documentId,
+                title,
+                folder,
+                format,
+                content,
+                tags,
+                auditContext,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (SqliteException exception) when (exception.SqliteErrorCode == 19)
+        {
+            throw new VaultException(
+                VaultErrorCode.Conflict,
+                "An active document already uses this virtual path.",
+                exception);
+        }
+    }
+
+    private static async Task<VaultWriteResult> CreateCoreAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid sessionId,
+        byte[] integrityKey,
+        Guid documentId,
+        string title,
+        string? folder,
+        string format,
+        string content,
+        IReadOnlyList<string>? tags,
+        VaultAuditContext auditContext,
+        CancellationToken cancellationToken)
+    {
         Validate(title, format, content, tags);
         var normalizedTags = (tags ?? [])
             .Select(VirtualPathPolicy.NormalizeTag)
@@ -56,118 +136,99 @@ internal static class DocumentWriter
             tagsJson,
             content);
 
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken)
-            .ConfigureAwait(false);
-        try
+        using (var command = connection.CreateCommand())
         {
-            using (var command = connection.CreateCommand())
-            {
-                command.Transaction = (SqliteTransaction)transaction;
-                command.CommandText =
-                    """
-                    INSERT INTO documents(
-                        document_id, title, title_norm, source_path, source_path_norm,
-                        link_path_norm, format,
-                        content, headings_json, tags_json, payload_hmac, revision,
-                        created_at_ms, updated_at_ms, deleted_at_ms, purge_after_ms)
-                    VALUES(
-                        $id, $title, $titleNorm, $path, $pathNorm, $linkPathNorm, $format,
-                        $content, $headings, $tags, $hmac, 1,
-                        $created, $updated, NULL, NULL);
-                    """;
-                command.Parameters.AddWithValue("$id", documentIdValue);
-                command.Parameters.AddWithValue("$title", title);
-                command.Parameters.AddWithValue(
-                    "$titleNorm",
-                    DocumentLinkKeys.NormalizeTitle(title));
-                command.Parameters.AddWithValue("$path", sourcePath);
-                command.Parameters.AddWithValue("$pathNorm", sourcePathNorm);
-                command.Parameters.AddWithValue(
-                    "$linkPathNorm",
-                    DocumentLinkKeys.NormalizeDocumentPath(sourcePath));
-                command.Parameters.AddWithValue("$format", format);
-                command.Parameters.AddWithValue("$content", content);
-                command.Parameters.AddWithValue("$headings", headingsJson);
-                command.Parameters.AddWithValue("$tags", tagsJson);
-                command.Parameters.AddWithValue("$hmac", hmac);
-                command.Parameters.AddWithValue("$created", timestamp);
-                command.Parameters.AddWithValue("$updated", timestamp);
-                await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-            }
+            command.Transaction = transaction;
+            command.CommandText =
+                """
+                INSERT INTO documents(
+                    document_id, title, title_norm, source_path, source_path_norm,
+                    link_path_norm, format,
+                    content, headings_json, tags_json, payload_hmac, revision,
+                    created_at_ms, updated_at_ms, deleted_at_ms, purge_after_ms)
+                VALUES(
+                    $id, $title, $titleNorm, $path, $pathNorm, $linkPathNorm, $format,
+                    $content, $headings, $tags, $hmac, 1,
+                    $created, $updated, NULL, NULL);
+                """;
+            command.Parameters.AddWithValue("$id", documentIdValue);
+            command.Parameters.AddWithValue("$title", title);
+            command.Parameters.AddWithValue(
+                "$titleNorm",
+                DocumentLinkKeys.NormalizeTitle(title));
+            command.Parameters.AddWithValue("$path", sourcePath);
+            command.Parameters.AddWithValue("$pathNorm", sourcePathNorm);
+            command.Parameters.AddWithValue(
+                "$linkPathNorm",
+                DocumentLinkKeys.NormalizeDocumentPath(sourcePath));
+            command.Parameters.AddWithValue("$format", format);
+            command.Parameters.AddWithValue("$content", content);
+            command.Parameters.AddWithValue("$headings", headingsJson);
+            command.Parameters.AddWithValue("$tags", tagsJson);
+            command.Parameters.AddWithValue("$hmac", hmac);
+            command.Parameters.AddWithValue("$created", timestamp);
+            command.Parameters.AddWithValue("$updated", timestamp);
+            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
 
-            await InsertRevisionAsync(
-                connection,
-                (SqliteTransaction)transaction,
-                documentIdValue,
-                title,
-                sourcePath,
-                format,
-                content,
-                headingsJson,
-                tagsJson,
-                hmac,
-                1,
-                timestamp,
-                cancellationToken).ConfigureAwait(false);
-            await UpsertTagsAsync(
-                connection,
-                (SqliteTransaction)transaction,
-                documentIdValue,
-                normalizedTags,
-                cancellationToken).ConfigureAwait(false);
-            await InsertFtsAsync(
-                connection,
-                (SqliteTransaction)transaction,
-                documentIdValue,
-                title,
-                sourcePath,
-                headingsJson,
-                tagsJson,
-                content,
-                cancellationToken).ConfigureAwait(false);
-            await DocumentLinkIndexer.IndexSourceAsync(
-                connection,
-                (SqliteTransaction)transaction,
-                documentId,
-                1,
-                title,
-                sourcePath,
-                format,
-                content,
-                timestamp,
-                cancellationToken).ConfigureAwait(false);
-            await DocumentLinkIndexer.ReconcileAsync(
-                connection,
-                (SqliteTransaction)transaction,
-                DocumentLinkIndexer.ResolutionKeys(title, sourcePath),
-                cancellationToken).ConfigureAwait(false);
-            await AuditWriter.AppendAsync(
-                connection,
-                (SqliteTransaction)transaction,
-                auditContext,
-                sessionId,
-                "create",
-                documentId,
-                "success",
-                null,
-                "{}",
-                cancellationToken).ConfigureAwait(false);
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return new VaultWriteResult(documentId, 1, now);
-        }
-        catch (SqliteException exception) when (exception.SqliteErrorCode == 19)
-        {
-            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
-            throw new VaultException(
-                VaultErrorCode.Conflict,
-                "An active document already uses this virtual path.",
-                exception);
-        }
-        catch
-        {
-            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
-            throw;
-        }
+        await InsertRevisionAsync(
+            connection,
+            transaction,
+            documentIdValue,
+            title,
+            sourcePath,
+            format,
+            content,
+            headingsJson,
+            tagsJson,
+            hmac,
+            1,
+            timestamp,
+            cancellationToken).ConfigureAwait(false);
+        await UpsertTagsAsync(
+            connection,
+            transaction,
+            documentIdValue,
+            normalizedTags,
+            cancellationToken).ConfigureAwait(false);
+        await InsertFtsAsync(
+            connection,
+            transaction,
+            documentIdValue,
+            title,
+            sourcePath,
+            headingsJson,
+            tagsJson,
+            content,
+            cancellationToken).ConfigureAwait(false);
+        await DocumentLinkIndexer.IndexSourceAsync(
+            connection,
+            transaction,
+            documentId,
+            1,
+            title,
+            sourcePath,
+            format,
+            content,
+            timestamp,
+            cancellationToken).ConfigureAwait(false);
+        await DocumentLinkIndexer.ReconcileAsync(
+            connection,
+            transaction,
+            DocumentLinkIndexer.ResolutionKeys(title, sourcePath),
+            cancellationToken).ConfigureAwait(false);
+        await AuditWriter.AppendAsync(
+            connection,
+            transaction,
+            auditContext,
+            sessionId,
+            "create",
+            documentId,
+            "success",
+            null,
+            "{}",
+            cancellationToken).ConfigureAwait(false);
+        return new VaultWriteResult(documentId, 1, now);
     }
 
     public static async Task<VaultWriteResult> AppendAsync(

@@ -12,6 +12,8 @@ namespace CipherVault.Core.ImportExport;
 
 internal static class ImportExportService
 {
+    private const int ImportBatchSize = 100;
+    private const string ImportItemSavepoint = "import_item";
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -218,90 +220,45 @@ internal static class ImportExportService
             await update.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        var imported = 0;
-        var skipped = job.Skipped;
-        var failed = 0;
+        var existing = await ReadImportItemCountsAsync(connection, jobId, cancellationToken)
+            .ConfigureAwait(false);
+        var imported = existing.Imported;
+        var skipped = existing.Skipped;
+        var failed = existing.Failed;
         var pending = await ReadPendingItemsAsync(connection, jobId, cancellationToken)
             .ConfigureAwait(false);
-        foreach (var item in pending)
+        for (var batchStart = 0; batchStart < pending.Count; batchStart += ImportBatchSize)
         {
-            try
+            var batchEnd = Math.Min(batchStart + ImportBatchSize, pending.Count);
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken)
+                .ConfigureAwait(false);
+            var sqliteTransaction = (SqliteTransaction)transaction;
+            for (var index = batchStart; index < batchEnd; index++)
             {
-                var sourcePath = ResolveSourcePath(job.SourceRoot, item.RelativePath);
-                if (!File.Exists(sourcePath))
-                {
-                    throw new VaultException(VaultErrorCode.NotFound, "Source file disappeared.");
-                }
-                var source = await ReadTextAndHashAsync(sourcePath, cancellationToken)
-                    .ConfigureAwait(false);
-                if (!CryptographicOperations.FixedTimeEquals(source.Hash, item.SourceHash))
-                {
-                    throw new VaultException(
-                        VaultErrorCode.InvalidInput,
-                        "Source file changed after preview.");
-                }
-                var extension = Path.GetExtension(sourcePath);
-                var format = extension.Equals(".md", StringComparison.OrdinalIgnoreCase)
-                    ? "md"
-                    : "txt";
-                var folder = Path.GetDirectoryName(item.RelativePath)?.Replace('\\', '/');
-                var title = Path.GetFileNameWithoutExtension(sourcePath);
-                var tags = FrontMatterTags.Extract(source.Content);
-                var documentId = Guid.NewGuid();
-                await DocumentWriter.CreateAsync(
+                var outcome = await ImportItemAsync(
                     connection,
+                    sqliteTransaction,
                     sessionId,
                     integrityKey,
-                    documentId,
-                    title,
-                    folder,
-                    format,
-                    source.Content,
-                    tags,
-                    new VaultAuditContext(actor),
-                    cancellationToken).ConfigureAwait(false);
-                await UpdateImportItemAsync(
-                    connection,
+                    job,
                     jobId,
-                    item.RelativePath,
-                    "imported",
-                    documentId,
-                    "{}",
+                    pending[index],
+                    actor,
                     cancellationToken).ConfigureAwait(false);
-                imported++;
-            }
-            catch (VaultException exception)
-            {
-                var state = exception.Code == VaultErrorCode.Conflict ? "skipped" : "failed";
-                if (state == "skipped")
+                switch (outcome)
                 {
-                    skipped++;
+                    case ImportItemOutcome.Imported:
+                        imported++;
+                        break;
+                    case ImportItemOutcome.Skipped:
+                        skipped++;
+                        break;
+                    case ImportItemOutcome.Failed:
+                        failed++;
+                        break;
                 }
-                else
-                {
-                    failed++;
-                }
-                await UpdateImportItemAsync(
-                    connection,
-                    jobId,
-                    item.RelativePath,
-                    state,
-                    null,
-                    JsonSerializer.Serialize(new { error = exception.Message }),
-                    cancellationToken).ConfigureAwait(false);
             }
-            catch (IOException exception)
-            {
-                failed++;
-                await UpdateImportItemAsync(
-                    connection,
-                    jobId,
-                    item.RelativePath,
-                    "failed",
-                    null,
-                    JsonSerializer.Serialize(new { error = exception.Message }),
-                    cancellationToken).ConfigureAwait(false);
-            }
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
 
         var finalState = failed == 0 ? "completed" : "failed";
@@ -512,8 +469,170 @@ internal static class ImportExportService
         return items;
     }
 
+    private static async Task<(int Imported, int Skipped, int Failed)> ReadImportItemCountsAsync(
+        SqliteConnection connection,
+        Guid jobId,
+        CancellationToken cancellationToken)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT
+                SUM(CASE WHEN state = 'imported' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN state = 'skipped' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN state = 'failed' THEN 1 ELSE 0 END)
+            FROM import_items
+            WHERE job_id = $id;
+            """;
+        command.Parameters.AddWithValue("$id", jobId.ToString("D"));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            return (0, 0, 0);
+        }
+        return (
+            reader.IsDBNull(0) ? 0 : reader.GetInt32(0),
+            reader.IsDBNull(1) ? 0 : reader.GetInt32(1),
+            reader.IsDBNull(2) ? 0 : reader.GetInt32(2));
+    }
+
+    private static async Task<ImportItemOutcome> ImportItemAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid sessionId,
+        byte[] integrityKey,
+        ImportJob job,
+        Guid jobId,
+        ImportItem item,
+        VaultActorKind actor,
+        CancellationToken cancellationToken)
+    {
+        await ExecuteSavepointCommandAsync(
+            connection,
+            transaction,
+            $"SAVEPOINT {ImportItemSavepoint};",
+            cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var sourcePath = ResolveSourcePath(job.SourceRoot, item.RelativePath);
+            if (!File.Exists(sourcePath))
+            {
+                throw new VaultException(VaultErrorCode.NotFound, "Source file disappeared.");
+            }
+            var source = await ReadTextAndHashAsync(sourcePath, cancellationToken)
+                .ConfigureAwait(false);
+            if (!CryptographicOperations.FixedTimeEquals(source.Hash, item.SourceHash))
+            {
+                throw new VaultException(
+                    VaultErrorCode.InvalidInput,
+                    "Source file changed after preview.");
+            }
+            var extension = Path.GetExtension(sourcePath);
+            var format = extension.Equals(".md", StringComparison.OrdinalIgnoreCase)
+                ? "md"
+                : "txt";
+            var folder = Path.GetDirectoryName(item.RelativePath)?.Replace('\\', '/');
+            var title = Path.GetFileNameWithoutExtension(sourcePath);
+            var tags = FrontMatterTags.Extract(source.Content);
+            var documentId = Guid.NewGuid();
+            await DocumentWriter.CreateInTransactionAsync(
+                connection,
+                transaction,
+                sessionId,
+                integrityKey,
+                documentId,
+                title,
+                folder,
+                format,
+                source.Content,
+                tags,
+                new VaultAuditContext(actor),
+                cancellationToken).ConfigureAwait(false);
+            await UpdateImportItemAsync(
+                connection,
+                transaction,
+                jobId,
+                item.RelativePath,
+                "imported",
+                documentId,
+                "{}",
+                cancellationToken).ConfigureAwait(false);
+            await ExecuteSavepointCommandAsync(
+                connection,
+                transaction,
+                $"RELEASE SAVEPOINT {ImportItemSavepoint};",
+                cancellationToken).ConfigureAwait(false);
+            return ImportItemOutcome.Imported;
+        }
+        catch (VaultException exception)
+        {
+            await RollbackImportItemAsync(connection, transaction, cancellationToken)
+                .ConfigureAwait(false);
+            var state = exception.Code == VaultErrorCode.Conflict ? "skipped" : "failed";
+            await UpdateImportItemAsync(
+                connection,
+                transaction,
+                jobId,
+                item.RelativePath,
+                state,
+                null,
+                JsonSerializer.Serialize(new { error = exception.Message }),
+                cancellationToken).ConfigureAwait(false);
+            return state == "skipped"
+                ? ImportItemOutcome.Skipped
+                : ImportItemOutcome.Failed;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException)
+        {
+            await RollbackImportItemAsync(connection, transaction, cancellationToken)
+                .ConfigureAwait(false);
+            await UpdateImportItemAsync(
+                connection,
+                transaction,
+                jobId,
+                item.RelativePath,
+                "failed",
+                null,
+                JsonSerializer.Serialize(new { error = exception.Message }),
+                cancellationToken).ConfigureAwait(false);
+            return ImportItemOutcome.Failed;
+        }
+    }
+
+    private static async Task RollbackImportItemAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        await ExecuteSavepointCommandAsync(
+            connection,
+            transaction,
+            $"ROLLBACK TO SAVEPOINT {ImportItemSavepoint};",
+            cancellationToken).ConfigureAwait(false);
+        await ExecuteSavepointCommandAsync(
+            connection,
+            transaction,
+            $"RELEASE SAVEPOINT {ImportItemSavepoint};",
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task ExecuteSavepointCommandAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string commandText,
+        CancellationToken cancellationToken)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = commandText;
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     private static async Task UpdateImportItemAsync(
         SqliteConnection connection,
+        SqliteTransaction? transaction,
         Guid jobId,
         string relativePath,
         string state,
@@ -522,6 +641,7 @@ internal static class ImportExportService
         CancellationToken cancellationToken)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText =
             """
             UPDATE import_items
@@ -698,6 +818,13 @@ internal static class ImportExportService
     }
 
     private sealed record ImportItem(string RelativePath, byte[] SourceHash);
+
+    private enum ImportItemOutcome
+    {
+        Imported,
+        Skipped,
+        Failed
+    }
 
     private sealed record ExportedFile(
         string RelativePath,

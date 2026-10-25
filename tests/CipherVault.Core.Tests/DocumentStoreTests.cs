@@ -1199,6 +1199,43 @@ public sealed class DocumentStoreTests
         Assert.DoesNotContain(catalog.Items, item => item.Title == "changed");
     }
 
+    [Fact]
+    public async Task ImportCommitKeepsOtherFilesWhenOneChangesAfterPreview()
+    {
+        await using var fixture = await DocumentFixture.CreateAsync();
+        await fixture.Service.UnlockAsync(
+            fixture.VaultPath,
+            Password,
+            VaultCredentialType.Password);
+        var source = Path.Combine(fixture.RootPath, "partially-changed-source");
+        Directory.CreateDirectory(source);
+        await File.WriteAllTextAsync(
+            Path.Combine(source, "a-first.md"),
+            "# 第一篇\n保持可导入。");
+        var changedSource = Path.Combine(source, "b-changed.md");
+        await File.WriteAllTextAsync(changedSource, "# 第二篇\n预览版本。");
+        await File.WriteAllTextAsync(
+            Path.Combine(source, "c-last.md"),
+            "# 第三篇\n也应成功导入。");
+
+        var preview = await fixture.Service.PreviewImportAsync(source);
+        await File.WriteAllTextAsync(changedSource, "# 第二篇\n预览后变化。");
+        var result = await fixture.Service.CommitImportAsync(preview.JobId);
+        var retry = await fixture.Service.CommitImportAsync(preview.JobId);
+        var catalog = await fixture.Service.ListCatalogAsync(null, null, 100);
+
+        Assert.Equal(3, preview.SupportedFiles);
+        Assert.Equal(2, result.Imported);
+        Assert.Equal(0, result.Skipped);
+        Assert.Equal(1, result.Failed);
+        Assert.Equal("failed", result.State);
+        Assert.Equal(2, retry.Imported);
+        Assert.Equal(1, retry.Failed);
+        Assert.Contains(catalog.Items, item => item.Title == "a-first");
+        Assert.DoesNotContain(catalog.Items, item => item.Title == "b-changed");
+        Assert.Contains(catalog.Items, item => item.Title == "c-last");
+    }
+
     private static async Task<(bool Success, VaultErrorCode? ErrorCode)> CaptureAppendResultAsync(
         Task<VaultWriteResult> operation)
     {

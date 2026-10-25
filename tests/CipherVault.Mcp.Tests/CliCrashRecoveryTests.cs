@@ -10,7 +10,7 @@ namespace CipherVault.Mcp.Tests;
 public sealed class CliCrashRecoveryTests
 {
     private const string Password = "crash-recovery-password";
-    private const int ImportFileCount = 50;
+    private const int ImportFileCount = 250;
 
     [Fact]
     public async Task InterruptedImportCanResumeWithoutDuplicateDocuments()

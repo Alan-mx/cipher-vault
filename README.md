@@ -160,6 +160,13 @@ schema 直接使用当前规范结构；旧开发 Vault 需要重新初始化。
 .\scripts\benchmark-knowledge-graph.ps1 -Documents 1000 -LinksPerDocument 10
 ```
 
+批量导入按每 100 篇共享事务，并用单文件 SAVEPOINT 隔离失败；同批中单个文件变化或
+冲突不会回滚其他已成功文件。导入性能基线：
+
+```powershell
+.\scripts\benchmark-import.ps1 -Documents 1000 -LinksPerDocument 10
+```
+
 精准修改支持按完整标题路径或顶层 frontmatter 字段执行 `append`、`prepend`、
 `replace` 和 `delete`。dry-run 只返回 diff，不写入正文。
 
