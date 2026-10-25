@@ -322,6 +322,12 @@ public sealed class StandaloneHostVaultClient : IHostVaultClient
         return _vault.RebuildSearchIndexAsync(_actor, cancellationToken);
     }
 
+    public Task<VaultLinkRebuildResult> RebuildLinkIndexAsync(
+        CancellationToken cancellationToken = default)
+    {
+        return _vault.RebuildLinkIndexAsync(_actor, cancellationToken);
+    }
+
     public Task<VaultAuditPage> GetAuditPageAsync(
         string? cursor,
         int limit,

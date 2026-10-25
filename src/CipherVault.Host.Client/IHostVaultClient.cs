@@ -154,6 +154,9 @@ public interface IHostVaultClient : IAsyncDisposable
     Task<int> RebuildSearchIndexAsync(
         CancellationToken cancellationToken = default);
 
+    Task<VaultLinkRebuildResult> RebuildLinkIndexAsync(
+        CancellationToken cancellationToken = default);
+
     Task<VaultAuditPage> GetAuditPageAsync(
         string? cursor,
         int limit,

@@ -336,6 +336,14 @@ internal sealed class InProcessHostVaultClient : IHostVaultClient
             cancellationToken);
     }
 
+    public Task<VaultLinkRebuildResult> RebuildLinkIndexAsync(
+        CancellationToken cancellationToken = default)
+    {
+        return _vault.RebuildLinkIndexAsync(
+            VaultActorKind.UserUi,
+            cancellationToken);
+    }
+
     public Task<VaultAuditPage> GetAuditPageAsync(
         string? cursor,
         int limit,

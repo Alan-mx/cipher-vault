@@ -1,5 +1,6 @@
 using System.Text;
 using CipherVault.Core.Errors;
+using CipherVault.Core.Storage;
 using Microsoft.Data.Sqlite;
 
 namespace CipherVault.Core.Documents;
@@ -8,6 +9,83 @@ internal static class DocumentLinkIndexer
 {
     private const int MaxIndexBytes = 256 * 1024;
     private const string RelationType = "references";
+
+    public static async Task<VaultLinkRebuildResult> RebuildAllAsync(
+        SqliteConnection connection,
+        Guid sessionId,
+        VaultActorKind actor,
+        CancellationToken cancellationToken)
+    {
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var sqliteTransaction = (SqliteTransaction)transaction;
+        try
+        {
+            var documentIds = new List<Guid>();
+            using (var command = connection.CreateCommand())
+            {
+                command.Transaction = sqliteTransaction;
+                command.CommandText =
+                    "SELECT document_id FROM documents ORDER BY document_id;";
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    documentIds.Add(Guid.Parse(reader.GetString(0)));
+                }
+            }
+
+            foreach (var documentId in documentIds)
+            {
+                var document = await ReadRebuildDocumentAsync(
+                    connection,
+                    sqliteTransaction,
+                    documentId,
+                    cancellationToken).ConfigureAwait(false);
+                await IndexSourceAsync(
+                    connection,
+                    sqliteTransaction,
+                    documentId,
+                    document.Revision,
+                    document.Title,
+                    document.SourcePath,
+                    document.Format,
+                    document.Content,
+                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            using (var count = connection.CreateCommand())
+            {
+                count.Transaction = sqliteTransaction;
+                count.CommandText = "SELECT count(*) FROM document_links;";
+                var links = Convert.ToInt32(
+                    await count.ExecuteScalarAsync(cancellationToken)
+                        .ConfigureAwait(false));
+                await AuditWriter.AppendAsync(
+                    connection,
+                    sqliteTransaction,
+                    actor,
+                    sessionId,
+                    "rebuild_links",
+                    null,
+                    "success",
+                    null,
+                    "{}",
+                    cancellationToken).ConfigureAwait(false);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                return new VaultLinkRebuildResult(
+                    documentIds.Count,
+                    links,
+                    AuditRecorded: true);
+            }
+        }
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+    }
 
     public static async Task IndexSourceAsync(
         SqliteConnection connection,
@@ -35,6 +113,17 @@ internal static class DocumentLinkIndexer
         {
             var parsed = WikiLinkParser.Parse(content);
             EnsureIndexSize(parsed);
+            var normalizedTargets = parsed
+                .Select(link => DocumentLinkKeys.NormalizeWikiTarget(
+                    link.RawTarget))
+                .Where(target => target.Length > 0)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            var resolutions = await DocumentLinkResolver.ResolveManyAsync(
+                connection,
+                transaction,
+                normalizedTargets,
+                cancellationToken).ConfigureAwait(false);
             foreach (var link in parsed)
             {
                 var normalizedTarget = DocumentLinkKeys.NormalizeWikiTarget(
@@ -43,11 +132,7 @@ internal static class DocumentLinkIndexer
                 {
                     continue;
                 }
-                var resolution = await DocumentLinkResolver.ResolveAsync(
-                    connection,
-                    transaction,
-                    normalizedTarget,
-                    cancellationToken).ConfigureAwait(false);
+                var resolution = resolutions[normalizedTarget];
                 await InsertLinkAsync(
                     connection,
                     transaction,
@@ -119,16 +204,19 @@ internal static class DocumentLinkIndexer
         IEnumerable<string> normalizedTargets,
         CancellationToken cancellationToken)
     {
-        foreach (var normalizedTarget in normalizedTargets
-                     .Where(value => value.Length > 0)
-                     .Distinct(StringComparer.Ordinal)
-                     .OrderBy(value => value, StringComparer.Ordinal))
+        var targets = normalizedTargets
+            .Where(value => value.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(value => value, StringComparer.Ordinal)
+            .ToArray();
+        var resolutions = await DocumentLinkResolver.ResolveManyAsync(
+            connection,
+            transaction,
+            targets,
+            cancellationToken).ConfigureAwait(false);
+        foreach (var normalizedTarget in targets)
         {
-            var resolution = await DocumentLinkResolver.ResolveAsync(
-                connection,
-                transaction,
-                normalizedTarget,
-                cancellationToken).ConfigureAwait(false);
+            var resolution = resolutions[normalizedTarget];
             using var update = connection.CreateCommand();
             update.Transaction = transaction;
             update.CommandText =
@@ -276,4 +364,44 @@ internal static class DocumentLinkIndexer
             _ => "unresolved"
         };
     }
+
+    private static async Task<RebuildDocument> ReadRebuildDocumentAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid documentId,
+        CancellationToken cancellationToken)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            """
+            SELECT revision, title, source_path, format, content
+            FROM documents
+            WHERE document_id = $id;
+            """;
+        command.Parameters.AddWithValue(
+            "$id",
+            documentId.ToString("D").ToLowerInvariant());
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            throw new VaultException(
+                VaultErrorCode.NotFound,
+                "Document disappeared during link index rebuild.");
+        }
+        return new RebuildDocument(
+            reader.GetInt32(0),
+            reader.GetString(1),
+            reader.GetString(2),
+            reader.GetString(3),
+            reader.GetString(4));
+    }
+
+    private sealed record RebuildDocument(
+        int Revision,
+        string Title,
+        string SourcePath,
+        string Format,
+        string Content);
 }

@@ -366,6 +366,22 @@ internal static class DocumentLinkStore
             }
         }
 
+        var pendingTargets = rows
+            .Where(row =>
+                !row.TargetIsActive ||
+                !string.Equals(
+                    row.ResolutionStatus,
+                    "resolved",
+                    StringComparison.Ordinal))
+            .Select(row => row.RawTargetNorm)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var resolutions = await DocumentLinkResolver.ResolveManyAsync(
+            connection,
+            transaction: null,
+            pendingTargets,
+            cancellationToken).ConfigureAwait(false);
+
         var result = new List<VaultOutgoingLink>(rows.Count);
         foreach (var row in rows)
         {
@@ -379,11 +395,7 @@ internal static class DocumentLinkStore
             }
             if (!string.Equals(status, "resolved", StringComparison.Ordinal))
             {
-                var resolution = await DocumentLinkResolver.ResolveAsync(
-                    connection,
-                    transaction: null,
-                    row.RawTargetNorm,
-                    cancellationToken).ConfigureAwait(false);
+                var resolution = resolutions[row.RawTargetNorm];
                 status = resolution.Status switch
                 {
                     DocumentLinkResolutionStatus.Resolved => "resolved",

@@ -222,6 +222,7 @@
                         <StackPanel Orientation="Horizontal" Margin="0,6,0,8">
                             <Button Content="校验" MinWidth="90" Click="VerifyButton_Click" />
                             <Button Content="重建搜索索引" MinWidth="110" Margin="8,0,0,0" Click="RebuildButton_Click" />
+                            <Button Content="重建链接索引" MinWidth="110" Margin="8,0,0,0" Click="RebuildLinksButton_Click" />
                             <Button Content="审计日志" MinWidth="90" Margin="8,0,0,0" Click="AuditButton_Click" />
                             <Button x:Name="StopHostButton" Content="停止 Host" MinWidth="100" Margin="8,0,0,0" Click="StopHostButton_Click" />
                         </StackPanel>

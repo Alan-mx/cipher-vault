@@ -153,6 +153,13 @@ WPF 的文档工作区提供：
 链接关系与正文、版本、标签和 FTS 在同一个 SQLCipher 事务中更新。项目尚未上线，
 schema 直接使用当前规范结构；旧开发 Vault 需要重新初始化。
 
+维护页可以全量重建链接索引；操作在单个 SQLCipher 事务内完成并写入审计。需要建立
+本地性能基线时可运行：
+
+```powershell
+.\scripts\benchmark-knowledge-graph.ps1 -Documents 1000 -LinksPerDocument 10
+```
+
 精准修改支持按完整标题路径或顶层 frontmatter 字段执行 `append`、`prepend`、
 `replace` 和 `delete`。dry-run 只返回 diff，不写入正文。
 

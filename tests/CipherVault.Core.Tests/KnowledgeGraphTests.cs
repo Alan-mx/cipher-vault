@@ -1,7 +1,10 @@
 using System.Text.Json;
+using System.Security.Cryptography;
+using CipherVault.Core.Crypto;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
 using CipherVault.Core.Session;
+using CipherVault.Core.Storage;
 
 namespace CipherVault.Core.Tests;
 
@@ -466,6 +469,75 @@ public sealed class KnowledgeGraphTests
         Assert.NotEqual(second.DocumentId, third.DocumentId);
     }
 
+    [Fact]
+    public async Task LinkIndexRebuildRepairsStaleAndMissingRows()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var target = await fixture.Service.CreateNoteAsync(
+            "rebuild-target",
+            null,
+            "md",
+            "# rebuild-target",
+            null,
+            VaultActorKind.UserUi);
+        var source = await fixture.Service.CreateNoteAsync(
+            "rebuild-source",
+            null,
+            "md",
+            "[[rebuild-target]]",
+            null,
+            VaultActorKind.UserUi);
+
+        await fixture.ExecuteDatabaseSqlAsync(
+            """
+            DELETE FROM document_links;
+            UPDATE documents SET links_indexed_revision = 0;
+            """);
+        var damaged = await fixture.Service.VerifyVaultAsync();
+        Assert.False(damaged.Valid);
+        Assert.Contains(
+            damaged.Problems,
+            problem => problem.StartsWith(
+                "link_index_stale=",
+                StringComparison.Ordinal));
+
+        var rebuilt = await fixture.Service.RebuildLinkIndexAsync(
+            VaultActorKind.UserUi);
+        Assert.Equal(2, rebuilt.DocumentsIndexed);
+        Assert.Equal(1, rebuilt.LinksIndexed);
+        Assert.True(rebuilt.AuditRecorded);
+
+        var verified = await fixture.Service.VerifyVaultAsync();
+        Assert.True(verified.Valid, string.Join("; ", verified.Problems));
+        var map = await fixture.Service.GetDocumentMapAsync(source.DocumentId);
+        Assert.Equal(
+            target.DocumentId,
+            Assert.Single(map.OutgoingLinks).Target?.DocumentId);
+    }
+
+    [Fact]
+    public async Task BatchResolverHandlesMoreThanOneQueryChunk()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var content = string.Join(
+            ' ',
+            Enumerable.Range(0, 401)
+                .Select(index => $"[[missing-{index:D3}]]"));
+        var source = await fixture.Service.CreateNoteAsync(
+            "chunked-links",
+            null,
+            "md",
+            content,
+            null,
+            VaultActorKind.UserUi);
+
+        var map = await fixture.Service.GetDocumentMapAsync(source.DocumentId);
+        Assert.Equal(401, map.OutgoingLinks.Count);
+        Assert.All(
+            map.OutgoingLinks,
+            link => Assert.Equal("unresolved", link.ResolutionStatus));
+    }
+
     private sealed class KnowledgeFixture : IAsyncDisposable
     {
         private const string Password = "knowledge-graph-password";
@@ -483,6 +555,30 @@ public sealed class KnowledgeGraphTests
 
         public string VaultPath { get; }
         public VaultService Service { get; }
+
+        public async Task ExecuteDatabaseSqlAsync(string sql)
+        {
+            var envelope = await VaultKeyring.LoadEnvelopeAsync(
+                Path.Combine(VaultPath, "vault.keys"));
+            var material = await VaultKeyring.UnwrapAsync(
+                envelope,
+                Password,
+                VaultCredentialType.Password);
+            try
+            {
+                await using var connection = await SqlCipherVaultStore.OpenAsync(
+                    VaultPath,
+                    material);
+                using var command = connection.CreateCommand();
+                command.CommandText = sql;
+                await command.ExecuteNonQueryAsync();
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(material.MasterKey);
+                CryptographicOperations.ZeroMemory(material.DbKey);
+            }
+        }
 
         public static async Task<KnowledgeFixture> CreateAsync()
         {

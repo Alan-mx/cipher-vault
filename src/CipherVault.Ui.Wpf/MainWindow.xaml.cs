@@ -730,6 +730,21 @@ public partial class MainWindow : Window
         });
     }
 
+    private async void RebuildLinksButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!await EnsureUnlockedAsync())
+        {
+            return;
+        }
+        await RunBusyAsync(async () =>
+        {
+            var result = await _service.RebuildLinkIndexAsync();
+            MaintenanceOutput.Text =
+                $"链接索引：{result.DocumentsIndexed} 篇文档，" +
+                $"{result.LinksIndexed} 条链接";
+        });
+    }
+
     private async void AuditButton_Click(object sender, RoutedEventArgs e)
     {
         if (!await EnsureUnlockedAsync())

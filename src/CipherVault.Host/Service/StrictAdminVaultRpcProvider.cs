@@ -400,6 +400,12 @@ public sealed class StrictAdminVaultRpcProvider(
                         Actor(session),
                         token),
                     cancellationToken).ConfigureAwait(false);
+            case "admin.maintenance.rebuild_links":
+                return await vault.ExecuteMaintenanceAsync(
+                    (service, token) => service.RebuildLinkIndexAsync(
+                        Actor(session),
+                        token),
+                    cancellationToken).ConfigureAwait(false);
             case "admin.maintenance.audit":
                 var auditRequest =
                     PipeRpcCodec.ReadPayload<AdminAuditListRequest>(

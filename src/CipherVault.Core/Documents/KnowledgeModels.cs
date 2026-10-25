@@ -117,3 +117,8 @@ public sealed record VaultPatchResult(
     string UnifiedDiff,
     bool DiffTruncated,
     bool LinkIndexCurrent);
+
+public sealed record VaultLinkRebuildResult(
+    int DocumentsIndexed,
+    int LinksIndexed,
+    bool AuditRecorded);

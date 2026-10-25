@@ -108,12 +108,16 @@ public sealed class AdminPipeTests
                     new AdminPipeRpcException(
                         "approval_broker_unavailable",
                         "Broker unavailable.")),
-                (_, method, _, _) => method == "admin.catalog.list"
-                    ? Task.FromResult<object>(
-                        new VaultCatalogPage([], "catalog-next"))
-                    : Task.FromException<object>(
+                (_, method, _, _) => method switch
+                {
+                    "admin.catalog.list" => Task.FromResult<object>(
+                        new VaultCatalogPage([], "catalog-next")),
+                    "admin.maintenance.rebuild_links" => Task.FromResult<object>(
+                        new VaultLinkRebuildResult(2, 3, true)),
+                    _ => Task.FromException<object>(
                         new InvalidOperationException(
-                            $"Unexpected method: {method}"))));
+                            $"Unexpected method: {method}"))
+                }));
         var acceptTask = server.AcceptOnceAsync();
 
         await using var client = await NamedPipeHostVaultClient.CreateAsync(
@@ -144,6 +148,10 @@ public sealed class AdminPipeTests
             limit: 100);
         Assert.Empty(catalog.Items);
         Assert.Equal("catalog-next", catalog.NextCursor);
+        var rebuilt = await client.RebuildLinkIndexAsync();
+        Assert.Equal(2, rebuilt.DocumentsIndexed);
+        Assert.Equal(3, rebuilt.LinksIndexed);
+        Assert.True(rebuilt.AuditRecorded);
 
         await client.DisposeAsync();
         var session = await acceptTask.WaitAsync(TimeSpan.FromSeconds(5));

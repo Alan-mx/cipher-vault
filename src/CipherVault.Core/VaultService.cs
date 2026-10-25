@@ -200,6 +200,10 @@ public interface IVaultService : IAsyncDisposable
         VaultActorKind actor = VaultActorKind.UserUi,
         CancellationToken cancellationToken = default);
 
+    Task<VaultLinkRebuildResult> RebuildLinkIndexAsync(
+        VaultActorKind actor = VaultActorKind.UserUi,
+        CancellationToken cancellationToken = default);
+
     Task ChangePasswordAsync(
         string vaultPath,
         string currentPassword,
@@ -1245,6 +1249,30 @@ public sealed class VaultService : IVaultService
                 cancellationToken).ConfigureAwait(false);
             await EnsureSessionStillValidAsync(session, cancellationToken).ConfigureAwait(false);
             return rebuilt;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<VaultLinkRebuildResult> RebuildLinkIndexAsync(
+        VaultActorKind actor = VaultActorKind.UserUi,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        RequireUserActor(actor);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+            var result = await DocumentLinkIndexer.RebuildAllAsync(
+                session.Connection,
+                session.SessionId,
+                actor,
+                cancellationToken).ConfigureAwait(false);
+            await EnsureSessionStillValidAsync(session, cancellationToken).ConfigureAwait(false);
+            return result;
         }
         finally
         {

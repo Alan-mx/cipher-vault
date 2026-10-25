@@ -408,6 +408,15 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
             cancellationToken);
     }
 
+    public Task<VaultLinkRebuildResult> RebuildLinkIndexAsync(
+        CancellationToken cancellationToken = default)
+    {
+        return CallAsync<VaultLinkRebuildResult>(
+            "admin.maintenance.rebuild_links",
+            new { },
+            cancellationToken);
+    }
+
     public Task<VaultAuditPage> GetAuditPageAsync(
         string? cursor,
         int limit,
