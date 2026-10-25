@@ -42,6 +42,7 @@ internal static class DocumentWriter
                 content,
                 tags,
                 auditContext,
+                reconcileLinks: true,
                 cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             return result;
@@ -65,6 +66,7 @@ internal static class DocumentWriter
         string content,
         IReadOnlyList<string>? tags,
         VaultAuditContext auditContext,
+        bool reconcileLinks,
         CancellationToken cancellationToken)
     {
         try
@@ -81,6 +83,7 @@ internal static class DocumentWriter
                 content,
                 tags,
                 auditContext,
+                reconcileLinks,
                 cancellationToken).ConfigureAwait(false);
         }
         catch (SqliteException exception) when (exception.SqliteErrorCode == 19)
@@ -104,6 +107,7 @@ internal static class DocumentWriter
         string content,
         IReadOnlyList<string>? tags,
         VaultAuditContext auditContext,
+        bool reconcileLinks,
         CancellationToken cancellationToken)
     {
         Validate(title, format, content, tags);
@@ -212,11 +216,14 @@ internal static class DocumentWriter
             content,
             timestamp,
             cancellationToken).ConfigureAwait(false);
-        await DocumentLinkIndexer.ReconcileAsync(
-            connection,
-            transaction,
-            DocumentLinkIndexer.ResolutionKeys(title, sourcePath),
-            cancellationToken).ConfigureAwait(false);
+        if (reconcileLinks)
+        {
+            await DocumentLinkIndexer.ReconcileAsync(
+                connection,
+                transaction,
+                DocumentLinkIndexer.ResolutionKeys(title, sourcePath),
+                cancellationToken).ConfigureAwait(false);
+        }
         await AuditWriter.AppendAsync(
             connection,
             transaction,

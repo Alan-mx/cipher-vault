@@ -233,9 +233,10 @@ internal static class ImportExportService
             await using var transaction = await connection.BeginTransactionAsync(cancellationToken)
                 .ConfigureAwait(false);
             var sqliteTransaction = (SqliteTransaction)transaction;
+            var batchResolutionKeys = new HashSet<string>(StringComparer.Ordinal);
             for (var index = batchStart; index < batchEnd; index++)
             {
-                var outcome = await ImportItemAsync(
+                var itemResult = await ImportItemAsync(
                     connection,
                     sqliteTransaction,
                     sessionId,
@@ -245,10 +246,11 @@ internal static class ImportExportService
                     pending[index],
                     actor,
                     cancellationToken).ConfigureAwait(false);
-                switch (outcome)
+                switch (itemResult.Outcome)
                 {
                     case ImportItemOutcome.Imported:
                         imported++;
+                        batchResolutionKeys.UnionWith(itemResult.ResolutionKeys);
                         break;
                     case ImportItemOutcome.Skipped:
                         skipped++;
@@ -257,6 +259,14 @@ internal static class ImportExportService
                         failed++;
                         break;
                 }
+            }
+            if (batchResolutionKeys.Count > 0)
+            {
+                await DocumentLinkIndexer.ReconcileAsync(
+                    connection,
+                    sqliteTransaction,
+                    batchResolutionKeys,
+                    cancellationToken).ConfigureAwait(false);
             }
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -497,7 +507,7 @@ internal static class ImportExportService
             reader.IsDBNull(2) ? 0 : reader.GetInt32(2));
     }
 
-    private static async Task<ImportItemOutcome> ImportItemAsync(
+    private static async Task<ImportItemResult> ImportItemAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         Guid sessionId,
@@ -548,7 +558,13 @@ internal static class ImportExportService
                 source.Content,
                 tags,
                 new VaultAuditContext(actor),
+                reconcileLinks: false,
                 cancellationToken).ConfigureAwait(false);
+            var (virtualPath, _) = VirtualPathPolicy.BuildDocumentPath(
+                title,
+                folder,
+                format);
+            var resolutionKeys = DocumentLinkIndexer.ResolutionKeys(title, virtualPath);
             await UpdateImportItemAsync(
                 connection,
                 transaction,
@@ -563,7 +579,9 @@ internal static class ImportExportService
                 transaction,
                 $"RELEASE SAVEPOINT {ImportItemSavepoint};",
                 cancellationToken).ConfigureAwait(false);
-            return ImportItemOutcome.Imported;
+            return new ImportItemResult(
+                ImportItemOutcome.Imported,
+                resolutionKeys);
         }
         catch (VaultException exception)
         {
@@ -579,9 +597,11 @@ internal static class ImportExportService
                 null,
                 JsonSerializer.Serialize(new { error = exception.Message }),
                 cancellationToken).ConfigureAwait(false);
-            return state == "skipped"
-                ? ImportItemOutcome.Skipped
-                : ImportItemOutcome.Failed;
+            return new ImportItemResult(
+                state == "skipped"
+                    ? ImportItemOutcome.Skipped
+                    : ImportItemOutcome.Failed,
+                []);
         }
         catch (Exception exception) when (
             exception is IOException or UnauthorizedAccessException)
@@ -597,7 +617,7 @@ internal static class ImportExportService
                 null,
                 JsonSerializer.Serialize(new { error = exception.Message }),
                 cancellationToken).ConfigureAwait(false);
-            return ImportItemOutcome.Failed;
+            return new ImportItemResult(ImportItemOutcome.Failed, []);
         }
     }
 
@@ -818,6 +838,10 @@ internal static class ImportExportService
     }
 
     private sealed record ImportItem(string RelativePath, byte[] SourceHash);
+
+    private sealed record ImportItemResult(
+        ImportItemOutcome Outcome,
+        IReadOnlyList<string> ResolutionKeys);
 
     private enum ImportItemOutcome
     {

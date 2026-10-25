@@ -1236,6 +1236,54 @@ public sealed class DocumentStoreTests
         Assert.Contains(catalog.Items, item => item.Title == "c-last");
     }
 
+    [Fact]
+    public async Task ImportReconcilesForwardLinksCreatedInLaterBatch()
+    {
+        await using var fixture = await DocumentFixture.CreateAsync();
+        await fixture.Service.UnlockAsync(
+            fixture.VaultPath,
+            Password,
+            VaultCredentialType.Password);
+        var source = Path.Combine(fixture.RootPath, "cross-batch-source");
+        Directory.CreateDirectory(source);
+        await File.WriteAllTextAsync(
+            Path.Combine(source, "a-source.md"),
+            "# 来源\n参见 [[z-target]]。");
+        for (var index = 0; index < 99; index++)
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(source, $"f-{index:D3}.md"),
+                $"# 填充 {index}\n批次填充内容。");
+        }
+        await File.WriteAllTextAsync(
+            Path.Combine(source, "z-target.md"),
+            "# 目标\n第二批创建的链接目标。");
+
+        var preview = await fixture.Service.PreviewImportAsync(source);
+        var result = await fixture.Service.CommitImportAsync(preview.JobId);
+        var catalogItems = new List<VaultCatalogItem>();
+        string? cursor = null;
+        do
+        {
+            var page = await fixture.Service.ListCatalogAsync(null, cursor, 100);
+            catalogItems.AddRange(page.Items);
+            cursor = page.NextCursor;
+        }
+        while (cursor is not null);
+        var sourceItem = Assert.Single(catalogItems, item => item.Title == "a-source");
+        var targetItem = Assert.Single(catalogItems, item => item.Title == "z-target");
+        var sourceMap = await fixture.Service.GetDocumentMapAsync(sourceItem.DocumentId);
+        var targetMap = await fixture.Service.GetDocumentMapAsync(targetItem.DocumentId);
+        var link = Assert.Single(sourceMap.OutgoingLinks);
+
+        Assert.Equal(101, preview.SupportedFiles);
+        Assert.Equal(101, result.Imported);
+        Assert.Equal("completed", result.State);
+        Assert.Equal("resolved", link.ResolutionStatus);
+        Assert.Equal(targetItem.DocumentId, link.Target?.DocumentId);
+        Assert.Equal(1, targetMap.BacklinkCount);
+    }
+
     private static async Task<(bool Success, VaultErrorCode? ErrorCode)> CaptureAppendResultAsync(
         Task<VaultWriteResult> operation)
     {
