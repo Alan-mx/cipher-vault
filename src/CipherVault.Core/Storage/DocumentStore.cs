@@ -473,6 +473,10 @@ internal static partial class DocumentStore
             connection,
             problems,
             cancellationToken).ConfigureAwait(false);
+        await VerifyFtsCopiesAsync(
+            connection,
+            problems,
+            cancellationToken).ConfigureAwait(false);
         await VerifyLinkIndexAsync(
             connection,
             problems,
@@ -1203,8 +1207,6 @@ internal static partial class DocumentStore
         ICollection<string> problems,
         CancellationToken cancellationToken)
     {
-        var tagsJsonByDocument =
-            new Dictionary<string, string>(StringComparer.Ordinal);
         var storedTagsByDocument =
             new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         using (var command = connection.CreateCommand())
@@ -1223,7 +1225,6 @@ internal static partial class DocumentStore
                 var format = reader.GetString(1);
                 var content = reader.GetString(2);
                 var tagsJson = reader.GetString(3);
-                tagsJsonByDocument[id] = tagsJson;
                 if (!TryNormalizeTagsJson(tagsJson, out var storedTags))
                 {
                     problems.Add($"document_tags_json_invalid={id}");
@@ -1256,11 +1257,6 @@ internal static partial class DocumentStore
         await VerifyDocumentTagRelationsAsync(
             connection,
             storedTagsByDocument,
-            problems,
-            cancellationToken).ConfigureAwait(false);
-        await VerifyFtsTagCopiesAsync(
-            connection,
-            tagsJsonByDocument,
             problems,
             cancellationToken).ConfigureAwait(false);
         await VerifyRevisionTagsAsync(
@@ -1313,33 +1309,94 @@ internal static partial class DocumentStore
         }
     }
 
-    private static async Task VerifyFtsTagCopiesAsync(
+    private static async Task VerifyFtsCopiesAsync(
         SqliteConnection connection,
-        IReadOnlyDictionary<string, string> tagsJsonByDocument,
         ICollection<string> problems,
         CancellationToken cancellationToken)
     {
-        var ftsTagsByDocument =
-            new Dictionary<string, string>(StringComparer.Ordinal);
         using (var command = connection.CreateCommand())
         {
             command.CommandText =
-                "SELECT document_id, tags FROM documents_fts;";
+                """
+                SELECT documents.document_id,
+                       documents.title, documents.source_path,
+                       documents.headings_json, documents.tags_json,
+                       documents.content,
+                       documents_fts.document_id, documents_fts.title,
+                       documents_fts.source_path, documents_fts.headings,
+                       documents_fts.tags, documents_fts.content
+                FROM documents
+                LEFT JOIN documents_fts
+                  ON documents_fts.document_id = documents.document_id
+                WHERE documents.deleted_at_ms IS NULL;
+                """;
             await using var reader = await command.ExecuteReaderAsync(cancellationToken)
                 .ConfigureAwait(false);
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                ftsTagsByDocument[reader.GetString(0)] = reader.GetString(1);
+                var id = reader.GetString(0);
+                if (reader.IsDBNull(6))
+                {
+                    problems.Add($"fts_row_missing={id}");
+                    continue;
+                }
+
+                if (!string.Equals(
+                        reader.GetString(1),
+                        reader.GetString(7),
+                        StringComparison.Ordinal))
+                {
+                    problems.Add($"fts_title_mismatch={id}");
+                }
+                if (!string.Equals(
+                        reader.GetString(2),
+                        reader.GetString(8),
+                        StringComparison.Ordinal))
+                {
+                    problems.Add($"fts_path_mismatch={id}");
+                }
+                if (!string.Equals(
+                        reader.GetString(3),
+                        reader.GetString(9),
+                        StringComparison.Ordinal))
+                {
+                    problems.Add($"fts_headings_mismatch={id}");
+                }
+                if (!string.Equals(
+                        reader.GetString(4),
+                        reader.GetString(10),
+                        StringComparison.Ordinal))
+                {
+                    problems.Add($"fts_tags_mismatch={id}");
+                }
+                if (!string.Equals(
+                        reader.GetString(5),
+                        reader.GetString(11),
+                        StringComparison.Ordinal))
+                {
+                    problems.Add($"fts_content_mismatch={id}");
+                }
             }
         }
 
-        foreach (var (id, tagsJson) in tagsJsonByDocument)
+        using var unexpected = connection.CreateCommand();
+        unexpected.CommandText =
+            """
+            SELECT documents_fts.document_id
+            FROM documents_fts
+            LEFT JOIN documents
+              ON documents.document_id = documents_fts.document_id
+            WHERE documents.document_id IS NULL
+               OR documents.deleted_at_ms IS NOT NULL;
+            """;
+        await using var unexpectedReader =
+            await unexpected.ExecuteReaderAsync(cancellationToken)
+                .ConfigureAwait(false);
+        while (await unexpectedReader.ReadAsync(cancellationToken)
+                   .ConfigureAwait(false))
         {
-            if (!ftsTagsByDocument.TryGetValue(id, out var ftsTags) ||
-                !string.Equals(ftsTags, tagsJson, StringComparison.Ordinal))
-            {
-                problems.Add($"fts_tags_mismatch={id}");
-            }
+            problems.Add(
+                $"fts_row_unexpected={unexpectedReader.GetString(0)}");
         }
     }
 

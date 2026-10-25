@@ -160,7 +160,8 @@ Markdown 存在 Frontmatter `tags` 字段时，该字段是标签索引的权威
 同时传入的显式 `tags` 必须与 Frontmatter 一致。
 
 完整性检查会继续比对当前文档和历史 revision 的 Frontmatter 标签、`tags_json`、
-`document_tags` 与 FTS 标签副本，并报告具体文档或 revision 的问题码。
+`document_tags`，并逐行比对 FTS 的标题、路径、标题树、标签和正文副本；缺失行、
+额外行和字段漂移都会报告具体文档或 revision 的问题码。
 
 重命名并同步引用时，目标文档写 `update` 汇总事件，每个被自动改写的来源文档写
 `backlink_rewrite` 事件；同一事务内的事件共享 `correlationId`，可追溯到具体来源、

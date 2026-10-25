@@ -789,6 +789,46 @@ public sealed class KnowledgeGraphTests
     }
 
     [Fact]
+    public async Task IntegrityCheckDetectsFtsFieldAndRowDrift()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var created = await fixture.Service.CreateNoteAsync(
+            "FTS 完整性",
+            null,
+            "md",
+            "# FTS 完整性\noriginal searchable content",
+            null,
+            VaultActorKind.UserUi);
+        var documentId = created.DocumentId.ToString("D").ToLowerInvariant();
+        const string unexpectedId = "99999999-9999-9999-9999-999999999999";
+        var baseline = await fixture.Service.VerifyVaultAsync();
+        Assert.True(
+            baseline.Valid,
+            string.Join("; ", baseline.Problems));
+
+        await fixture.ExecuteDatabaseSqlAsync(
+            $"""
+             UPDATE documents_fts
+             SET content = 'stale searchable content'
+             WHERE document_id = '{documentId}';
+             INSERT INTO documents_fts(
+                 document_id, title, source_path, headings, tags, content)
+             VALUES(
+                 '{unexpectedId}', 'unexpected', 'unexpected.md',
+                 '[]', '[]', 'unexpected content');
+             """);
+
+        var damaged = await fixture.Service.VerifyVaultAsync();
+        Assert.False(damaged.Valid);
+        Assert.Contains(
+            $"fts_content_mismatch={documentId}",
+            damaged.Problems);
+        Assert.Contains(
+            $"fts_row_unexpected={unexpectedId}",
+            damaged.Problems);
+    }
+
+    [Fact]
     public async Task LocalGraphAppliesAndTagFilter()
     {
         await using var fixture = await KnowledgeFixture.CreateAsync();
