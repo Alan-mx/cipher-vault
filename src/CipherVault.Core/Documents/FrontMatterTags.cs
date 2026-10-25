@@ -1,58 +1,87 @@
 using System.Text.Json;
+using CipherVault.Core.Errors;
 
 namespace CipherVault.Core.Documents;
 
 internal static class FrontMatterTags
 {
-    public static IReadOnlyList<string> Extract(string content)
+    public static bool TryExtract(
+        string content,
+        out IReadOnlyList<string> tags)
     {
-        var normalized = content.Replace("\r\n", "\n", StringComparison.Ordinal);
-        if (!normalized.StartsWith("---\n", StringComparison.Ordinal))
+        tags = [];
+        if (!FrontMatterDocument.TryParse(content, out var snapshot))
         {
-            return [];
+            return false;
         }
 
-        var end = normalized.IndexOf("\n---", 5, StringComparison.Ordinal);
-        if (end < 0)
+        var fields = snapshot.Fields
+            .Where(field => string.Equals(
+                field.Key,
+                "tags",
+                StringComparison.Ordinal))
+            .ToArray();
+        if (fields.Length == 0)
         {
-            return [];
+            return false;
+        }
+        if (fields.Length > 1)
+        {
+            throw InvalidFrontMatter(
+                "The frontmatter tags key is duplicated.");
         }
 
-        var lines = normalized[4..end].Split('\n');
-        for (var index = 0; index < lines.Length; index++)
+        var field = fields[0];
+        if (field.Value.ValueKind == JsonValueKind.Array)
         {
-            var line = lines[index].Trim();
-            if (!line.StartsWith("tags:", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            var inline = line[5..].Trim();
-            if (inline.StartsWith('[') && inline.EndsWith(']'))
-            {
-                return inline[1..^1]
-                    .Split(',', StringSplitOptions.RemoveEmptyEntries)
-                    .Select(value => value.Trim().Trim('"', '\''))
-                    .Where(value => value.Length > 0)
-                    .ToList();
-            }
-
-            var tags = new List<string>();
-            if (inline.Length > 0)
-            {
-                tags.AddRange(inline.Split(',', StringSplitOptions.RemoveEmptyEntries));
-            }
-            for (var next = index + 1; next < lines.Length; next++)
-            {
-                var item = lines[next].Trim();
-                if (!item.StartsWith("- ", StringComparison.Ordinal))
-                {
-                    break;
-                }
-                tags.Add(item[2..]);
-            }
-            return tags.Select(value => value.Trim().Trim('"', '\'')).ToList();
+            tags = field.Value.EnumerateArray()
+                .Select(ReadTagElement)
+                .ToArray();
+            return true;
         }
-        return [];
+        if (field.Value.ValueKind == JsonValueKind.String)
+        {
+            tags = (field.Value.GetString() ?? string.Empty)
+                .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(value => value.Trim())
+                .Where(value => value.Length > 0)
+                .ToArray();
+            return true;
+        }
+        if (field.ValueType == "null")
+        {
+            return true;
+        }
+        if (field.Value.ValueKind is
+            JsonValueKind.Number or
+            JsonValueKind.True or
+            JsonValueKind.False)
+        {
+            tags = [field.Value.GetRawText()];
+            return true;
+        }
+
+        throw InvalidFrontMatter(
+            "The frontmatter tags value must be a string or array.");
+    }
+
+    private static string ReadTagElement(JsonElement element)
+    {
+        return element.ValueKind switch
+        {
+            JsonValueKind.String => element.GetString() ?? string.Empty,
+            JsonValueKind.Number or
+            JsonValueKind.True or
+            JsonValueKind.False => element.GetRawText(),
+            _ => throw InvalidFrontMatter(
+                "Frontmatter tags array items must be scalar values.")
+        };
+    }
+
+    private static VaultException InvalidFrontMatter(string message)
+    {
+        return new VaultException(
+            VaultErrorCode.FrontMatterInvalid,
+            message);
     }
 }

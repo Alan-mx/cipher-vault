@@ -578,7 +578,6 @@ internal static class ImportExportService
                 : "txt";
             var folder = Path.GetDirectoryName(item.RelativePath)?.Replace('\\', '/');
             var title = Path.GetFileNameWithoutExtension(sourcePath);
-            var tags = FrontMatterTags.Extract(source.Content);
             var documentId = Guid.NewGuid();
             await DocumentWriter.CreateInTransactionAsync(
                 connection,
@@ -590,7 +589,7 @@ internal static class ImportExportService
                 folder,
                 format,
                 source.Content,
-                tags,
+                null,
                 new VaultAuditContext(actor),
                 reconcileLinks: false,
                 cancellationToken).ConfigureAwait(false);

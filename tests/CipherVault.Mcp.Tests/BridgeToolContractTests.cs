@@ -1,5 +1,6 @@
 using System.Text.Json;
 using CipherVault.Host.Client;
+using CipherVault.Host.Mcp;
 
 namespace CipherVault.Mcp.Tests;
 
@@ -59,7 +60,8 @@ public sealed class BridgeToolContractTests
                 "folder",
                 "content",
                 ["tag"],
-                cancellationToken));
+                updateBacklinks: true,
+                cancellationToken: cancellationToken));
         Assert.Equal(
             PassThroughResult,
             await tools.DeleteNote(
@@ -114,7 +116,8 @@ public sealed class BridgeToolContractTests
                 ["title"] = "title",
                 ["folder"] = "folder",
                 ["content"] = "content",
-                ["tags"] = new[] { "tag" }
+                ["tags"] = new[] { "tag" },
+                ["updateBacklinks"] = true
             }),
             ("delete_note", (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>
             {
@@ -138,6 +141,28 @@ public sealed class BridgeToolContractTests
                     actual.Arguments[key]);
             }
         }
+    }
+
+    [Fact]
+    public void UpdateNoteMapperForwardsBacklinkRewriteOption()
+    {
+        Assert.True(
+            BridgeToolCatalog.TryGet("update_note", out var definition));
+        var mapped = BridgeToolMapper.Map(
+            definition,
+            JsonSerializer.SerializeToElement(new
+            {
+                documentId = "d80c2e83-636f-47a8-a3f2-e473beec9922",
+                expectedRevision = 3,
+                updateBacklinks = true
+            }));
+
+        Assert.Equal("admin.notes.update", mapped.AdminMethod);
+        Assert.True(
+            mapped.AdminPayload
+                .GetProperty("request")
+                .GetProperty("updateBacklinks")
+                .GetBoolean());
     }
 
     [Fact]

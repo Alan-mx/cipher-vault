@@ -716,7 +716,7 @@ public sealed class BridgeVaultTools
     }
 
     [McpServerTool(Name = "create_note")]
-    [Description("Create an encrypted Markdown or TXT document in the Vault.")]
+    [Description("Create an encrypted Markdown or TXT document in the Vault. For Markdown, frontmatter tags are authoritative and the tags argument must match them when both are provided.")]
     public Task<string> CreateNote(
         string title,
         string content,
@@ -754,7 +754,7 @@ public sealed class BridgeVaultTools
     }
 
     [McpServerTool(Name = "update_note")]
-    [Description("Update title, virtual folder, content or tags using optimistic revision concurrency.")]
+    [Description("Update title, virtual folder, content or tags using optimistic revision concurrency. For Markdown, frontmatter tags are authoritative and the tags argument must match them when both are provided. Set updateBacklinks to rewrite matching title references when renaming.")]
     public Task<string> UpdateNote(
         string documentId,
         int expectedRevision,
@@ -762,6 +762,7 @@ public sealed class BridgeVaultTools
         string? folder = null,
         string? content = null,
         string[]? tags = null,
+        bool updateBacklinks = false,
         CancellationToken cancellationToken = default)
     {
         return CallAsync(
@@ -772,7 +773,8 @@ public sealed class BridgeVaultTools
                 ("title", title),
                 ("folder", folder),
                 ("content", content),
-                ("tags", tags)),
+                ("tags", tags),
+                ("updateBacklinks", updateBacklinks)),
             cancellationToken);
     }
 

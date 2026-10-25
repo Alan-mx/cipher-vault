@@ -108,7 +108,8 @@ public static class BridgeToolMapper
                         OptionalString(arguments, "title"),
                         OptionalString(arguments, "folder"),
                         OptionalString(arguments, "content"),
-                        OptionalStringArray(arguments, "tags")))),
+                        OptionalStringArray(arguments, "tags"),
+                        OptionalBool(arguments, "updateBacklinks", false)))),
             "patch_note" => Map(
                 definition,
                 new AdminPatchNoteRequest(

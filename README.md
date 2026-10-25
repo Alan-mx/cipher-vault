@@ -155,6 +155,10 @@ WPF 的文档工作区提供：
 链接关系与正文、版本、标签和 FTS 在同一个 SQLCipher 事务中更新。项目尚未上线，
 schema 直接使用当前规范结构；旧开发 Vault 需要重新初始化。
 
+Markdown 存在 Frontmatter `tags` 字段时，该字段是标签索引的权威来源。创建、正文更新、
+追加和精准修改会在同一事务内同步 `tags_json`、标签关系、FTS、HMAC 和 revision；
+同时传入的显式 `tags` 必须与 Frontmatter 一致。
+
 维护页可以全量重建链接索引；操作在单个 SQLCipher 事务内完成并写入审计。需要建立
 本地性能基线时可运行：
 
@@ -197,6 +201,8 @@ scope。Agent 不接受长期 Bearer token，也不使用 direct HTTP MCP。
   `get_local_graph`。
 - 写入：`create_note`、`append_note`、`update_note`、`patch_note`。
 - 删除：`delete_note`，语义为移入加密回收站。
+
+`update_note` 的 `updateBacklinks` 默认关闭；需要同步改写标题引用时显式设为 `true`。
 
 ## Restore
 

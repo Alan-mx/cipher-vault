@@ -182,6 +182,18 @@ public sealed class KnowledgeGraphTests
         Assert.Equal(2, rewrittenMap.OutgoingLinks.Count);
         Assert.All(rewrittenMap.OutgoingLinks, link =>
             Assert.Equal(target.DocumentId, link.Target?.DocumentId));
+        var audit = await fixture.Service.GetAuditPageAsync(null, 100);
+        var updateEvent = Assert.Single(
+            audit.Items,
+            item => item.Action == "update" &&
+                item.DocumentId == target.DocumentId);
+        using var details = JsonDocument.Parse(updateEvent.DetailsJson);
+        Assert.Equal(
+            1,
+            details.RootElement.GetProperty("rewrittenDocuments").GetInt32());
+        Assert.Equal(
+            2,
+            details.RootElement.GetProperty("rewrittenLinks").GetInt32());
     }
 
     [Fact]
@@ -445,6 +457,177 @@ public sealed class KnowledgeGraphTests
                     false),
                 VaultActorKind.UserUi));
         Assert.Equal(VaultErrorCode.Conflict, conflict.Code);
+    }
+
+    [Fact]
+    public async Task FrontMatterTagsDriveTagIndexAcrossCreateAndUpdate()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var created = await fixture.Service.CreateNoteAsync(
+            "标签同步",
+            null,
+            "md",
+            """
+            ---
+            tags: [Java, Backend]
+            ---
+            # 标签同步
+            """,
+            null,
+            VaultActorKind.UserUi);
+
+        var initialTags = await fixture.Service.ListTagsAsync(null, 50);
+        Assert.Contains(initialTags.Items, tag => tag.Name == "Java");
+        Assert.Contains(initialTags.Items, tag => tag.Name == "Backend");
+
+        await fixture.Service.UpdateNoteAsync(
+            created.DocumentId,
+            created.Revision,
+            new VaultNotePatch(
+                Content:
+                    """
+                    ---
+                    tags:
+                    - Security
+                    - MCP
+                    ---
+                    # 标签同步
+                    """),
+            VaultActorKind.UserUi);
+
+        var updatedTags = await fixture.Service.ListTagsAsync(null, 50);
+        Assert.DoesNotContain(updatedTags.Items, tag => tag.Name == "Java");
+        Assert.DoesNotContain(updatedTags.Items, tag => tag.Name == "Backend");
+        Assert.Contains(updatedTags.Items, tag => tag.Name == "Security");
+        Assert.Contains(updatedTags.Items, tag => tag.Name == "MCP");
+        Assert.True(
+            (await fixture.Service.VerifyVaultAsync()).Valid);
+    }
+
+    [Fact]
+    public async Task PatchingFrontMatterTagsReplacesAndClearsIndex()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var created = await fixture.Service.CreateNoteAsync(
+            "标签修改",
+            null,
+            "md",
+            """
+            ---
+            tags: [Java, Backend]
+            ---
+            # 标签修改
+            """,
+            null,
+            VaultActorKind.UserUi);
+
+        var replaced = await fixture.Service.PatchNoteAsync(
+            created.DocumentId,
+            created.Revision,
+            new VaultNotePatchCommand(
+                "frontmatter",
+                null,
+                "tags",
+                "replace",
+                null,
+                JsonSerializer.SerializeToElement(new[] { "Security", "MCP" }),
+                false),
+            VaultActorKind.UserUi);
+        var catalogAfterReplace = await fixture.Service.ListCatalogAsync(
+            null,
+            null,
+            10);
+        var replacedItem = Assert.Single(
+            catalogAfterReplace.Items,
+            item => item.DocumentId == created.DocumentId);
+        Assert.Contains("Security", replacedItem.Tags);
+        Assert.Contains("MCP", replacedItem.Tags);
+        Assert.DoesNotContain("Java", replacedItem.Tags);
+        Assert.DoesNotContain("Backend", replacedItem.Tags);
+
+        await fixture.Service.PatchNoteAsync(
+            created.DocumentId,
+            replaced.Revision,
+            new VaultNotePatchCommand(
+                "frontmatter",
+                null,
+                "tags",
+                "delete",
+                null,
+                null,
+                false),
+            VaultActorKind.UserUi);
+        var catalogAfterDelete = await fixture.Service.ListCatalogAsync(
+            null,
+            null,
+            10);
+        var deletedItem = Assert.Single(
+            catalogAfterDelete.Items,
+            item => item.DocumentId == created.DocumentId);
+        Assert.Empty(deletedItem.Tags);
+        Assert.Empty((await fixture.Service.ListTagsAsync(null, 50)).Items);
+        Assert.True(
+            (await fixture.Service.VerifyVaultAsync()).Valid);
+    }
+
+    [Fact]
+    public async Task ExplicitTagsMustMatchMarkdownFrontMatterTags()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var exception = await Assert.ThrowsAsync<VaultException>(() =>
+            fixture.Service.CreateNoteAsync(
+                "冲突标签",
+                null,
+                "md",
+                """
+                ---
+                tags: [Java]
+                ---
+                # 冲突标签
+                """,
+                ["Security"],
+                VaultActorKind.UserUi));
+
+        Assert.Equal(VaultErrorCode.InvalidInput, exception.Code);
+        Assert.Empty((await fixture.Service.ListCatalogAsync(
+            null,
+            null,
+            10)).Items);
+    }
+
+    [Fact]
+    public async Task AppendingFrontMatterToEmptyDocumentUpdatesTags()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var created = await fixture.Service.CreateNoteAsync(
+            "追加标签",
+            null,
+            "md",
+            string.Empty,
+            null,
+            VaultActorKind.UserUi);
+
+        await fixture.Service.AppendNoteAsync(
+            created.DocumentId,
+            created.Revision,
+            """
+            ---
+            tags: [Appended]
+            ---
+            # 追加标签
+            """,
+            VaultActorKind.UserUi);
+
+        var catalog = await fixture.Service.ListCatalogAsync(
+            null,
+            null,
+            10);
+        var item = Assert.Single(
+            catalog.Items,
+            candidate => candidate.DocumentId == created.DocumentId);
+        Assert.Contains("Appended", item.Tags);
+        Assert.True(
+            (await fixture.Service.VerifyVaultAsync()).Valid);
     }
 
     [Fact]

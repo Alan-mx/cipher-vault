@@ -111,15 +111,7 @@ internal static class DocumentWriter
         CancellationToken cancellationToken)
     {
         Validate(title, format, content, tags);
-        var normalizedTags = (tags ?? [])
-            .Select(VirtualPathPolicy.NormalizeTag)
-            .Distinct(StringComparer.Ordinal)
-            .OrderBy(value => value, StringComparer.Ordinal)
-            .ToList();
-        if (normalizedTags.Count > MaxTags)
-        {
-            throw new VaultException(VaultErrorCode.InvalidInput, "A document may have at most 50 tags.");
-        }
+        var normalizedTags = ResolveCreatedTags(format, content, tags);
 
         var (sourcePath, sourcePathNorm) = VirtualPathPolicy.BuildDocumentPath(title, folder, format);
         var headingsJson = format == "md"
@@ -279,6 +271,13 @@ internal static class DocumentWriter
             var headingsJson = current.Format == "md"
                 ? MarkdownHeadings.Extract(content)
                 : "[]";
+            var normalizedTags = ResolveUpdatedTags(
+                current.Format,
+                current.Content,
+                current.TagsJson,
+                content,
+                null);
+            var tagsJson = JsonSerializer.Serialize(normalizedTags);
             var documentIdValue = documentId.ToString("D").ToLowerInvariant();
             var now = DateTimeOffset.UtcNow;
             var timestamp = now.ToUnixTimeMilliseconds();
@@ -290,7 +289,7 @@ internal static class DocumentWriter
                 current.SourcePath,
                 current.Format,
                 headingsJson,
-                current.TagsJson,
+                tagsJson,
                 content);
 
             await UpdateCurrentAsync(
@@ -299,6 +298,7 @@ internal static class DocumentWriter
                 documentIdValue,
                 newRevision,
                 headingsJson,
+                tagsJson,
                 hmac,
                 content,
                 timestamp,
@@ -312,7 +312,7 @@ internal static class DocumentWriter
                 current.Format,
                 content,
                 headingsJson,
-                current.TagsJson,
+                tagsJson,
                 hmac,
                 newRevision,
                 timestamp,
@@ -324,8 +324,14 @@ internal static class DocumentWriter
                 current.Title,
                 current.SourcePath,
                 headingsJson,
-                current.TagsJson,
+                tagsJson,
                 content,
+                cancellationToken).ConfigureAwait(false);
+            await ReplaceTagsAsync(
+                connection,
+                sqliteTransaction,
+                documentIdValue,
+                normalizedTags,
                 cancellationToken).ConfigureAwait(false);
             await DocumentLinkIndexer.IndexSourceAsync(
                 connection,
@@ -425,9 +431,12 @@ internal static class DocumentWriter
                 newTitle,
                 newFolder,
                 current.Format);
-            var normalizedTags = patch.Tags is null
-                ? ParseTags(current.TagsJson)
-                : NormalizeTags(patch.Tags);
+            var normalizedTags = ResolveUpdatedTags(
+                current.Format,
+                current.Content,
+                current.TagsJson,
+                newContent,
+                patch.Tags);
             var tagsJson = JsonSerializer.Serialize(normalizedTags);
             var headingsJson = patch.Content is not null && current.Format == "md"
                 ? MarkdownHeadings.Extract(newContent)
@@ -512,11 +521,11 @@ internal static class DocumentWriter
                 newContent,
                 timestamp,
                 cancellationToken).ConfigureAwait(false);
-            var rewrittenBacklinks = 0;
+            var backlinkRewrite = new BacklinkRewriteResult(0, 0);
             if (patch.UpdateBacklinks &&
                 !string.Equals(current.Title, newTitle, StringComparison.Ordinal))
             {
-                rewrittenBacklinks = await RewriteBacklinksAsync(
+                backlinkRewrite = await RewriteBacklinksAsync(
                     connection,
                     sqliteTransaction,
                     integrityKey,
@@ -545,7 +554,11 @@ internal static class DocumentWriter
                 documentId,
                 "success",
                 null,
-                JsonSerializer.Serialize(new { rewrittenBacklinks }),
+                JsonSerializer.Serialize(new
+                {
+                    rewrittenDocuments = backlinkRewrite.Documents,
+                    rewrittenLinks = backlinkRewrite.Links
+                }),
                 cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             return new VaultWriteResult(documentId, newRevision, now);
@@ -624,6 +637,13 @@ internal static class DocumentWriter
             }
             var newContent = computation.Content;
             var headingsJson = MarkdownHeadings.Extract(newContent);
+            var normalizedTags = ResolveUpdatedTags(
+                current.Format,
+                current.Content,
+                current.TagsJson,
+                newContent,
+                null);
+            var tagsJson = JsonSerializer.Serialize(normalizedTags);
             var newRevision = current.Revision + 1;
             var documentIdValue = documentId.ToString("D").ToLowerInvariant();
             var now = DateTimeOffset.UtcNow;
@@ -636,7 +656,7 @@ internal static class DocumentWriter
                 current.SourcePath,
                 current.Format,
                 headingsJson,
-                current.TagsJson,
+                tagsJson,
                 newContent);
             var sourcePathNorm = current.SourcePath
                 .Normalize(NormalizationForm.FormC)
@@ -651,7 +671,7 @@ internal static class DocumentWriter
                 sourcePathNorm,
                 newRevision,
                 headingsJson,
-                current.TagsJson,
+                tagsJson,
                 hmac,
                 newContent,
                 timestamp,
@@ -665,7 +685,7 @@ internal static class DocumentWriter
                 current.Format,
                 newContent,
                 headingsJson,
-                current.TagsJson,
+                tagsJson,
                 hmac,
                 newRevision,
                 timestamp,
@@ -677,8 +697,14 @@ internal static class DocumentWriter
                 current.Title,
                 current.SourcePath,
                 headingsJson,
-                current.TagsJson,
+                tagsJson,
                 newContent,
+                cancellationToken).ConfigureAwait(false);
+            await ReplaceTagsAsync(
+                connection,
+                sqliteTransaction,
+                documentIdValue,
+                normalizedTags,
                 cancellationToken).ConfigureAwait(false);
             await DocumentLinkIndexer.IndexSourceAsync(
                 connection,
@@ -1302,7 +1328,7 @@ internal static class DocumentWriter
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private static async Task<int> RewriteBacklinksAsync(
+    private static async Task<BacklinkRewriteResult> RewriteBacklinksAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         byte[] integrityKey,
@@ -1350,8 +1376,10 @@ internal static class DocumentWriter
         }
 
         var rewrittenDocuments = 0;
+        var rewrittenLinks = 0;
         foreach (var group in rows.GroupBy(row => row.SourceDocumentId))
         {
+            var links = group.ToArray();
             var current = await ReadCurrentAsync(
                 connection,
                 transaction,
@@ -1363,7 +1391,7 @@ internal static class DocumentWriter
                 continue;
             }
             var content = new StringBuilder(current.Content);
-            foreach (var row in group.OrderByDescending(item => item.StartOffset))
+            foreach (var row in links.OrderByDescending(item => item.StartOffset))
             {
                 RewriteBacklinkSpan(content, row, oldTitle, newTitle);
             }
@@ -1439,8 +1467,11 @@ internal static class DocumentWriter
                 timestamp,
                 cancellationToken).ConfigureAwait(false);
             rewrittenDocuments++;
+            rewrittenLinks += links.Length;
         }
-        return rewrittenDocuments;
+        return new BacklinkRewriteResult(
+            rewrittenDocuments,
+            rewrittenLinks);
     }
 
     private static void RewriteBacklinkSpan(
@@ -1651,6 +1682,7 @@ internal static class DocumentWriter
         string documentId,
         int revision,
         string headingsJson,
+        string tagsJson,
         byte[] hmac,
         string content,
         long timestamp,
@@ -1663,6 +1695,7 @@ internal static class DocumentWriter
             UPDATE documents
             SET content = $content,
                 headings_json = $headings,
+                tags_json = $tags,
                 payload_hmac = $hmac,
                 revision = $revision,
                 links_indexed_revision = 0,
@@ -1671,6 +1704,7 @@ internal static class DocumentWriter
             """;
         command.Parameters.AddWithValue("$content", content);
         command.Parameters.AddWithValue("$headings", headingsJson);
+        command.Parameters.AddWithValue("$tags", tagsJson);
         command.Parameters.AddWithValue("$hmac", hmac);
         command.Parameters.AddWithValue("$revision", revision);
         command.Parameters.AddWithValue("$updated", timestamp);
@@ -1809,6 +1843,70 @@ internal static class DocumentWriter
             .ToList();
     }
 
+    private static IReadOnlyList<string> ResolveCreatedTags(
+        string format,
+        string content,
+        IReadOnlyList<string>? tags)
+    {
+        if (format == "md" &&
+            FrontMatterTags.TryExtract(content, out var frontMatterTags))
+        {
+            var normalizedFrontMatterTags = NormalizeTags(frontMatterTags);
+            if (tags is not null)
+            {
+                EnsureExplicitTagsMatch(
+                    NormalizeTags(tags),
+                    normalizedFrontMatterTags);
+            }
+            return normalizedFrontMatterTags;
+        }
+        return tags is null ? [] : NormalizeTags(tags);
+    }
+
+    private static IReadOnlyList<string> ResolveUpdatedTags(
+        string format,
+        string currentContent,
+        string currentTagsJson,
+        string newContent,
+        IReadOnlyList<string>? tags)
+    {
+        if (format == "md" &&
+            FrontMatterTags.TryExtract(newContent, out var frontMatterTags))
+        {
+            var normalizedFrontMatterTags = NormalizeTags(frontMatterTags);
+            if (tags is not null)
+            {
+                EnsureExplicitTagsMatch(
+                    NormalizeTags(tags),
+                    normalizedFrontMatterTags);
+            }
+            return normalizedFrontMatterTags;
+        }
+
+        if (format == "md" &&
+            FrontMatterTags.TryExtract(currentContent, out _))
+        {
+            return tags is null ? [] : NormalizeTags(tags);
+        }
+        return tags is null
+            ? ParseTags(currentTagsJson)
+            : NormalizeTags(tags);
+    }
+
+    private static void EnsureExplicitTagsMatch(
+        IReadOnlyList<string> explicitTags,
+        IReadOnlyList<string> frontMatterTags)
+    {
+        if (!explicitTags.SequenceEqual(
+                frontMatterTags,
+                StringComparer.Ordinal))
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "Explicit tags must match Markdown frontmatter tags.");
+        }
+    }
+
     private static IReadOnlyList<string> ParseTags(string tagsJson)
     {
         try
@@ -1841,6 +1939,10 @@ internal static class DocumentWriter
         string? TargetHeading,
         int StartOffset,
         int EndOffset);
+
+    private sealed record BacklinkRewriteResult(
+        int Documents,
+        int Links);
 
     private sealed record RevisionDocument(
         string Title,

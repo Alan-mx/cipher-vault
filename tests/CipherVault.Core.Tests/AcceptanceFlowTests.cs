@@ -62,9 +62,17 @@ public sealed class AcceptanceFlowTests
                 sleep.DocumentId,
                 read.Revision,
                 new VaultNotePatch(
-                    Content: read.Content + "\n新增恢复记录。",
-                    Tags: ["健康", "睡眠", "恢复"]),
+                    Content: read.Content
+                        .Replace(
+                            "tags: [健康, 睡眠]",
+                            "tags: [健康, 睡眠, 恢复]",
+                            StringComparison.Ordinal) +
+                        "\n新增恢复记录。",
+                    Tags: null),
                 VaultActorKind.Mcp);
+            Assert.Contains(
+                (await service.ListTagsAsync(null, 50)).Items,
+                tag => tag.Name == "恢复");
             var appended = await service.AppendNoteAsync(
                 sleep.DocumentId,
                 updated.Revision,

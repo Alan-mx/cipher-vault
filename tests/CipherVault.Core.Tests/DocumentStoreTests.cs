@@ -669,7 +669,11 @@ public sealed class DocumentStoreTests
         Assert.Equal("新标题", read.Title);
         Assert.StartsWith("新目录/", read.VirtualPath);
         Assert.Contains("H1: 新标题", read.Headings);
-        Assert.Contains(catalog.Items, item => item.DocumentId == created.DocumentId);
+        var updatedItem = Assert.Single(
+            catalog.Items,
+            item => item.DocumentId == created.DocumentId);
+        Assert.Contains("新标签", updatedItem.Tags);
+        Assert.DoesNotContain("旧标签", updatedItem.Tags);
         Assert.Contains(search.Hits, hit => hit.DocumentId == created.DocumentId);
     }
 
