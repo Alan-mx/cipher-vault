@@ -94,10 +94,17 @@ internal static class FrontMatterDocument
             var nextFieldStart = index + 1 < entries.Length
                 ? bodyStart + checked((int)entries[index + 1].Key.Start.Index)
                 : closingStart;
+            var nextFieldColumn = index + 1 < entries.Length
+                ? entries[index + 1].Key.Start.Column
+                : keyNode.Start.Column;
+            var maxCommentIndent = EndsWithMultilineScalar(pair.Value)
+                ? checked((int)nextFieldColumn)
+                : int.MaxValue;
             var fieldEnd = FindFieldEnd(
                 content,
                 fieldStart,
-                nextFieldStart);
+                nextFieldStart,
+                maxCommentIndent);
             var jsonValue = ToJsonElement(value);
             fields.Add(new FrontMatterField(
                 key,
@@ -132,7 +139,8 @@ internal static class FrontMatterDocument
     private static int FindFieldEnd(
         string content,
         int fieldStart,
-        int boundary)
+        int boundary,
+        int maxCommentIndent)
     {
         var end = TrimTrailingLineBreaks(
             content,
@@ -140,7 +148,7 @@ internal static class FrontMatterDocument
             Math.Clamp(boundary, fieldStart, content.Length));
         var separatorStart = end;
         var hasComment = false;
-        // Preserve column-zero comment blocks that document the next field.
+        // Preserve separator comments without consuming trailing block scalars.
         while (end > fieldStart)
         {
             var lineEnd = end;
@@ -159,12 +167,14 @@ internal static class FrontMatterDocument
                 ? fieldStart
                 : fieldStart + relativeLineStart + 1;
             var line = content.AsSpan(lineStart, lineEnd - lineStart);
+            var trimmed = line.TrimStart();
             if (line.Trim().Length == 0)
             {
                 end = lineStart;
                 continue;
             }
-            if (line[0] != '#')
+            if (trimmed[0] != '#' ||
+                line.Length - trimmed.Length > maxCommentIndent)
             {
                 break;
             }
@@ -174,6 +184,20 @@ internal static class FrontMatterDocument
         return hasComment
             ? TrimTrailingLineBreaks(content, fieldStart, end)
             : separatorStart;
+    }
+
+    private static bool EndsWithMultilineScalar(YamlNode value)
+    {
+        return value switch
+        {
+            YamlScalarNode scalar =>
+                scalar.Start.Line != scalar.End.Line,
+            YamlMappingNode mapping when mapping.Children.Count > 0 =>
+                EndsWithMultilineScalar(mapping.Children.Last().Value),
+            YamlSequenceNode sequence when sequence.Children.Count > 0 =>
+                EndsWithMultilineScalar(sequence.Children[^1]),
+            _ => false
+        };
     }
 
     public static string RenderField(

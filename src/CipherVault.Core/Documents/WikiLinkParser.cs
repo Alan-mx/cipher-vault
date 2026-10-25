@@ -139,12 +139,19 @@ internal static class WikiLinkParser
             var newline = content.IndexOf('\n', lineStart);
             var lineEnd = newline >= 0 ? newline : content.Length;
             var line = content.AsSpan(lineStart, lineEnd - lineStart).TrimStart();
+            var fenceLine =
+                MarkdownFenceSyntax.TrimBlockQuotePrefixes(
+                    line,
+                    out var blockQuoteDepth);
             if (openFence is null &&
-                MarkdownFenceSyntax.TryReadOpening(line, out var fence))
+                MarkdownFenceSyntax.TryReadOpening(
+                    fenceLine,
+                    out var fence))
             {
                 openFence = new Fence(
                     fence.Marker,
                     fence.Length,
+                    blockQuoteDepth,
                     lineStart);
             }
             else if (openFence is not null &&
@@ -152,7 +159,8 @@ internal static class WikiLinkParser
                          line,
                          new MarkdownFence(
                              openFence.Value.Marker,
-                             openFence.Value.Length)))
+                             openFence.Value.Length,
+                             openFence.Value.BlockQuoteDepth)))
             {
                 var end = newline >= 0 ? newline + 1 : lineEnd;
                 ranges.Add(new TextRange(openFence.Value.Start, end));
@@ -260,6 +268,7 @@ internal static class WikiLinkParser
     private readonly record struct Fence(
         char Marker,
         int Length,
+        int BlockQuoteDepth,
         int Start);
 
     private sealed record TextRange(int Start, int End);

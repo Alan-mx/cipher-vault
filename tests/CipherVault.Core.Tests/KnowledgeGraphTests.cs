@@ -57,6 +57,49 @@ public sealed class KnowledgeGraphTests
     }
 
     [Theory]
+    [InlineData('`', "\n")]
+    [InlineData('`', "\r\n")]
+    [InlineData('~', "\n")]
+    [InlineData('~', "\r\n")]
+    public void WikiLinkParserSkipsFencedCodeInBlockQuotes(
+        char marker,
+        string newline)
+    {
+        var fence = new string(marker, 3);
+        var content = string.Join(
+            newline,
+            $"> {fence}csharp",
+            "> [[代码示例]]",
+            $"> {fence}",
+            "[[真实链接]]");
+
+        var links = WikiLinkParser.Parse(content);
+
+        var link = Assert.Single(links);
+        Assert.Equal("真实链接", link.RawTarget);
+    }
+
+    [Theory]
+    [InlineData('`')]
+    [InlineData('~')]
+    public void WikiLinkParserIgnoresBlockQuoteLineInsideTopLevelFence(
+        char marker)
+    {
+        var fence = new string(marker, 3);
+        var content =
+            $"{fence}csharp\n" +
+            $"> {fence}\n" +
+            "[[代码示例]]\n" +
+            $"{fence}\n" +
+            "[[真实链接]]";
+
+        var links = WikiLinkParser.Parse(content);
+
+        var link = Assert.Single(links);
+        Assert.Equal("真实链接", link.RawTarget);
+    }
+
+    [Theory]
     [InlineData("\n")]
     [InlineData("\r\n")]
     public void FrontMatterTagsParseBlockListsAcrossLineEndings(
@@ -621,22 +664,25 @@ public sealed class KnowledgeGraphTests
         Assert.Equal(VaultErrorCode.Conflict, conflict.Code);
     }
 
-    [Fact]
-    public async Task PatchingFrontMatterPreservesIndependentComment()
+    [Theory]
+    [InlineData("")]
+    [InlineData("  ")]
+    public async Task PatchingFrontMatterPreservesIndependentComment(
+        string commentIndent)
     {
         await using var fixture = await KnowledgeFixture.CreateAsync();
         var created = await fixture.Service.CreateNoteAsync(
             "注释保留",
             null,
             "md",
-            """
-            ---
-            title: CipherVault
-            # 这个注释用于说明下面的 tags
-            tags: [Security, MCP]
-            ---
-            # 注释保留
-            """,
+            string.Join(
+                "\n",
+                "---",
+                "title: CipherVault",
+                $"{commentIndent}# 这个注释用于说明下面的 tags",
+                "tags: [Security, MCP]",
+                "---",
+                "# 注释保留"),
             null,
             VaultActorKind.UserUi);
 
@@ -660,7 +706,7 @@ public sealed class KnowledgeGraphTests
         Assert.Equal(
             "---\n" +
             "title: Updated\n" +
-            "# 这个注释用于说明下面的 tags\n" +
+            $"{commentIndent}# 这个注释用于说明下面的 tags\n" +
             "tags: [Security, MCP]\n" +
             "---\n" +
             "# 注释保留",
@@ -717,6 +763,97 @@ public sealed class KnowledgeGraphTests
             "tags: [Security]\n" +
             "---\n" +
             "# 块标量注释保留",
+            read.Content);
+    }
+
+    [Fact]
+    public async Task PatchingBlockScalarTreatsIndentedHashLineAsContent()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var created = await fixture.Service.CreateNoteAsync(
+            "块标量内容",
+            null,
+            "md",
+            """
+            ---
+            description: |
+              第一行说明
+              # 这是块标量正文
+            tags: [Security]
+            ---
+            # 块标量内容
+            """,
+            null,
+            VaultActorKind.UserUi);
+
+        await fixture.Service.PatchNoteAsync(
+            created.DocumentId,
+            created.Revision,
+            new VaultNotePatchCommand(
+                "frontmatter",
+                null,
+                "description",
+                "replace",
+                null,
+                JsonSerializer.SerializeToElement("Updated"),
+                false),
+            VaultActorKind.UserUi);
+
+        var read = await fixture.Service.ReadNoteAsync(
+            created.DocumentId,
+            0,
+            16_000);
+        Assert.Equal(
+            "---\n" +
+            "description: Updated\n" +
+            "tags: [Security]\n" +
+            "---\n" +
+            "# 块标量内容",
+            read.Content);
+    }
+
+    [Fact]
+    public async Task PatchingMultilineQuotedScalarTreatsIndentedHashLineAsContent()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var created = await fixture.Service.CreateNoteAsync(
+            "多行引号内容",
+            null,
+            "md",
+            """
+            ---
+            description: "第一行说明
+              # 这是多行引号正文"
+            tags: [Security]
+            ---
+            # 多行引号内容
+            """,
+            null,
+            VaultActorKind.UserUi);
+
+        await fixture.Service.PatchNoteAsync(
+            created.DocumentId,
+            created.Revision,
+            new VaultNotePatchCommand(
+                "frontmatter",
+                null,
+                "description",
+                "replace",
+                null,
+                JsonSerializer.SerializeToElement("Updated"),
+                false),
+            VaultActorKind.UserUi);
+
+        var read = await fixture.Service.ReadNoteAsync(
+            created.DocumentId,
+            0,
+            16_000);
+        Assert.Equal(
+            "---\n" +
+            "description: Updated\n" +
+            "tags: [Security]\n" +
+            "---\n" +
+            "# 多行引号内容",
             read.Content);
     }
 
@@ -1029,6 +1166,9 @@ public sealed class KnowledgeGraphTests
             Assert.Equal(
                 VaultErrorCode.FrontMatterInvalid,
                 exception.Code);
+            Assert.Equal(
+                "Frontmatter arrays support only scalar values.",
+                exception.Message);
         }
 
         var read = await fixture.Service.ReadNoteAsync(

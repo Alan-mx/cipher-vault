@@ -135,6 +135,11 @@ internal static class DocumentPatchEngine
             ?? throw new VaultException(
                 VaultErrorCode.FrontMatterInvalid,
                 "A frontmatter value is required.");
+        if (field.ValueType == "array" &&
+            value.ValueKind == JsonValueKind.Array)
+        {
+            EnsureScalarArray(value);
+        }
         var replacementValue = command.Operation switch
         {
             "replace" => ReplaceFrontMatterValue(field, value),
@@ -292,6 +297,10 @@ internal static class DocumentPatchEngine
             var line = content.AsSpan(lineStart, lineEnd - lineStart)
                 .TrimEnd('\r');
             var trimmed = line.TrimStart();
+            var fenceLine =
+                MarkdownFenceSyntax.TrimBlockQuotePrefixes(
+                    trimmed,
+                    out var blockQuoteDepth);
             if (openingFence is { } opening)
             {
                 if (MarkdownFenceSyntax.IsClosing(trimmed, opening))
@@ -300,7 +309,7 @@ internal static class DocumentPatchEngine
                 }
             }
             else if (!MarkdownFenceSyntax.TryReadOpening(
-                         trimmed,
+                         fenceLine,
                          out var fence))
             {
                 var level = 0;
@@ -343,7 +352,10 @@ internal static class DocumentPatchEngine
             }
             else
             {
-                openingFence = fence;
+                openingFence = fence with
+                {
+                    BlockQuoteDepth = blockQuoteDepth
+                };
             }
             if (lineEnd >= content.Length)
             {
