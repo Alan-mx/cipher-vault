@@ -39,14 +39,14 @@ internal static partial class FrontMatterDocument
             }
             if (line.Length == 0 || char.IsWhiteSpace(line[0]) || line[0] == '#')
             {
-                cursor = lineEnd < content.Length ? lineEnd + 1 : content.Length;
+                cursor = NextLineStart(content, lineEnd);
                 continue;
             }
 
             var match = FieldKeyRegex().Match(line.ToString());
             if (!match.Success)
             {
-                cursor = lineEnd < content.Length ? lineEnd + 1 : content.Length;
+                cursor = NextLineStart(content, lineEnd);
                 continue;
             }
 
@@ -74,7 +74,7 @@ internal static partial class FrontMatterDocument
                     }
                     items.Add(trimmed[2..].Trim().ToString());
                     fieldEnd = itemEnd;
-                    next = itemEnd < content.Length ? itemEnd + 1 : content.Length;
+                    next = NextLineStart(content, itemEnd);
                 }
                 if (items.Count > 0)
                 {
@@ -89,7 +89,7 @@ internal static partial class FrontMatterDocument
                 value,
                 fieldStart,
                 fieldEnd));
-            cursor = fieldEnd < content.Length ? fieldEnd + 1 : content.Length;
+            cursor = NextLineStart(content, fieldEnd);
         }
 
         return false;

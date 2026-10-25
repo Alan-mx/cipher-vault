@@ -34,6 +34,25 @@ public sealed class KnowledgeGraphTests
         Assert.Equal("章节", links[2].TargetHeading);
     }
 
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r\n")]
+    public void FrontMatterTagsParseBlockListsAcrossLineEndings(
+        string newline)
+    {
+        var content = string.Join(
+            newline,
+            "---",
+            "tags:",
+            "- Security",
+            "- MCP",
+            "---",
+            "# 标签同步");
+
+        Assert.True(FrontMatterTags.TryExtract(content, out var tags));
+        Assert.Equal(["Security", "MCP"], tags);
+    }
+
     [Fact]
     public async Task LinksBacklinksTagsAndGraphAreQueryable()
     {
@@ -543,15 +562,12 @@ public sealed class KnowledgeGraphTests
             created.DocumentId,
             created.Revision,
             new VaultNotePatch(
-                Content:
-                    """
-                    ---
-                    tags:
-                    - Security
-                    - MCP
-                    ---
-                    # 标签同步
-                    """),
+                Content: "---\r\n" +
+                    "tags:\r\n" +
+                    "- Security\r\n" +
+                    "- MCP\r\n" +
+                    "---\r\n" +
+                    "# 标签同步"),
             VaultActorKind.UserUi);
 
         var updatedTags = await fixture.Service.ListTagsAsync(null, 50);
