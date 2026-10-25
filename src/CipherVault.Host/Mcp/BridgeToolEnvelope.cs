@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using CipherVault.Core.Configuration;
+using CipherVault.Host.Contracts;
 using CipherVault.Host.Session;
 
 namespace CipherVault.Host.Mcp;
@@ -50,11 +51,18 @@ public static class BridgeToolEnvelope
 
     public static string Error(string code, string message)
     {
-        return Serialize(new
+        var error = new Dictionary<string, object?>
         {
-            ok = false,
-            error = new { code, message }
-        });
+            ["code"] = code,
+            ["message"] = message,
+            ["retryable"] = McpToolErrorMetadata.IsRetryable(code)
+        };
+        var hint = McpToolErrorMetadata.HintFor(code);
+        if (!string.IsNullOrWhiteSpace(hint))
+        {
+            error["hint"] = hint;
+        }
+        return Serialize(new { ok = false, error });
     }
 
     public static JsonElement SerializeResult(object result)

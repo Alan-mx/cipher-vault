@@ -63,7 +63,10 @@ public static class BridgeToolMapper
             "get_document_map" => Map(
                 definition,
                 new AdminDocumentMapRequest(
-                    RequiredGuid(arguments, "documentId"))),
+                    RequiredGuid(arguments, "documentId"),
+                    OptionalInt(arguments, "maxHeadings", 100),
+                    OptionalInt(arguments, "maxFrontMatterFields", 100),
+                    OptionalInt(arguments, "maxLinks", 100))),
             "get_backlinks" => Map(
                 definition,
                 new AdminBacklinksRequest(

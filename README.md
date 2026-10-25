@@ -220,6 +220,10 @@ scope。Agent 不接受长期 Bearer token，也不使用 direct HTTP MCP。
 `find_unlinked_mentions` 只扫描正文中的纯文本标题提及，排除 Frontmatter、代码、
 HTML 注释和已有 Wiki Link；工具只返回候选，不自动修改文档。
 
+`get_document_map` 的标题、Frontmatter 字段和出链默认各限制为 100 项，并通过
+`headingsTruncated`、`frontMatterTruncated`、`linksTruncated` 标识是否截断。
+MCP 错误响应包含稳定的 `code`、`message`、`retryable`，适用时包含恢复提示 `hint`。
+
 `update_note` 的 `updateBacklinks` 默认关闭；需要同步改写标题引用时显式设为 `true`。
 
 ## Restore

@@ -23,7 +23,10 @@ public sealed record AdminScanNotesRequest(
     int Limit);
 
 public sealed record AdminDocumentMapRequest(
-    Guid DocumentId);
+    Guid DocumentId,
+    int? MaxHeadings = null,
+    int? MaxFrontMatterFields = null,
+    int? MaxLinks = null);
 
 public sealed record AdminBacklinksRequest(
     Guid DocumentId,

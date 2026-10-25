@@ -7,6 +7,7 @@ using CipherVault.Core.Errors;
 using CipherVault.Core.ImportExport;
 using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
+using CipherVault.Host.Mcp;
 using CipherVault.Host.Security;
 using CipherVault.Host.Session;
 using CipherVault.Ipc;
@@ -102,17 +103,28 @@ public sealed class StrictAdminVaultRpcProvider(
                         Guid.Empty,
                         method,
                         payload));
-                if (mapRequest.DocumentId == Guid.Empty)
+                if (mapRequest.DocumentId == Guid.Empty ||
+                    !BridgeDocumentMapLimiter.IsValidLimit(
+                        mapRequest.MaxHeadings) ||
+                    !BridgeDocumentMapLimiter.IsValidLimit(
+                        mapRequest.MaxFrontMatterFields) ||
+                    !BridgeDocumentMapLimiter.IsValidLimit(
+                        mapRequest.MaxLinks))
                 {
                     throw new AdminPipeRpcException(
                         "invalid_input",
-                        "Document id is required.");
+                        "Document map request is invalid.");
                 }
-                return await vault.ExecuteAsync(
+                var documentMap = await vault.ExecuteAsync(
                     (service, token) => service.GetDocumentMapAsync(
                         mapRequest.DocumentId,
                         token),
                     cancellationToken).ConfigureAwait(false);
+                return BridgeDocumentMapLimiter.Apply(
+                    documentMap,
+                    mapRequest.MaxHeadings,
+                    mapRequest.MaxFrontMatterFields,
+                    mapRequest.MaxLinks);
             case "admin.notes.backlinks":
                 var backlinksRequest =
                     PipeRpcCodec.ReadPayload<AdminBacklinksRequest>(

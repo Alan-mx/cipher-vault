@@ -5,6 +5,7 @@ using System.Text.Json;
 using CipherVault.Core.Configuration;
 using CipherVault.Core.Errors;
 using CipherVault.Host.Client;
+using CipherVault.Host.Contracts;
 using CipherVault.Ipc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -545,16 +546,7 @@ public sealed class StrictMcpBridgeClient : IMcpBridgeClient
 
     private static string ErrorResult(string code, string message)
     {
-        return JsonSerializer.Serialize(
-            new
-            {
-                ok = false,
-                error = new
-                {
-                    code,
-                    message
-                }
-            });
+        return McpToolErrorJson.Serialize(code, message);
     }
 
     private void ThrowIfDisposed()
@@ -665,14 +657,21 @@ public sealed class BridgeVaultTools
     }
 
     [McpServerTool(Name = "get_document_map")]
-    [Description("Return headings, top-level frontmatter, outgoing Wiki Links and backlink count without document content.")]
+    [Description("Return bounded headings, top-level frontmatter, outgoing Wiki Links and backlink count without document content. Truncation flags identify omitted fields.")]
     public Task<string> GetDocumentMap(
         string documentId,
+        int maxHeadings = 100,
+        int maxFrontMatterFields = 100,
+        int maxLinks = 100,
         CancellationToken cancellationToken = default)
     {
         return CallAsync(
             "get_document_map",
-            Arguments(("documentId", documentId)),
+            Arguments(
+                ("documentId", documentId),
+                ("maxHeadings", maxHeadings),
+                ("maxFrontMatterFields", maxFrontMatterFields),
+                ("maxLinks", maxLinks)),
             cancellationToken);
     }
 
@@ -990,15 +989,25 @@ public sealed class BridgeVaultTools
 
     private static string ErrorMessage(string code, string message)
     {
-        return JsonSerializer.Serialize(
-            new
-            {
-                ok = false,
-                error = new
-                {
-                    code,
-                    message
-                }
-            });
+        return McpToolErrorJson.Serialize(code, message);
+    }
+}
+
+public static class McpToolErrorJson
+{
+    public static string Serialize(string code, string message)
+    {
+        var error = new Dictionary<string, object?>
+        {
+            ["code"] = code,
+            ["message"] = message,
+            ["retryable"] = McpToolErrorMetadata.IsRetryable(code)
+        };
+        var hint = McpToolErrorMetadata.HintFor(code);
+        if (!string.IsNullOrWhiteSpace(hint))
+        {
+            error["hint"] = hint;
+        }
+        return JsonSerializer.Serialize(new { ok = false, error });
     }
 }

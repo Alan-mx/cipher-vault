@@ -1,4 +1,5 @@
 using System.Text.Json;
+using CipherVault.Core.Documents;
 using CipherVault.Host.Client;
 using CipherVault.Host.Mcp;
 using CipherVault.Host.Security;
@@ -174,7 +175,7 @@ public sealed class BridgeToolContractTests
         const string id = "d80c2e83-636f-47a8-a3f2-e473beec9922";
 
         await tools.TagList("tag-cursor", 25);
-        await tools.GetDocumentMap(id);
+        await tools.GetDocumentMap(id, 80, 40, 20);
         await tools.GetBacklinks(id, "backlink-cursor", 10);
         await tools.FindUnlinkedMentions(id, "mention-cursor", 15);
         await tools.GetLocalGraph(
@@ -205,6 +206,9 @@ public sealed class BridgeToolContractTests
             bridge.Calls.Select(call => call.ToolName));
         Assert.Equal(25, bridge.Calls[0].Arguments["limit"]);
         Assert.Equal(id, bridge.Calls[1].Arguments["documentId"]);
+        Assert.Equal(80, bridge.Calls[1].Arguments["maxHeadings"]);
+        Assert.Equal(40, bridge.Calls[1].Arguments["maxFrontMatterFields"]);
+        Assert.Equal(20, bridge.Calls[1].Arguments["maxLinks"]);
         Assert.Equal(10, bridge.Calls[2].Arguments["limit"]);
         Assert.Equal(15, bridge.Calls[3].Arguments["limit"]);
         Assert.Equal(2, bridge.Calls[4].Arguments["depth"]);
@@ -251,6 +255,106 @@ public sealed class BridgeToolContractTests
         Assert.False(annotations.DestructiveHint);
         Assert.True(annotations.IdempotentHint);
         Assert.False(annotations.OpenWorldHint);
+    }
+
+    [Fact]
+    public void DocumentMapMapperAndLimiterBoundEachCollection()
+    {
+        Assert.True(
+            BridgeToolCatalog.TryGet("get_document_map", out var definition));
+        var mapped = BridgeToolMapper.Map(
+            definition,
+            JsonSerializer.SerializeToElement(new
+            {
+                documentId = "d80c2e83-636f-47a8-a3f2-e473beec9922",
+                maxHeadings = 1,
+                maxFrontMatterFields = 1,
+                maxLinks = 2
+            }));
+        Assert.Equal(1, mapped.AdminPayload.GetProperty("maxHeadings").GetInt32());
+        Assert.Equal(
+            1,
+            mapped.AdminPayload.GetProperty("maxFrontMatterFields").GetInt32());
+        Assert.Equal(2, mapped.AdminPayload.GetProperty("maxLinks").GetInt32());
+
+        var map = new VaultDocumentMap(
+            Guid.NewGuid(),
+            "title",
+            "folder/title.md",
+            "md",
+            3,
+            [
+                new VaultDocumentHeading(1, "one", ["one"]),
+                new VaultDocumentHeading(2, "two", ["one", "two"])
+            ],
+            [
+                new VaultFrontMatterField("one", "string", "\"one\""),
+                new VaultFrontMatterField("two", "string", "\"two\"")
+            ],
+            [
+                new VaultOutgoingLink(
+                    "a",
+                    "a",
+                    null,
+                    "references",
+                    "unresolved",
+                    null,
+                    [],
+                    0,
+                    5),
+                new VaultOutgoingLink(
+                    "b",
+                    "b",
+                    null,
+                    "references",
+                    "unresolved",
+                    null,
+                    [],
+                    6,
+                    11),
+                new VaultOutgoingLink(
+                    "c",
+                    "c",
+                    null,
+                    "references",
+                    "unresolved",
+                    null,
+                    [],
+                    12,
+                    17)
+            ],
+            0,
+            DateTimeOffset.UtcNow);
+
+        var limited = BridgeDocumentMapLimiter.Apply(map, 1, 1, 2);
+
+        Assert.Single(limited.Headings);
+        Assert.Single(limited.FrontMatterFields);
+        Assert.Equal(2, limited.OutgoingLinks.Count);
+        Assert.True(limited.HeadingsTruncated);
+        Assert.True(limited.FrontMatterTruncated);
+        Assert.True(limited.LinksTruncated);
+        var full = BridgeDocumentMapLimiter.Apply(map, null, null, null);
+        Assert.Equal(2, full.Headings.Count);
+        Assert.Equal(2, full.FrontMatterFields.Count);
+        Assert.Equal(3, full.OutgoingLinks.Count);
+        Assert.False(full.HeadingsTruncated);
+    }
+
+    [Fact]
+    public void LocalMcpErrorsIncludeRecoveryMetadata()
+    {
+        var json = McpToolErrorJson.Serialize(
+            "access_denied",
+            "The current Access Grant does not allow write.");
+
+        using var document = JsonDocument.Parse(json);
+        var error = document.RootElement.GetProperty("error");
+        Assert.False(error.GetProperty("retryable").GetBoolean());
+        Assert.Contains(
+            "required scope",
+            error.GetProperty("hint").GetString(),
+            StringComparison.Ordinal);
     }
 
     [Fact]

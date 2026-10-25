@@ -45,7 +45,10 @@ public sealed record VaultDocumentMap(
     IReadOnlyList<VaultFrontMatterField> FrontMatterFields,
     IReadOnlyList<VaultOutgoingLink> OutgoingLinks,
     int BacklinkCount,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    bool HeadingsTruncated = false,
+    bool FrontMatterTruncated = false,
+    bool LinksTruncated = false);
 
 public sealed record VaultBacklinkItem(
     Guid SourceDocumentId,
