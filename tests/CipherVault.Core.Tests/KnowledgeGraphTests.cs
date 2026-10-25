@@ -99,6 +99,34 @@ public sealed class KnowledgeGraphTests
         Assert.Equal("真实链接", link.RawTarget);
     }
 
+    [Fact]
+    public void UnlinkedMentionScannerExcludesProtectedTextAndWordFragments()
+    {
+        const string content =
+            """
+            ---
+            description: OAuth
+            ---
+            # 来源
+            We use OAuth and OAuth2.
+            `OAuth`
+            ```text
+            OAuth
+            ```
+            <!-- OAuth -->
+            [[OAuth]]
+            """;
+
+        var result = UnlinkedMentionScanner.Scan(content, "OAuth", 3);
+
+        Assert.Equal(1, result.OccurrenceCount);
+        var occurrence = Assert.Single(result.Occurrences);
+        Assert.Contains(
+            "We use OAuth and OAuth2.",
+            occurrence.Context,
+            StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("\n")]
     [InlineData("\r\n")]
@@ -209,6 +237,278 @@ public sealed class KnowledgeGraphTests
         Assert.Equal(2, graph.Nodes.Count);
         Assert.Single(graph.Edges);
         Assert.True(graph.Nodes.Single(node => node.DocumentId == source.DocumentId).IsCenter);
+    }
+
+    [Fact]
+    public async Task FrontMatterLinksAreExcludedFromGraphAndRenameRewrite()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var target = await fixture.Service.CreateNoteAsync(
+            "目标",
+            null,
+            "md",
+            "# 目标",
+            null,
+            VaultActorKind.UserUi);
+        var source = await fixture.Service.CreateNoteAsync(
+            "来源",
+            null,
+            "md",
+            """
+            ---
+            description: "说明 [[目标]]"
+            related:
+              - "[[目标]]"
+            # 注释 [[目标]]
+            ---
+            # 来源
+            正文 [[目标]]
+            """,
+            null,
+            VaultActorKind.UserUi);
+
+        var sourceMap = await fixture.Service.GetDocumentMapAsync(
+            source.DocumentId);
+        var link = Assert.Single(sourceMap.OutgoingLinks);
+        Assert.Equal("目标", link.RawTarget);
+        var targetMap = await fixture.Service.GetDocumentMapAsync(
+            target.DocumentId);
+        Assert.Equal(1, targetMap.BacklinkCount);
+
+        await fixture.Service.UpdateNoteAsync(
+            target.DocumentId,
+            target.Revision,
+            new VaultNotePatch(
+                Title: "新目标",
+                UpdateBacklinks: true),
+            VaultActorKind.UserUi);
+
+        var rewritten = await fixture.Service.ReadNoteAsync(
+            source.DocumentId,
+            0,
+            16_000);
+        Assert.Equal(
+            "---\n" +
+            "description: \"说明 [[目标]]\"\n" +
+            "related:\n" +
+            "  - \"[[目标]]\"\n" +
+            "# 注释 [[目标]]\n" +
+            "---\n" +
+            "# 来源\n" +
+            "正文 [[新目标]]",
+            rewritten.Content);
+        var rewrittenMap = await fixture.Service.GetDocumentMapAsync(
+            source.DocumentId);
+        Assert.Equal(
+            "新目标",
+            Assert.Single(rewrittenMap.OutgoingLinks).RawTarget);
+        Assert.True((await fixture.Service.VerifyVaultAsync()).Valid);
+    }
+
+    [Fact]
+    public async Task LinkRebuildRemovesLegacyFrontMatterLinks()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var target = await fixture.Service.CreateNoteAsync(
+            "目标",
+            null,
+            "md",
+            "# 目标",
+            null,
+            VaultActorKind.UserUi);
+        var legacyTarget = await fixture.Service.CreateNoteAsync(
+            "伪目标",
+            null,
+            "md",
+            "# 伪目标",
+            null,
+            VaultActorKind.UserUi);
+        var source = await fixture.Service.CreateNoteAsync(
+            "来源",
+            null,
+            "md",
+            """
+            ---
+            related: ["[[伪目标]]"]
+            ---
+            # 来源
+            正文 [[目标]]
+            """,
+            null,
+            VaultActorKind.UserUi);
+        var sourceId = source.DocumentId.ToString("D").ToLowerInvariant();
+        var legacyTargetId = legacyTarget.DocumentId
+            .ToString("D")
+            .ToLowerInvariant();
+        var linkId = Guid.NewGuid().ToString("D").ToLowerInvariant();
+        var normalized = DocumentLinkKeys.NormalizeWikiTarget("伪目标");
+        await fixture.ExecuteDatabaseSqlAsync(
+            $"""
+            INSERT INTO document_links(
+                link_id, source_document_id, source_revision, target_document_id,
+                raw_target, raw_target_norm, display_text,
+                target_heading, target_heading_norm, relation_type,
+                resolution_status, start_offset, end_offset)
+            VALUES(
+                '{linkId}', '{sourceId}', {source.Revision}, '{legacyTargetId}',
+                '伪目标', '{normalized}', '伪目标',
+                NULL, NULL, 'references',
+                'resolved', 0, 1);
+            """);
+
+        var before = await fixture.Service.GetDocumentMapAsync(
+            source.DocumentId);
+        Assert.Equal(2, before.OutgoingLinks.Count);
+
+        var rebuilt = await fixture.Service.RebuildLinkIndexAsync(
+            VaultActorKind.UserUi);
+
+        Assert.Equal(1, rebuilt.LinksIndexed);
+        var after = await fixture.Service.GetDocumentMapAsync(
+            source.DocumentId);
+        Assert.Equal("目标", Assert.Single(after.OutgoingLinks).RawTarget);
+        var legacyMap = await fixture.Service.GetDocumentMapAsync(
+            legacyTarget.DocumentId);
+        Assert.Equal(0, legacyMap.BacklinkCount);
+        Assert.True((await fixture.Service.VerifyVaultAsync()).Valid);
+    }
+
+    [Fact]
+    public async Task UnlinkedMentionsGroupBySourceAndPaginate()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var target = await fixture.Service.CreateNoteAsync(
+            "目标",
+            null,
+            "md",
+            "# 目标",
+            null,
+            VaultActorKind.UserUi);
+        var sourceA = await fixture.Service.CreateNoteAsync(
+            "来源 A",
+            null,
+            "md",
+            "# 来源 A\n目标\n链接 [[目标]]\n目标",
+            null,
+            VaultActorKind.UserUi);
+        var sourceB = await fixture.Service.CreateNoteAsync(
+            "来源 B",
+            null,
+            "md",
+            "# 来源 B\n目标 目标 目标 目标",
+            null,
+            VaultActorKind.UserUi);
+        await fixture.Service.CreateNoteAsync(
+            "来源 C",
+            null,
+            "md",
+            """
+            ---
+            description: 目标
+            ---
+            # 来源 C
+            `目标`
+            [[目标]]
+            """,
+            null,
+            VaultActorKind.UserUi);
+
+        var first = await fixture.Service.ListUnlinkedMentionsAsync(
+            target.DocumentId,
+            null,
+            1);
+        Assert.Equal(target.DocumentId, first.TargetDocumentId);
+        Assert.Equal("目标", first.TargetTitle);
+        Assert.Single(first.Items);
+        Assert.NotNull(first.NextCursor);
+
+        var second = await fixture.Service.ListUnlinkedMentionsAsync(
+            target.DocumentId,
+            first.NextCursor,
+            1);
+        Assert.Single(second.Items);
+        Assert.Null(second.NextCursor);
+
+        var items = first.Items.Concat(second.Items).ToArray();
+        Assert.Equal(2, items.Length);
+        var itemA = Assert.Single(
+            items,
+            item => item.SourceDocumentId == sourceA.DocumentId);
+        Assert.Equal(2, itemA.OccurrenceCount);
+        Assert.Equal(2, itemA.Occurrences.Count);
+        var itemB = Assert.Single(
+            items,
+            item => item.SourceDocumentId == sourceB.DocumentId);
+        Assert.Equal(4, itemB.OccurrenceCount);
+        Assert.Equal(3, itemB.Occurrences.Count);
+        Assert.Equal(
+            sourceA.Revision,
+            (await fixture.Service.GetDocumentMapAsync(sourceA.DocumentId))
+                .Revision);
+    }
+
+    [Fact]
+    public async Task InvalidUnlinkedMentionCursorReturnsDomainError()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var document = await fixture.Service.CreateNoteAsync(
+            "cursor-unlinked",
+            null,
+            "md",
+            "# cursor-unlinked",
+            null,
+            VaultActorKind.UserUi);
+
+        var exception = await Assert.ThrowsAsync<VaultException>(() =>
+            fixture.Service.ListUnlinkedMentionsAsync(
+                document.DocumentId,
+                "not-a-valid-cursor",
+                20));
+
+        Assert.Equal(VaultErrorCode.InvalidCursor, exception.Code);
+    }
+
+    [Fact]
+    public async Task UnlinkedMentionsMatchNonAsciiCaseInsensitiveTitles()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var target = await fixture.Service.CreateNoteAsync(
+            "Café",
+            null,
+            "md",
+            "# Café",
+            null,
+            VaultActorKind.UserUi);
+        var source = await fixture.Service.CreateNoteAsync(
+            "非 ASCII 来源",
+            null,
+            "md",
+            "# 来源\nCAFÉ and CAFÉ",
+            null,
+            VaultActorKind.UserUi);
+
+        var page = await fixture.Service.ListUnlinkedMentionsAsync(
+            target.DocumentId,
+            null,
+            20);
+
+        var item = Assert.Single(page.Items);
+        Assert.Equal(source.DocumentId, item.SourceDocumentId);
+        Assert.Equal(2, item.OccurrenceCount);
+    }
+
+    [Fact]
+    public async Task UnlinkedMentionsMissingTargetReturnsNotFound()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+
+        var exception = await Assert.ThrowsAsync<VaultException>(() =>
+            fixture.Service.ListUnlinkedMentionsAsync(
+                Guid.NewGuid(),
+                null,
+                20));
+
+        Assert.Equal(VaultErrorCode.NotFound, exception.Code);
     }
 
     [Fact]

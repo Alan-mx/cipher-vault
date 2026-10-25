@@ -30,6 +30,11 @@ public sealed record AdminBacklinksRequest(
     string? Cursor,
     int Limit);
 
+public sealed record AdminUnlinkedMentionsRequest(
+    Guid DocumentId,
+    string? Cursor,
+    int Limit);
+
 public sealed record AdminTagListRequest(
     string? Cursor,
     int Limit);

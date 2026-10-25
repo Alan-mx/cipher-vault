@@ -70,6 +70,12 @@ public static class BridgeToolMapper
                     RequiredGuid(arguments, "documentId"),
                     OptionalString(arguments, "cursor"),
                     OptionalInt(arguments, "limit", 50))),
+            "find_unlinked_mentions" => Map(
+                definition,
+                new AdminUnlinkedMentionsRequest(
+                    RequiredGuid(arguments, "documentId"),
+                    OptionalString(arguments, "cursor"),
+                    OptionalInt(arguments, "limit", 20))),
             "tag_list" => Map(
                 definition,
                 new AdminTagListRequest(

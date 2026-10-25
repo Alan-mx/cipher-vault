@@ -166,6 +166,18 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
             cancellationToken);
     }
 
+    public Task<VaultUnlinkedMentionPage> ListUnlinkedMentionsAsync(
+        Guid documentId,
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        return CallAsync<VaultUnlinkedMentionPage>(
+            "admin.notes.unlinked-mentions",
+            new AdminUnlinkedMentionsRequest(documentId, cursor, limit),
+            cancellationToken);
+    }
+
     public Task<VaultTagPage> ListTagsAsync(
         string? cursor,
         int limit,

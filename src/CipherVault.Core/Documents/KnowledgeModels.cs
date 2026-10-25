@@ -60,6 +60,26 @@ public sealed record VaultBacklinkPage(
     IReadOnlyList<VaultBacklinkItem> Items,
     string? NextCursor);
 
+public sealed record VaultUnlinkedMentionOccurrence(
+    int StartOffset,
+    int EndOffset,
+    string Context);
+
+public sealed record VaultUnlinkedMentionItem(
+    Guid SourceDocumentId,
+    string SourceTitle,
+    string SourceVirtualPath,
+    int SourceRevision,
+    int OccurrenceCount,
+    IReadOnlyList<VaultUnlinkedMentionOccurrence> Occurrences,
+    DateTimeOffset UpdatedAt);
+
+public sealed record VaultUnlinkedMentionPage(
+    Guid TargetDocumentId,
+    string TargetTitle,
+    IReadOnlyList<VaultUnlinkedMentionItem> Items,
+    string? NextCursor);
+
 public sealed record VaultTagItem(
     string Name,
     int DocumentCount);

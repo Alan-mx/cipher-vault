@@ -120,6 +120,19 @@ internal sealed class InProcessHostVaultClient : IHostVaultClient
             cancellationToken);
     }
 
+    public Task<VaultUnlinkedMentionPage> ListUnlinkedMentionsAsync(
+        Guid documentId,
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        return _vault.ListUnlinkedMentionsAsync(
+            documentId,
+            cursor,
+            limit,
+            cancellationToken);
+    }
+
     public Task<VaultTagPage> ListTagsAsync(
         string? cursor,
         int limit,

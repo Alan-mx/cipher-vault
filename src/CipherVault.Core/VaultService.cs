@@ -64,6 +64,12 @@ public interface IVaultService : IAsyncDisposable
         int limit,
         CancellationToken cancellationToken = default);
 
+    Task<VaultUnlinkedMentionPage> ListUnlinkedMentionsAsync(
+        Guid documentId,
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken = default);
+
     Task<VaultTagPage> ListTagsAsync(
         string? cursor,
         int limit,
@@ -679,6 +685,41 @@ public sealed class VaultService : IVaultService
                 limit,
                 cancellationToken).ConfigureAwait(false);
             await EnsureSessionStillValidAsync(session, cancellationToken).ConfigureAwait(false);
+            return result;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<VaultUnlinkedMentionPage> ListUnlinkedMentionsAsync(
+        Guid documentId,
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (documentId == Guid.Empty || limit is < 1 or > 100)
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "Unlinked mention query parameters are invalid.");
+        }
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var session = await RequireSessionAsync(cancellationToken)
+                .ConfigureAwait(false);
+            var result = await DocumentLinkStore.ListUnlinkedMentionsAsync(
+                session.Connection,
+                session.SessionId,
+                documentId,
+                cursor,
+                limit,
+                cancellationToken).ConfigureAwait(false);
+            await EnsureSessionStillValidAsync(session, cancellationToken)
+                .ConfigureAwait(false);
             return result;
         }
         finally

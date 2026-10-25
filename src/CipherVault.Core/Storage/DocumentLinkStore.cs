@@ -214,6 +214,176 @@ internal static class DocumentLinkStore
             nextCursor);
     }
 
+    public static async Task<VaultUnlinkedMentionPage>
+        ListUnlinkedMentionsAsync(
+            SqliteConnection connection,
+            Guid sessionId,
+            Guid documentId,
+            string? cursor,
+            int limit,
+            CancellationToken cancellationToken)
+    {
+        const int maxCandidateScan = 500;
+        const int maxOccurrencesPerDocument = 3;
+        var effectiveLimit = Math.Clamp(limit, 1, 100);
+        var targetId = documentId.ToString("D").ToLowerInvariant();
+        var targetTitle = (await GetActiveDocumentTitleAsync(
+                connection,
+                targetId,
+                cancellationToken)
+            .ConfigureAwait(false))
+            .Trim();
+        var fingerprint = CursorCodec.Fingerprint(
+            $"{targetId}\u001F{DocumentLinkKeys.NormalizeTitle(targetTitle)}");
+        UnlinkedMentionCursor? position = null;
+        if (!string.IsNullOrWhiteSpace(cursor))
+        {
+            try
+            {
+                if (CursorCodec.TryDecode(
+                        cursor,
+                        sessionId,
+                        "unlinked-mentions",
+                        fingerprint,
+                        out UnlinkedMentionCursor decoded))
+                {
+                    position = decoded;
+                }
+            }
+            catch (VaultException exception) when (
+                exception.Code == VaultErrorCode.InvalidInput)
+            {
+                throw new VaultException(
+                    VaultErrorCode.InvalidCursor,
+                    "The unlinked mention cursor is invalid.",
+                    exception);
+            }
+        }
+
+        var sql = new StringBuilder(
+            """
+            SELECT document_id, title, source_path, revision, content,
+                   updated_at_ms
+            FROM documents
+            WHERE deleted_at_ms IS NULL
+              AND format = 'md'
+              AND document_id <> $targetId
+            """);
+        var canPrefilter = !HasCasedNonAscii(targetTitle);
+        if (canPrefilter)
+        {
+            sql.Append(" AND content LIKE $pattern ESCAPE '\\'");
+        }
+        if (position is not null)
+        {
+            sql.Append(
+                """
+                 AND (
+                    updated_at_ms < $afterUpdated
+                    OR (
+                        updated_at_ms = $afterUpdated
+                        AND document_id > $afterDocumentId
+                    )
+                 )
+                """);
+        }
+        sql.Append(
+            """
+             ORDER BY updated_at_ms DESC, document_id ASC
+             LIMIT $limit;
+            """);
+
+        using var command = connection.CreateCommand();
+        command.CommandText = sql.ToString();
+        command.Parameters.AddWithValue("$targetId", targetId);
+        if (canPrefilter)
+        {
+            command.Parameters.AddWithValue(
+                "$pattern",
+                $"%{EscapeLikeLiteral(targetTitle)}%");
+        }
+        command.Parameters.AddWithValue("$limit", maxCandidateScan + 1);
+        if (position is not null)
+        {
+            command.Parameters.AddWithValue(
+                "$afterUpdated",
+                position.UpdatedAtMs);
+            command.Parameters.AddWithValue(
+                "$afterDocumentId",
+                position.SourceDocumentId);
+        }
+
+        var items = new List<(
+            VaultUnlinkedMentionItem Item,
+            UnlinkedMentionCursor Cursor)>();
+        UnlinkedMentionCursor? lastScanned = null;
+        string? nextCursor = null;
+        var scanned = 0;
+        var candidateLimitReached = false;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken)
+            .ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (scanned >= maxCandidateScan)
+            {
+                candidateLimitReached = true;
+                break;
+            }
+            scanned++;
+            var sourceDocumentId = reader.GetString(0);
+            var updatedAtMs = reader.GetInt64(5);
+            var currentCursor = new UnlinkedMentionCursor(
+                updatedAtMs,
+                sourceDocumentId);
+            lastScanned = currentCursor;
+            var scan = UnlinkedMentionScanner.Scan(
+                reader.GetString(4),
+                targetTitle,
+                maxOccurrencesPerDocument);
+            if (scan.OccurrenceCount == 0)
+            {
+                continue;
+            }
+
+            items.Add((
+                new VaultUnlinkedMentionItem(
+                    Guid.Parse(sourceDocumentId),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.GetInt32(3),
+                    scan.OccurrenceCount,
+                    scan.Occurrences,
+                    DateTimeOffset.FromUnixTimeMilliseconds(updatedAtMs)),
+                currentCursor));
+            if (items.Count <= effectiveLimit)
+            {
+                continue;
+            }
+            items.RemoveAt(items.Count - 1);
+            nextCursor = CursorCodec.Encode(
+                sessionId,
+                "unlinked-mentions",
+                fingerprint,
+                items[^1].Cursor);
+            break;
+        }
+
+        if (nextCursor is null && candidateLimitReached && lastScanned is not null)
+        {
+            nextCursor = CursorCodec.Encode(
+                sessionId,
+                "unlinked-mentions",
+                fingerprint,
+                lastScanned);
+        }
+
+        return new VaultUnlinkedMentionPage(
+            documentId,
+            targetTitle,
+            items.Select(item => item.Item).ToArray(),
+            nextCursor);
+    }
+
     public static async Task<VaultTagPage> ListTagsAsync(
         SqliteConnection connection,
         Guid sessionId,
@@ -440,7 +610,50 @@ internal static class DocumentLinkStore
         }
     }
 
+    private static async Task<string> GetActiveDocumentTitleAsync(
+        SqliteConnection connection,
+        string documentId,
+        CancellationToken cancellationToken)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT title
+            FROM documents
+            WHERE document_id = $id AND deleted_at_ms IS NULL;
+            """;
+        command.Parameters.AddWithValue("$id", documentId);
+        var result = await command.ExecuteScalarAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (result is not string title)
+        {
+            throw new VaultException(
+                VaultErrorCode.NotFound,
+                "Document was not found.");
+        }
+        return title;
+    }
+
+    private static string EscapeLikeLiteral(string value)
+    {
+        return value
+            .Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("%", "\\%", StringComparison.Ordinal)
+            .Replace("_", "\\_", StringComparison.Ordinal);
+    }
+
+    private static bool HasCasedNonAscii(string value)
+    {
+        return value.Any(character =>
+            character > 127 &&
+            (char.IsUpper(character) || char.IsLower(character)));
+    }
+
     private sealed record BacklinkCursor(long UpdatedAtMs, string SourceDocumentId);
+
+    private sealed record UnlinkedMentionCursor(
+        long UpdatedAtMs,
+        string SourceDocumentId);
 
     private sealed record TagCursor(string NormalizedName);
 

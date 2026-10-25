@@ -9,7 +9,18 @@ internal static class WikiLinkParser
             return [];
         }
 
-        var protectedRanges = FindProtectedRanges(content);
+        return Parse(content, FindProtectedRanges(content));
+    }
+
+    internal static IReadOnlyList<ParsedWikiLink> Parse(
+        string content,
+        IReadOnlyList<TextRange> protectedRanges)
+    {
+        if (content.Length == 0)
+        {
+            return [];
+        }
+
         var rangeIndex = 0;
         var links = new List<ParsedWikiLink>();
         for (var index = 0; index < content.Length - 1; index++)
@@ -119,7 +130,8 @@ internal static class WikiLinkParser
         return slashCount % 2 == 1;
     }
 
-    private static IReadOnlyList<TextRange> FindProtectedRanges(string content)
+    internal static IReadOnlyList<TextRange> FindProtectedRanges(
+        string content)
     {
         var ranges = new List<TextRange>();
         AddFencedCodeRanges(content, ranges);
@@ -271,7 +283,7 @@ internal static class WikiLinkParser
         int BlockQuoteDepth,
         int Start);
 
-    private sealed record TextRange(int Start, int End);
+    internal sealed record TextRange(int Start, int End);
 }
 
 internal sealed record ParsedWikiLink(

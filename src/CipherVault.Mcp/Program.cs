@@ -530,6 +530,7 @@ public sealed class StrictMcpBridgeClient : IMcpBridgeClient
             "scan_notes" or
             "get_document_map" or
             "get_backlinks" or
+            "find_unlinked_mentions" or
             "tag_list" or
             "get_local_graph";
     }
@@ -685,6 +686,23 @@ public sealed class BridgeVaultTools
     {
         return CallAsync(
             "get_backlinks",
+            Arguments(
+                ("documentId", documentId),
+                ("cursor", cursor),
+                ("limit", limit)),
+            cancellationToken);
+    }
+
+    [McpServerTool(Name = "find_unlinked_mentions")]
+    [Description("Find plain-text body mentions of a document title that are not Wiki Links. Returns source-grouped contexts with cursor pagination and does not modify content.")]
+    public Task<string> FindUnlinkedMentions(
+        string documentId,
+        string? cursor = null,
+        int limit = 20,
+        CancellationToken cancellationToken = default)
+    {
+        return CallAsync(
+            "find_unlinked_mentions",
             Arguments(
                 ("documentId", documentId),
                 ("cursor", cursor),
@@ -897,6 +915,7 @@ public sealed class BridgeVaultTools
             "tag_list" or
             "get_document_map" or
             "get_backlinks" or
+            "find_unlinked_mentions" or
             "get_local_graph";
         var destructive = name is
             "append_note" or

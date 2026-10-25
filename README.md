@@ -146,6 +146,10 @@ Markdown 文档支持文档级 Wiki Link：
 [[目标文档#标题]]
 ```
 
+链接索引只解析 Frontmatter 结束线之后的 Markdown 正文。Frontmatter 字段、YAML 注释和
+元数据中的 `[[...]]` 不建立出链、反向链接或图谱关系。升级到该规则后，已有 Vault
+需要执行一次全量链接索引重建。
+
 WPF 的文档工作区提供：
 
 - 安全 Markdown 预览和可点击内部链接。
@@ -209,9 +213,12 @@ scope。Agent 不接受长期 Bearer token，也不使用 direct HTTP MCP。
 
 - 读取：`vault_status`、`list_catalog`、`search_notes`、`read_note`、
   `scan_notes`、`tag_list`、`get_document_map`、`get_backlinks`、
-  `get_local_graph`。
+  `find_unlinked_mentions`、`get_local_graph`。
 - 写入：`create_note`、`append_note`、`update_note`、`patch_note`。
 - 删除：`delete_note`，语义为移入加密回收站。
+
+`find_unlinked_mentions` 只扫描正文中的纯文本标题提及，排除 Frontmatter、代码、
+HTML 注释和已有 Wiki Link；工具只返回候选，不自动修改文档。
 
 `update_note` 的 `updateBacklinks` 默认关闭；需要同步改写标题引用时显式设为 `true`。
 

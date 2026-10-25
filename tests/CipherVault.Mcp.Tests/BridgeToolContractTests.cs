@@ -1,6 +1,7 @@
 using System.Text.Json;
 using CipherVault.Host.Client;
 using CipherVault.Host.Mcp;
+using CipherVault.Host.Security;
 
 namespace CipherVault.Mcp.Tests;
 
@@ -175,6 +176,7 @@ public sealed class BridgeToolContractTests
         await tools.TagList("tag-cursor", 25);
         await tools.GetDocumentMap(id);
         await tools.GetBacklinks(id, "backlink-cursor", 10);
+        await tools.FindUnlinkedMentions(id, "mention-cursor", 15);
         await tools.GetLocalGraph(
             id,
             2,
@@ -192,14 +194,22 @@ public sealed class BridgeToolContractTests
             dryRun: true);
 
         Assert.Equal(
-            ["tag_list", "get_document_map", "get_backlinks", "get_local_graph", "patch_note"],
+            [
+                "tag_list",
+                "get_document_map",
+                "get_backlinks",
+                "find_unlinked_mentions",
+                "get_local_graph",
+                "patch_note"
+            ],
             bridge.Calls.Select(call => call.ToolName));
         Assert.Equal(25, bridge.Calls[0].Arguments["limit"]);
         Assert.Equal(id, bridge.Calls[1].Arguments["documentId"]);
         Assert.Equal(10, bridge.Calls[2].Arguments["limit"]);
-        Assert.Equal(2, bridge.Calls[3].Arguments["depth"]);
-        Assert.Equal(5, bridge.Calls[4].Arguments["expectedRevision"]);
-        Assert.Equal(true, bridge.Calls[4].Arguments["dryRun"]);
+        Assert.Equal(15, bridge.Calls[3].Arguments["limit"]);
+        Assert.Equal(2, bridge.Calls[4].Arguments["depth"]);
+        Assert.Equal(5, bridge.Calls[5].Arguments["expectedRevision"]);
+        Assert.Equal(true, bridge.Calls[5].Arguments["dryRun"]);
 
         var readAnnotations = BridgeVaultTools.AnnotationsFor("get_backlinks");
         Assert.True(readAnnotations.ReadOnlyHint);
@@ -211,6 +221,36 @@ public sealed class BridgeToolContractTests
         Assert.False(writeAnnotations.ReadOnlyHint);
         Assert.True(writeAnnotations.DestructiveHint);
         Assert.False(writeAnnotations.IdempotentHint);
+    }
+
+    [Fact]
+    public void UnlinkedMentionsMapperUsesReadOnlyAdminContract()
+    {
+        Assert.True(
+            BridgeToolCatalog.TryGet("find_unlinked_mentions", out var definition));
+        Assert.Equal(AccessGrantScope.Read, definition.RequiredScope);
+        var mapped = BridgeToolMapper.Map(
+            definition,
+            JsonSerializer.SerializeToElement(new
+            {
+                documentId = "d80c2e83-636f-47a8-a3f2-e473beec9922",
+                cursor = "cursor",
+                limit = 15
+            }));
+
+        Assert.Equal("admin.notes.unlinked-mentions", mapped.AdminMethod);
+        Assert.Equal(
+            "cursor",
+            mapped.AdminPayload.GetProperty("cursor").GetString());
+        Assert.Equal(
+            15,
+            mapped.AdminPayload.GetProperty("limit").GetInt32());
+        var annotations = BridgeVaultTools.AnnotationsFor(
+            "find_unlinked_mentions");
+        Assert.True(annotations.ReadOnlyHint);
+        Assert.False(annotations.DestructiveHint);
+        Assert.True(annotations.IdempotentHint);
+        Assert.False(annotations.OpenWorldHint);
     }
 
     [Fact]

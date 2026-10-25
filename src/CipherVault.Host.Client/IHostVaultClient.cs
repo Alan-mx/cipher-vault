@@ -58,6 +58,12 @@ public interface IHostVaultClient : IAsyncDisposable
         int limit,
         CancellationToken cancellationToken = default);
 
+    Task<VaultUnlinkedMentionPage> ListUnlinkedMentionsAsync(
+        Guid documentId,
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken = default);
+
     Task<VaultTagPage> ListTagsAsync(
         string? cursor,
         int limit,

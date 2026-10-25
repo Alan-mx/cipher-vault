@@ -135,6 +135,28 @@ public sealed class StrictAdminVaultRpcProvider(
                         backlinksRequest.Limit,
                         token),
                     cancellationToken).ConfigureAwait(false);
+            case "admin.notes.unlinked-mentions":
+                var unlinkedRequest =
+                    PipeRpcCodec.ReadPayload<AdminUnlinkedMentionsRequest>(
+                        new PipeRpcRequest(
+                            PipeProtocol.Version,
+                            Guid.Empty,
+                            method,
+                            payload));
+                if (unlinkedRequest.DocumentId == Guid.Empty ||
+                    unlinkedRequest.Limit is < 1 or > 100)
+                {
+                    throw new AdminPipeRpcException(
+                        "invalid_input",
+                        "Unlinked mention request is invalid.");
+                }
+                return await vault.ExecuteAsync(
+                    (service, token) => service.ListUnlinkedMentionsAsync(
+                        unlinkedRequest.DocumentId,
+                        unlinkedRequest.Cursor,
+                        unlinkedRequest.Limit,
+                        token),
+                    cancellationToken).ConfigureAwait(false);
             case "admin.tags.list":
                 var tagsRequest = PipeRpcCodec.ReadPayload<AdminTagListRequest>(
                     new PipeRpcRequest(

@@ -111,7 +111,7 @@ internal static class DocumentLinkIndexer
 
         if (format == "md")
         {
-            var parsed = WikiLinkParser.Parse(content);
+            var parsed = ParseBodyWikiLinks(content);
             EnsureIndexSize(parsed);
             var normalizedTargets = parsed
                 .Select(link => DocumentLinkKeys.NormalizeWikiTarget(
@@ -353,6 +353,26 @@ internal static class DocumentLinkIndexer
                     "The document link index exceeds 256 KB.");
             }
         }
+    }
+
+    private static IReadOnlyList<ParsedWikiLink> ParseBodyWikiLinks(
+        string content)
+    {
+        if (!FrontMatterDocument.TryParse(content, out var snapshot))
+        {
+            return WikiLinkParser.Parse(content);
+        }
+
+        // Keep body offsets relative to the original document.
+        var chars = content.ToCharArray();
+        for (var index = 0; index < snapshot.End; index++)
+        {
+            if (chars[index] is not '\r' and not '\n')
+            {
+                chars[index] = ' ';
+            }
+        }
+        return WikiLinkParser.Parse(new string(chars));
     }
 
     private static string StatusText(DocumentLinkResolutionStatus status)

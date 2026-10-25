@@ -56,6 +56,11 @@ public static class BridgeToolCatalog
                 AccessGrantScope.Read,
                 BridgeToolResultKind.Page,
                 "admin.notes.backlinks"),
+            ["find_unlinked_mentions"] = new BridgeToolDefinition(
+                "find_unlinked_mentions",
+                AccessGrantScope.Read,
+                BridgeToolResultKind.Page,
+                "admin.notes.unlinked-mentions"),
             ["tag_list"] = new BridgeToolDefinition(
                 "tag_list",
                 AccessGrantScope.Read,
