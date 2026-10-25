@@ -91,7 +91,7 @@ async Task<BrokerApprovalDecision> ApproveAsync(
 {
     if (!string.IsNullOrWhiteSpace(approvalStartedPath))
     {
-        await File.WriteAllTextAsync(
+        await WriteMarkerAtomicallyAsync(
             approvalStartedPath,
             request.ApprovalId.ToString("D"),
             cancellationToken);
@@ -106,4 +106,27 @@ async Task<BrokerApprovalDecision> ApproveAsync(
         Approved: true,
         DenialReason: null,
         ApprovedScopes: request.RequestedScopes);
+}
+
+static async Task WriteMarkerAtomicallyAsync(
+    string path,
+    string content,
+    CancellationToken cancellationToken)
+{
+    var temporaryPath = $"{path}.{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
+    try
+    {
+        await File.WriteAllTextAsync(
+            temporaryPath,
+            content,
+            cancellationToken);
+        File.Move(temporaryPath, path);
+    }
+    finally
+    {
+        if (File.Exists(temporaryPath))
+        {
+            File.Delete(temporaryPath);
+        }
+    }
 }

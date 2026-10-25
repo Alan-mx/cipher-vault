@@ -17,12 +17,17 @@ public sealed class CliCrashRecoveryTests
     {
         await using var fixture = await CrashFixture.CreateAsync();
         var cliPath = FindCliExecutable();
+        var batchCommittedPath = Path.Combine(
+            fixture.RootPath,
+            "import-batch-committed");
         using var interrupted = StartImportProcess(
             cliPath,
             fixture.VaultPath,
-            fixture.JobId);
+            fixture.JobId,
+            batchCommittedPath);
 
-        await WaitForFirstImportedDocumentAsync(fixture.Service);
+        await WaitForBatchCommittedAsync(batchCommittedPath);
+        Assert.False(interrupted.Process.HasExited);
         interrupted.Process.Kill(entireProcessTree: true);
         await interrupted.Process.WaitForExitAsync();
         Assert.NotEqual(0, interrupted.Process.ExitCode);
@@ -51,19 +56,18 @@ public sealed class CliCrashRecoveryTests
             auditEvents.Count(item => item.Action == "create") >= ImportFileCount);
     }
 
-    private static async Task WaitForFirstImportedDocumentAsync(VaultService service)
+    private static async Task WaitForBatchCommittedAsync(string markerPath)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         while (!timeout.IsCancellationRequested)
         {
-            var page = await service.GetAuditPageAsync(null, 100, timeout.Token);
-            if (page.Items.Any(item => item.Action == "create"))
+            if (File.Exists(markerPath))
             {
                 return;
             }
             await Task.Delay(20, timeout.Token);
         }
-        throw new TimeoutException("No document import was observed before timeout.");
+        throw new TimeoutException("No import batch commit was observed before timeout.");
     }
 
     private static async Task<List<VaultCatalogItem>> ReadAllCatalogItemsAsync(
@@ -99,9 +103,14 @@ public sealed class CliCrashRecoveryTests
     private static ImportProcess StartImportProcess(
         string cliPath,
         string vaultPath,
-        Guid jobId)
+        Guid jobId,
+        string? batchCommittedPath = null)
     {
-        var startInfo = CreateProcessStartInfo(cliPath, vaultPath, jobId);
+        var startInfo = CreateProcessStartInfo(
+            cliPath,
+            vaultPath,
+            jobId,
+            batchCommittedPath);
         var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Unable to start CipherVault.Cli.exe.");
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
@@ -139,7 +148,8 @@ public sealed class CliCrashRecoveryTests
     private static ProcessStartInfo CreateProcessStartInfo(
         string cliPath,
         string vaultPath,
-        Guid jobId)
+        Guid jobId,
+        string? batchCommittedPath)
     {
         var startInfo = new ProcessStartInfo(cliPath)
         {
@@ -158,6 +168,12 @@ public sealed class CliCrashRecoveryTests
         foreach (var variable in CipherVaultEnvironmentVariables)
         {
             startInfo.Environment.Remove(variable);
+        }
+        if (!string.IsNullOrWhiteSpace(batchCommittedPath))
+        {
+            startInfo.Environment[
+                "CIPHER_VAULT_TEST_IMPORT_BATCH_MARKER"] =
+                batchCommittedPath;
         }
         return startInfo;
     }
@@ -193,7 +209,8 @@ public sealed class CliCrashRecoveryTests
         "CIPHER_VAULT_IDLE_MINUTES",
         "CIPHER_VAULT_HARD_HOURS",
         "CIPHER_VAULT_ACCESS_MODE",
-        "CIPHER_VAULT_READ_ONLY"
+        "CIPHER_VAULT_READ_ONLY",
+        "CIPHER_VAULT_TEST_IMPORT_BATCH_MARKER"
     ];
 
     private sealed record ProcessResult(int ExitCode, string Stdout, string Stderr);

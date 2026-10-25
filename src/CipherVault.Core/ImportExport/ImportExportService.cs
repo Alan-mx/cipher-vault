@@ -269,6 +269,7 @@ internal static class ImportExportService
                     cancellationToken).ConfigureAwait(false);
             }
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            await PauseAfterBatchForTestAsync(cancellationToken).ConfigureAwait(false);
         }
 
         var finalState = failed == 0 ? "completed" : "failed";
@@ -291,6 +292,39 @@ internal static class ImportExportService
             await update.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
         return new VaultImportResult(jobId, imported, skipped, failed, finalState);
+    }
+
+    private static async Task PauseAfterBatchForTestAsync(
+        CancellationToken cancellationToken)
+    {
+        var markerPath = Environment.GetEnvironmentVariable(
+            "CIPHER_VAULT_TEST_IMPORT_BATCH_MARKER");
+        if (string.IsNullOrWhiteSpace(markerPath))
+        {
+            return;
+        }
+
+        var fullMarkerPath = Path.GetFullPath(markerPath);
+        var temporaryPath =
+            $"{fullMarkerPath}.{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            await File.WriteAllTextAsync(
+                temporaryPath,
+                "batch-committed",
+                cancellationToken).ConfigureAwait(false);
+            File.Move(temporaryPath, fullMarkerPath);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+            {
+                File.Delete(temporaryPath);
+            }
+        }
+
+        await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     public static async Task<VaultExportResult> ExportAsync(
