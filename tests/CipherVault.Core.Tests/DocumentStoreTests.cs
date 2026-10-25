@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using CipherVault.Core;
 using CipherVault.Core.Crypto;
@@ -1633,6 +1634,43 @@ public sealed class DocumentStoreTests
                 command.Parameters.AddWithValue("$created", timestamp);
                 command.Parameters.AddWithValue("$updated", timestamp);
                 await command.ExecuteNonQueryAsync();
+            }
+            var tags = JsonSerializer.Deserialize<List<string>>(tagsJson) ?? [];
+            foreach (var tag in tags)
+            {
+                var normalized = VirtualPathPolicy
+                    .NormalizeTag(tag)
+                    .ToLowerInvariant();
+                using (var insertTag = connection.CreateCommand())
+                {
+                    insertTag.Transaction = transaction;
+                    insertTag.CommandText =
+                        """
+                        INSERT INTO tags(tag_id, name, normalized_name)
+                        VALUES($id, $name, $normalized)
+                        ON CONFLICT(normalized_name) DO NOTHING;
+                        """;
+                    insertTag.Parameters.AddWithValue(
+                        "$id",
+                        Guid.NewGuid().ToString("D"));
+                    insertTag.Parameters.AddWithValue("$name", tag);
+                    insertTag.Parameters.AddWithValue("$normalized", normalized);
+                    await insertTag.ExecuteNonQueryAsync();
+                }
+                using var insertRelation = connection.CreateCommand();
+                insertRelation.Transaction = transaction;
+                insertRelation.CommandText =
+                    """
+                    INSERT OR IGNORE INTO document_tags(document_id, tag_id)
+                    SELECT $documentId, tag_id
+                    FROM tags
+                    WHERE normalized_name = $normalized;
+                    """;
+                insertRelation.Parameters.AddWithValue(
+                    "$documentId",
+                    documentId);
+                insertRelation.Parameters.AddWithValue("$normalized", normalized);
+                await insertRelation.ExecuteNonQueryAsync();
             }
             transaction.Commit();
         }

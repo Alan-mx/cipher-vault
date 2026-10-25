@@ -631,6 +631,89 @@ public sealed class KnowledgeGraphTests
     }
 
     [Fact]
+    public async Task IntegrityCheckDetectsTagDerivedDataDrift()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var created = await fixture.Service.CreateNoteAsync(
+            "标签完整性",
+            null,
+            "md",
+            """
+            ---
+            tags: [Java]
+            ---
+            # 标签完整性
+            """,
+            null,
+            VaultActorKind.UserUi);
+        var documentId = created.DocumentId.ToString("D").ToLowerInvariant();
+        var baseline = await fixture.Service.VerifyVaultAsync();
+        Assert.True(
+            baseline.Valid,
+            string.Join("; ", baseline.Problems));
+
+        await fixture.ExecuteDatabaseSqlAsync(
+            $"""
+             UPDATE documents
+             SET tags_json = '["Security"]'
+             WHERE document_id = '{documentId}';
+             UPDATE document_revisions
+             SET tags_json = '["Backend"]'
+             WHERE document_id = '{documentId}';
+             UPDATE documents_fts
+             SET tags = '["Other"]'
+             WHERE document_id = '{documentId}';
+             """);
+
+        var damaged = await fixture.Service.VerifyVaultAsync();
+        Assert.False(damaged.Valid);
+        Assert.Contains(
+            $"document_frontmatter_tags_mismatch={documentId}",
+            damaged.Problems);
+        Assert.Contains(
+            $"document_tag_relation_mismatch={documentId}",
+            damaged.Problems);
+        Assert.Contains(
+            $"fts_tags_mismatch={documentId}",
+            damaged.Problems);
+        Assert.Contains(
+            damaged.Problems,
+            problem => problem.StartsWith(
+                "revision_frontmatter_tags_mismatch=",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task IntegrityCheckDetectsMissingTagRelation()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var created = await fixture.Service.CreateNoteAsync(
+            "标签关系",
+            null,
+            "md",
+            "# 标签关系",
+            ["Java"],
+            VaultActorKind.UserUi);
+        var documentId = created.DocumentId.ToString("D").ToLowerInvariant();
+        var baseline = await fixture.Service.VerifyVaultAsync();
+        Assert.True(
+            baseline.Valid,
+            string.Join("; ", baseline.Problems));
+
+        await fixture.ExecuteDatabaseSqlAsync(
+            $"""
+             DELETE FROM document_tags
+             WHERE document_id = '{documentId}';
+             """);
+
+        var damaged = await fixture.Service.VerifyVaultAsync();
+        Assert.False(damaged.Valid);
+        Assert.Contains(
+            $"document_tag_relation_mismatch={documentId}",
+            damaged.Problems);
+    }
+
+    [Fact]
     public async Task LocalGraphAppliesAndTagFilter()
     {
         await using var fixture = await KnowledgeFixture.CreateAsync();

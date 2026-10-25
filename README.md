@@ -159,6 +159,9 @@ Markdown 存在 Frontmatter `tags` 字段时，该字段是标签索引的权威
 追加和精准修改会在同一事务内同步 `tags_json`、标签关系、FTS、HMAC 和 revision；
 同时传入的显式 `tags` 必须与 Frontmatter 一致。
 
+完整性检查会继续比对当前文档和历史 revision 的 Frontmatter 标签、`tags_json`、
+`document_tags` 与 FTS 标签副本，并报告具体文档或 revision 的问题码。
+
 维护页可以全量重建链接索引；操作在单个 SQLCipher 事务内完成并写入审计。需要建立
 本地性能基线时可运行：
 

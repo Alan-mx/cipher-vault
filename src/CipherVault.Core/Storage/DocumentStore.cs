@@ -469,6 +469,10 @@ internal static partial class DocumentStore
             integrityKey,
             problems,
             cancellationToken).ConfigureAwait(false);
+        await VerifyTagIndexAsync(
+            connection,
+            problems,
+            cancellationToken).ConfigureAwait(false);
         await VerifyLinkIndexAsync(
             connection,
             problems,
@@ -1192,6 +1196,223 @@ internal static partial class DocumentStore
                 problems.Add($"revision_metadata_invalid={reader.GetString(0)}");
             }
         }
+    }
+
+    private static async Task VerifyTagIndexAsync(
+        SqliteConnection connection,
+        ICollection<string> problems,
+        CancellationToken cancellationToken)
+    {
+        var tagsJsonByDocument =
+            new Dictionary<string, string>(StringComparer.Ordinal);
+        var storedTagsByDocument =
+            new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText =
+                """
+                SELECT document_id, format, content, tags_json
+                FROM documents
+                WHERE deleted_at_ms IS NULL;
+                """;
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken)
+                .ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var id = reader.GetString(0);
+                var format = reader.GetString(1);
+                var content = reader.GetString(2);
+                var tagsJson = reader.GetString(3);
+                tagsJsonByDocument[id] = tagsJson;
+                if (!TryNormalizeTagsJson(tagsJson, out var storedTags))
+                {
+                    problems.Add($"document_tags_json_invalid={id}");
+                    storedTagsByDocument[id] =
+                        new HashSet<string>(StringComparer.Ordinal);
+                    continue;
+                }
+                storedTagsByDocument[id] = storedTags;
+                if (format != "md")
+                {
+                    continue;
+                }
+                try
+                {
+                    if (FrontMatterTags.TryExtract(
+                            content,
+                            out var frontMatterTags) &&
+                        !NormalizeTagSet(frontMatterTags).SetEquals(storedTags))
+                    {
+                        problems.Add($"document_frontmatter_tags_mismatch={id}");
+                    }
+                }
+                catch (VaultException)
+                {
+                    problems.Add($"document_frontmatter_tags_invalid={id}");
+                }
+            }
+        }
+
+        await VerifyDocumentTagRelationsAsync(
+            connection,
+            storedTagsByDocument,
+            problems,
+            cancellationToken).ConfigureAwait(false);
+        await VerifyFtsTagCopiesAsync(
+            connection,
+            tagsJsonByDocument,
+            problems,
+            cancellationToken).ConfigureAwait(false);
+        await VerifyRevisionTagsAsync(
+            connection,
+            problems,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task VerifyDocumentTagRelationsAsync(
+        SqliteConnection connection,
+        IReadOnlyDictionary<string, HashSet<string>> storedTagsByDocument,
+        ICollection<string> problems,
+        CancellationToken cancellationToken)
+    {
+        var relatedTagsByDocument =
+            new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText =
+                """
+                SELECT document_tags.document_id, tags.normalized_name
+                FROM document_tags
+                JOIN tags ON tags.tag_id = document_tags.tag_id;
+                """;
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken)
+                .ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var id = reader.GetString(0);
+                if (!relatedTagsByDocument.TryGetValue(id, out var tags))
+                {
+                    tags = new HashSet<string>(StringComparer.Ordinal);
+                    relatedTagsByDocument[id] = tags;
+                }
+                tags.Add(reader.GetString(1));
+            }
+        }
+
+        foreach (var (id, storedTags) in storedTagsByDocument)
+        {
+            var relatedTags = relatedTagsByDocument.GetValueOrDefault(id) ??
+                new HashSet<string>(StringComparer.Ordinal);
+            var normalizedStoredTags = storedTags
+                .Select(tag => tag.ToLowerInvariant())
+                .ToHashSet(StringComparer.Ordinal);
+            if (!relatedTags.SetEquals(normalizedStoredTags))
+            {
+                problems.Add($"document_tag_relation_mismatch={id}");
+            }
+        }
+    }
+
+    private static async Task VerifyFtsTagCopiesAsync(
+        SqliteConnection connection,
+        IReadOnlyDictionary<string, string> tagsJsonByDocument,
+        ICollection<string> problems,
+        CancellationToken cancellationToken)
+    {
+        var ftsTagsByDocument =
+            new Dictionary<string, string>(StringComparer.Ordinal);
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText =
+                "SELECT document_id, tags FROM documents_fts;";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken)
+                .ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                ftsTagsByDocument[reader.GetString(0)] = reader.GetString(1);
+            }
+        }
+
+        foreach (var (id, tagsJson) in tagsJsonByDocument)
+        {
+            if (!ftsTagsByDocument.TryGetValue(id, out var ftsTags) ||
+                !string.Equals(ftsTags, tagsJson, StringComparison.Ordinal))
+            {
+                problems.Add($"fts_tags_mismatch={id}");
+            }
+        }
+    }
+
+    private static async Task VerifyRevisionTagsAsync(
+        SqliteConnection connection,
+        ICollection<string> problems,
+        CancellationToken cancellationToken)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT revision_id, format, content, tags_json
+            FROM document_revisions;
+            """;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken)
+            .ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var revisionId = reader.GetString(0);
+            if (reader.GetString(1) != "md")
+            {
+                continue;
+            }
+            if (!TryNormalizeTagsJson(reader.GetString(3), out var storedTags))
+            {
+                problems.Add($"revision_tags_json_invalid={revisionId}");
+                continue;
+            }
+            try
+            {
+                if (FrontMatterTags.TryExtract(
+                        reader.GetString(2),
+                        out var frontMatterTags) &&
+                    !NormalizeTagSet(frontMatterTags).SetEquals(storedTags))
+                {
+                    problems.Add(
+                        $"revision_frontmatter_tags_mismatch={revisionId}");
+                }
+            }
+            catch (VaultException)
+            {
+                problems.Add(
+                    $"revision_frontmatter_tags_invalid={revisionId}");
+            }
+        }
+    }
+
+    private static bool TryNormalizeTagsJson(
+        string tagsJson,
+        out HashSet<string> tags)
+    {
+        tags = new HashSet<string>(StringComparer.Ordinal);
+        try
+        {
+            var values =
+                JsonSerializer.Deserialize<List<string>>(tagsJson, JsonOptions) ??
+                [];
+            tags = NormalizeTagSet(values);
+            return true;
+        }
+        catch (Exception exception) when (
+            exception is JsonException or VaultException)
+        {
+            return false;
+        }
+    }
+
+    private static HashSet<string> NormalizeTagSet(
+        IEnumerable<string> tags)
+    {
+        return tags
+            .Select(VirtualPathPolicy.NormalizeTag)
+            .ToHashSet(StringComparer.Ordinal);
     }
 
     private static async Task VerifyLinkIndexAsync(
