@@ -11,7 +11,11 @@ public sealed class McpToolErrorContractTests
     {
         var json = BridgeToolEnvelope.Error(
             "revision_conflict",
-            "Document revision changed.");
+            "Document revision changed.",
+            new Dictionary<string, object?>
+            {
+                ["currentRevision"] = 9
+            });
 
         using var document = JsonDocument.Parse(json);
         var error = document.RootElement.GetProperty("error");
@@ -23,6 +27,11 @@ public sealed class McpToolErrorContractTests
             "expectedRevision",
             error.GetProperty("hint").GetString(),
             StringComparison.Ordinal);
+        Assert.Equal(
+            9,
+            error.GetProperty("details")
+                .GetProperty("currentRevision")
+                .GetInt32());
     }
 
     [Theory]

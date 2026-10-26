@@ -28,6 +28,16 @@ public sealed class VaultException : Exception
         Code = code;
     }
 
+    public VaultException(
+        VaultErrorCode code,
+        string message,
+        IReadOnlyDictionary<string, object?> details)
+        : base(message)
+    {
+        Code = code;
+        Details = details;
+    }
+
     public VaultException(VaultErrorCode code, string message, Exception innerException)
         : base(message, innerException)
     {
@@ -35,4 +45,6 @@ public sealed class VaultException : Exception
     }
 
     public VaultErrorCode Code { get; }
+
+    public IReadOnlyDictionary<string, object?>? Details { get; }
 }

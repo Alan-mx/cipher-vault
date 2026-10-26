@@ -43,6 +43,14 @@ public interface IVaultService : IAsyncDisposable
         int limit,
         CancellationToken cancellationToken = default);
 
+    Task<VaultSearchPage> SearchNotesAsync(
+        string query,
+        string? folder,
+        string? cursor,
+        int limit,
+        VaultSearchFilter filter,
+        CancellationToken cancellationToken = default);
+
     Task<VaultReadResult> ReadNoteAsync(
         Guid documentId,
         int offset,
@@ -557,6 +565,23 @@ public sealed class VaultService : IVaultService
         int limit,
         CancellationToken cancellationToken = default)
     {
+        return await SearchNotesAsync(
+            query,
+            folder,
+            cursor,
+            limit,
+            new VaultSearchFilter(),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<VaultSearchPage> SearchNotesAsync(
+        string query,
+        string? folder,
+        string? cursor,
+        int limit,
+        VaultSearchFilter filter,
+        CancellationToken cancellationToken = default)
+    {
         ThrowIfDisposed();
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -569,6 +594,7 @@ public sealed class VaultService : IVaultService
                 folder,
                 cursor,
                 limit,
+                filter,
                 cancellationToken).ConfigureAwait(false);
             await EnsureSessionStillValidAsync(session, cancellationToken).ConfigureAwait(false);
             return page;

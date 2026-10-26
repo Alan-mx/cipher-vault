@@ -76,13 +76,13 @@ public sealed class DocumentStoreTests
             limit: 10);
 
         Assert.Single(page.Hits);
-        Assert.True(page.Coverage.ScannedDocuments <= 1_000);
+        Assert.True(page.Coverage.ScannedDocuments <= 10_000);
         Assert.False(page.Coverage.IsTruncated);
         Assert.Contains("睡眠", page.Hits[0].Snippet, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task ShortQueryDoesNotScanBeyondOneThousandDocuments()
+    public async Task ShortQueryScansBeyondOneThousandDocuments()
     {
         await using var fixture = await DocumentFixture.CreateAsync();
         await DocumentFixture.SeedShortQueryWindowAsync(fixture.VaultPath, 1_000);
@@ -97,11 +97,12 @@ public sealed class DocumentStoreTests
             cursor: null,
             limit: 10);
 
-        Assert.Empty(page.Hits);
+        var hit = Assert.Single(page.Hits);
+        Assert.Equal("outside-window", hit.Title);
         Assert.Equal(1_005, page.Coverage.TotalDocuments);
-        Assert.Equal(1_000, page.Coverage.ScannedDocuments);
-        Assert.Equal(0, page.Coverage.MatchedDocuments);
-        Assert.True(page.Coverage.IsTruncated);
+        Assert.Equal(1_005, page.Coverage.ScannedDocuments);
+        Assert.Equal(1, page.Coverage.MatchedDocuments);
+        Assert.False(page.Coverage.IsTruncated);
         Assert.Null(page.NextCursor);
     }
 

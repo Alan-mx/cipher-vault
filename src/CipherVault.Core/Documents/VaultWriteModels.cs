@@ -19,7 +19,8 @@ public sealed record VaultAuditContext(
 public sealed record VaultWriteResult(
     Guid DocumentId,
     int Revision,
-    DateTimeOffset CommittedAt);
+    DateTimeOffset CommittedAt,
+    Guid? AuditEventId = null);
 
 public sealed record VaultNotePatch(
     string? Title = null,
@@ -31,7 +32,8 @@ public sealed record VaultNotePatch(
 public sealed record VaultDeleteResult(
     Guid DocumentId,
     int Revision,
-    DateTimeOffset PurgeAfter);
+    DateTimeOffset PurgeAfter,
+    Guid? AuditEventId = null);
 
 public sealed record VaultRestoreResult(
     Guid DocumentId,

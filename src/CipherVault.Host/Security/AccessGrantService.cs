@@ -98,6 +98,30 @@ public sealed class AccessGrantService : IDisposable
         Guid verifiedProcessSessionId,
         CancellationToken cancellationToken = default)
     {
+        return await RequestAsync(
+            clientId,
+            clientInstanceId,
+            tokenAccessMode,
+            requestedScopes,
+            AccessGrantPathPolicy.Unrestricted,
+            vaultGeneration,
+            approvalHandler,
+            verifiedProcessSessionId,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<AccessGrantRequestOutcome> RequestAsync(
+        string clientId,
+        Guid clientInstanceId,
+        McpAccessMode tokenAccessMode,
+        AccessGrantScope requestedScopes,
+        AccessGrantPathPolicy pathPolicy,
+        AccessGrantVaultGeneration vaultGeneration,
+        Func<AccessGrantApprovalRequest, CancellationToken, Task<AccessGrantApprovalResult>>
+            approvalHandler,
+        Guid verifiedProcessSessionId,
+        CancellationToken cancellationToken = default)
+    {
         ArgumentException.ThrowIfNullOrWhiteSpace(clientId);
         ArgumentNullException.ThrowIfNull(approvalHandler);
         if (verifiedProcessSessionId == Guid.Empty)
@@ -165,7 +189,8 @@ public sealed class AccessGrantService : IDisposable
                         HardExpiresAt: null,
                         VaultSessionId: null,
                         DenialReason: null,
-                        VerifiedProcessSessionId: verifiedProcessSessionId),
+                        VerifiedProcessSessionId: verifiedProcessSessionId,
+                        PathPolicy: pathPolicy),
                     vaultGeneration);
                 _pendingSlots[slot] = pending;
                 isOwner = true;
@@ -224,7 +249,8 @@ public sealed class AccessGrantService : IDisposable
                     clientInstanceId,
                     tokenAccessMode,
                     effectiveRequest,
-                    allowed),
+                    allowed,
+                    pathPolicy),
                 pendingCancellation.Token).ConfigureAwait(false);
             if (!approval.Approved)
             {
@@ -394,7 +420,8 @@ public sealed class AccessGrantService : IDisposable
                         matched.ClientInstanceId,
                         matched.Scopes,
                         matched.VaultSessionId.Value,
-                        matched.VerifiedProcessSessionId),
+                        matched.VerifiedProcessSessionId,
+                        matched.PathPolicy),
                     ReasonCode: null,
                     Record: matched);
             }
@@ -1055,18 +1082,22 @@ public sealed class AccessGrantService : IDisposable
                 ScopeNames(
                     record.Scopes == AccessGrantScope.None
                         ? record.RequestedScopes
-                        : record.Scopes),
+                        : record.Scopes,
+                    record.PathPolicy),
                 RequestId: null,
                 result,
                 ReasonCode),
             CancellationToken.None);
     }
 
-    private static string ScopeNames(AccessGrantScope scopes)
+    private static string ScopeNames(
+        AccessGrantScope scopes,
+        AccessGrantPathPolicy? paths = null)
     {
         return string.Join(
             ",",
-            AccessGrantScopes.ToNames(scopes)
+            (paths ?? AccessGrantPathPolicy.Unrestricted)
+                .ToScopeNames(scopes)
                 .OrderBy(value => value, StringComparer.Ordinal));
     }
 

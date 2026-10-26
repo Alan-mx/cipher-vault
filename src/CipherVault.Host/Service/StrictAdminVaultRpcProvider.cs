@@ -67,6 +67,13 @@ public sealed class StrictAdminVaultRpcProvider(
                         searchRequest.Folder,
                         searchRequest.Cursor,
                         searchRequest.Limit,
+                        new VaultSearchFilter(
+                            searchRequest.Tags,
+                            searchRequest.Format,
+                            searchRequest.UpdatedAfter,
+                            searchRequest.UpdatedBefore,
+                            searchRequest.HasBacklinks,
+                            searchRequest.OrphanOnly),
                         token),
                     cancellationToken).ConfigureAwait(false);
             case "admin.notes.read":
@@ -109,7 +116,9 @@ public sealed class StrictAdminVaultRpcProvider(
                     !BridgeDocumentMapLimiter.IsValidLimit(
                         mapRequest.MaxFrontMatterFields) ||
                     !BridgeDocumentMapLimiter.IsValidLimit(
-                        mapRequest.MaxLinks))
+                        mapRequest.MaxLinks) ||
+                    !BridgeDocumentMapLimiter.IsValidByteLimit(
+                        mapRequest.MaxResponseBytes))
                 {
                     throw new AdminPipeRpcException(
                         "invalid_input",
@@ -124,7 +133,8 @@ public sealed class StrictAdminVaultRpcProvider(
                     documentMap,
                     mapRequest.MaxHeadings,
                     mapRequest.MaxFrontMatterFields,
-                    mapRequest.MaxLinks);
+                    mapRequest.MaxLinks,
+                    mapRequest.MaxResponseBytes);
             case "admin.notes.backlinks":
                 var backlinksRequest =
                     PipeRpcCodec.ReadPayload<AdminBacklinksRequest>(

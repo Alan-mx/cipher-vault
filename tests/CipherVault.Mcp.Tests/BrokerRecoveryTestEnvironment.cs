@@ -536,12 +536,21 @@ internal sealed class BrokerGrantHandler(
         BridgeGrantRequest request,
         CancellationToken cancellationToken)
     {
-        var requestedScopes = ParseScopes(request.Scopes);
+        if (!AccessGrantPathPolicy.TryParse(
+                request.Scopes,
+                out var requestedScopes,
+                out var requestedPaths))
+        {
+            throw new AdminPipeRpcException(
+                "invalid_input",
+                "Bridge scope is invalid.");
+        }
         var outcome = await grants.RequestAsync(
             session.ClientId,
             session.BridgeInstanceId,
             session.AccessMode,
             requestedScopes,
+            requestedPaths,
             new AccessGrantVaultGeneration(
                 _vaultSessionId,
                 _vaultExpiresAt),
@@ -554,6 +563,7 @@ internal sealed class BrokerGrantHandler(
                         approval.TokenAccessMode,
                         approval.RequestedScopes,
                         approval.AllowedScopes,
+                        approval.PathPolicy,
                         grants.IdleLifetime,
                         grants.HardLifetime),
                     token);
@@ -576,7 +586,8 @@ internal sealed class BrokerGrantHandler(
                 session.AccessMode == McpAccessMode.ReadWrite
                     ? "readWrite"
                     : "readOnly",
-                AccessGrantScopes.ToNames(record.Scopes)
+                (record.PathPolicy ?? AccessGrantPathPolicy.Unrestricted)
+                    .ToScopeNames(record.Scopes)
                     .OrderBy(value => value, StringComparer.Ordinal)
                     .ToArray(),
                 record.HardExpiresAt!.Value),
@@ -586,7 +597,8 @@ internal sealed class BrokerGrantHandler(
                 record.ClientInstanceId,
                 record.Scopes,
                 record.VaultSessionId!.Value,
-                record.VerifiedProcessSessionId));
+                record.VerifiedProcessSessionId,
+                record.PathPolicy));
     }
 
     public Task<string> CallToolAsync(
@@ -664,21 +676,4 @@ internal sealed class BrokerGrantHandler(
             reasonCode);
     }
 
-    private static AccessGrantScope ParseScopes(
-        IReadOnlyList<string> values)
-    {
-        var scopes = AccessGrantScope.None;
-        foreach (var value in values)
-        {
-            scopes |= value.ToLowerInvariant() switch
-            {
-                "read" => AccessGrantScope.Read,
-                "write" => AccessGrantScope.Write,
-                "delete" => AccessGrantScope.Delete,
-                _ => throw new InvalidDataException(
-                    "Unsupported test scope.")
-            };
-        }
-        return AccessGrantScopes.Normalize(scopes);
-    }
 }

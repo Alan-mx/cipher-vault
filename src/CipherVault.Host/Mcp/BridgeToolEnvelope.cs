@@ -49,7 +49,10 @@ public static class BridgeToolEnvelope
         return Serialize(new { ok = true, result });
     }
 
-    public static string Error(string code, string message)
+    public static string Error(
+        string code,
+        string message,
+        IReadOnlyDictionary<string, object?>? details = null)
     {
         var error = new Dictionary<string, object?>
         {
@@ -61,6 +64,10 @@ public static class BridgeToolEnvelope
         if (!string.IsNullOrWhiteSpace(hint))
         {
             error["hint"] = hint;
+        }
+        if (details is { Count: > 0 })
+        {
+            error["details"] = details;
         }
         return Serialize(new { ok = false, error });
     }

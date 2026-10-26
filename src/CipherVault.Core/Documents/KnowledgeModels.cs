@@ -48,7 +48,9 @@ public sealed record VaultDocumentMap(
     DateTimeOffset UpdatedAt,
     bool HeadingsTruncated = false,
     bool FrontMatterTruncated = false,
-    bool LinksTruncated = false);
+    bool LinksTruncated = false,
+    int EstimatedBytes = 0,
+    bool BytesTruncated = false);
 
 public sealed record VaultBacklinkItem(
     Guid SourceDocumentId,
@@ -139,7 +141,8 @@ public sealed record VaultPatchResult(
     bool Changed,
     string UnifiedDiff,
     bool DiffTruncated,
-    bool LinkIndexCurrent);
+    bool LinkIndexCurrent,
+    Guid? AuditEventId = null);
 
 public sealed record VaultLinkRebuildResult(
     int DocumentsIndexed,

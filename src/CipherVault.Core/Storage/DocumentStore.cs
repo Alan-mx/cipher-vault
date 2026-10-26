@@ -11,7 +11,7 @@ namespace CipherVault.Core.Storage;
 internal static partial class DocumentStore
 {
     private const int MaxSearchLimit = 20;
-    private const int MaxScanDocuments = 1_000;
+    private const int MaxScanDocuments = 10_000;
     private const int MaxSnippetLength = 2_000;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -797,11 +797,34 @@ internal static partial class DocumentStore
         int limit,
         CancellationToken cancellationToken)
     {
+        return await SearchAsync(
+            connection,
+            sessionId,
+            query,
+            folder,
+            cursor,
+            limit,
+            new VaultSearchFilter(),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public static async Task<VaultSearchPage> SearchAsync(
+        SqliteConnection connection,
+        Guid sessionId,
+        string query,
+        string? folder,
+        string? cursor,
+        int limit,
+        VaultSearchFilter filter,
+        CancellationToken cancellationToken)
+    {
         var normalizedQuery = NormalizeQuery(query);
         var effectiveLimit = Math.Clamp(limit, 1, MaxSearchLimit);
         var normalizedFolder = NormalizeFolder(folder);
+        var normalizedFilter = NormalizeSearchFilter(filter);
         var fingerprint = CursorCodec.Fingerprint(
-            $"{normalizedQuery}\u001F{normalizedFolder}");
+            $"{normalizedQuery}\u001F{normalizedFolder}\u001F" +
+            SearchFilterFingerprint(normalizedFilter));
         var totalActive = await CountActiveDocumentsAsync(
             connection,
             normalizedFolder,
@@ -817,6 +840,7 @@ internal static partial class DocumentStore
                 effectiveLimit,
                 cursor,
                 totalActive,
+                normalizedFilter,
                 cancellationToken).ConfigureAwait(false)
             : await SearchShortAsync(
                 connection,
@@ -827,6 +851,7 @@ internal static partial class DocumentStore
                 effectiveLimit,
                 cursor,
                 totalActive,
+                normalizedFilter,
                 cancellationToken).ConfigureAwait(false);
     }
 
@@ -839,6 +864,7 @@ internal static partial class DocumentStore
         int limit,
         string? cursor,
         int totalActive,
+        VaultSearchFilter filter,
         CancellationToken cancellationToken)
     {
         var hasCursor = CursorCodec.TryDecode(
@@ -850,6 +876,7 @@ internal static partial class DocumentStore
         var folderClause = folder.Length == 0
             ? string.Empty
             : " AND d.source_path_norm LIKE $folderPrefix ESCAPE '\\'";
+        var filterSql = BuildSearchFilterSql(filter);
         var match = $"\"{query.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
         var cursorClause = hasCursor
             ? """
@@ -877,6 +904,7 @@ internal static partial class DocumentStore
                 WHERE documents_fts MATCH $match
                   AND d.deleted_at_ms IS NULL
                   {folderClause}
+                  {filterSql.Sql}
             ) ranked
             {cursorClause}
             ORDER BY updated_at_ms DESC, document_id
@@ -888,6 +916,7 @@ internal static partial class DocumentStore
         {
             command.Parameters.AddWithValue("$folderPrefix", EscapeLike(folder) + "/%");
         }
+        AddFilterParameters(command, filterSql);
         if (hasCursor)
         {
             command.Parameters.AddWithValue("$afterUpdatedAt", position.UpdatedAtMs);
@@ -912,6 +941,7 @@ internal static partial class DocumentStore
             connection,
             match,
             folder,
+            filter,
             cancellationToken).ConfigureAwait(false);
         return BuildSearchPage(
             hits,
@@ -934,6 +964,7 @@ internal static partial class DocumentStore
         int limit,
         string? cursor,
         int totalActive,
+        VaultSearchFilter filter,
         CancellationToken cancellationToken)
     {
         var hasCursor = CursorCodec.TryDecode(
@@ -945,15 +976,17 @@ internal static partial class DocumentStore
         var like = "%" + EscapeLike(query) + "%";
         var folderClause = folder.Length == 0
             ? string.Empty
-            : " AND source_path_norm LIKE $folderPrefix ESCAPE '\\'";
+            : " AND d.source_path_norm LIKE $folderPrefix ESCAPE '\\'";
+        var filterSql = BuildSearchFilterSql(filter);
         var scanWindowSql =
             $"""
-             SELECT document_id, title, source_path, revision, content,
-                    headings_json, tags_json, updated_at_ms
-             FROM documents
-             WHERE deleted_at_ms IS NULL
+             SELECT d.document_id, d.title, d.source_path, d.revision, d.content,
+                    d.headings_json, d.tags_json, d.updated_at_ms
+             FROM documents d
+             WHERE d.deleted_at_ms IS NULL
                {folderClause}
-             ORDER BY updated_at_ms DESC, document_id
+               {filterSql.Sql}
+             ORDER BY d.updated_at_ms DESC, d.document_id
              LIMIT $scanLimit
              """;
         var cursorClause = hasCursor
@@ -990,6 +1023,7 @@ internal static partial class DocumentStore
         {
             command.Parameters.AddWithValue("$folderPrefix", EscapeLike(folder) + "/%");
         }
+        AddFilterParameters(command, filterSql);
         if (hasCursor)
         {
             command.Parameters.AddWithValue("$afterUpdatedAt", position.UpdatedAtMs);
@@ -1016,6 +1050,7 @@ internal static partial class DocumentStore
             scanWindowSql,
             like,
             folder,
+            filter,
             cancellationToken).ConfigureAwait(false);
         return BuildSearchPage(
             hits,
@@ -1123,6 +1158,153 @@ internal static partial class DocumentStore
         }
         var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         return Convert.ToInt32(value);
+    }
+
+    private static VaultSearchFilter NormalizeSearchFilter(
+        VaultSearchFilter filter)
+    {
+        if (filter.Tags is { Count: > 20 })
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "Search supports at most 20 tag filters.");
+        }
+        var tags = filter.Tags?
+            .Select(VirtualPathPolicy.NormalizeTag)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray() ?? [];
+        var format = string.IsNullOrWhiteSpace(filter.Format)
+            ? null
+            : filter.Format.Trim().ToLowerInvariant();
+        if (format is not null and not ("md" or "txt"))
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "Search format must be md or txt.");
+        }
+        if (filter.UpdatedAfter > filter.UpdatedBefore)
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "Search updatedAfter must not exceed updatedBefore.");
+        }
+        if (filter.OrphanOnly && filter.HasBacklinks is not null)
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "orphanOnly cannot be combined with hasBacklinks.");
+        }
+        return filter with
+        {
+            Tags = tags,
+            Format = format
+        };
+    }
+
+    private static string SearchFilterFingerprint(VaultSearchFilter filter)
+    {
+        return string.Join(
+            '\u001F',
+            string.Join(',', filter.Tags ?? []),
+            filter.Format ?? string.Empty,
+            filter.UpdatedAfter?.ToUnixTimeMilliseconds().ToString(
+                System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
+            filter.UpdatedBefore?.ToUnixTimeMilliseconds().ToString(
+                System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
+            filter.HasBacklinks?.ToString() ?? string.Empty,
+            filter.OrphanOnly.ToString());
+    }
+
+    private static SearchFilterSql BuildSearchFilterSql(
+        VaultSearchFilter filter)
+    {
+        var clauses = new List<string>();
+        var parameters = new List<(string Name, object Value)>();
+        if (filter.Format is not null)
+        {
+            clauses.Add("AND d.format = $filterFormat");
+            parameters.Add(("$filterFormat", filter.Format));
+        }
+        if (filter.UpdatedAfter is not null)
+        {
+            clauses.Add("AND d.updated_at_ms >= $filterUpdatedAfter");
+            parameters.Add((
+                "$filterUpdatedAfter",
+                filter.UpdatedAfter.Value.ToUnixTimeMilliseconds()));
+        }
+        if (filter.UpdatedBefore is not null)
+        {
+            clauses.Add("AND d.updated_at_ms <= $filterUpdatedBefore");
+            parameters.Add((
+                "$filterUpdatedBefore",
+                filter.UpdatedBefore.Value.ToUnixTimeMilliseconds()));
+        }
+        for (var index = 0; index < (filter.Tags?.Count ?? 0); index++)
+        {
+            var name = $"$filterTag{index}";
+            clauses.Add(
+                $"""
+                AND EXISTS (
+                    SELECT 1
+                    FROM document_tags filter_tags
+                    JOIN tags filter_tag_names
+                      ON filter_tag_names.tag_id = filter_tags.tag_id
+                    WHERE filter_tags.document_id = d.document_id
+                      AND filter_tag_names.normalized_name = {name}
+                )
+                """);
+            parameters.Add((
+                name,
+                filter.Tags![index].ToLowerInvariant()));
+        }
+
+        const string incomingBacklinkExists =
+            """
+            EXISTS (
+                SELECT 1
+                FROM document_links filter_links
+                JOIN documents filter_sources
+                  ON filter_sources.document_id =
+                     filter_links.source_document_id
+                WHERE filter_links.target_document_id = d.document_id
+                  AND filter_links.resolution_status = 'resolved'
+                  AND filter_sources.deleted_at_ms IS NULL
+            )
+            """;
+        const string outgoingLinkExists =
+            """
+            EXISTS (
+                SELECT 1
+                FROM document_links filter_outgoing
+                WHERE filter_outgoing.source_document_id = d.document_id
+            )
+            """;
+        if (filter.OrphanOnly)
+        {
+            clauses.Add($"AND NOT {incomingBacklinkExists}");
+            clauses.Add($"AND NOT {outgoingLinkExists}");
+        }
+        else if (filter.HasBacklinks == true)
+        {
+            clauses.Add($"AND {incomingBacklinkExists}");
+        }
+        else if (filter.HasBacklinks == false)
+        {
+            clauses.Add($"AND NOT {incomingBacklinkExists}");
+        }
+        return new SearchFilterSql(
+            string.Concat(clauses.Select(clause => "\n" + clause)),
+            parameters);
+    }
+
+    private static void AddFilterParameters(
+        SqliteCommand command,
+        SearchFilterSql filter)
+    {
+        foreach (var (name, value) in filter.Parameters)
+        {
+            command.Parameters.AddWithValue(name, value);
+        }
     }
 
     private static async Task<long> GetMaxUpdatedAtAsync(
@@ -1602,22 +1784,26 @@ internal static partial class DocumentStore
         SqliteConnection connection,
         string match,
         string folder,
+        VaultSearchFilter filter,
         CancellationToken cancellationToken)
     {
+        var filterSql = BuildSearchFilterSql(filter);
         using var command = connection.CreateCommand();
         command.CommandText =
-            """
+            $"""
             SELECT count(*)
             FROM documents_fts
             JOIN documents d ON d.document_id = documents_fts.document_id
             WHERE documents_fts MATCH $match
               AND d.deleted_at_ms IS NULL
+              {filterSql.Sql}
             """;
         if (folder.Length > 0)
         {
             command.CommandText += " AND d.source_path_norm LIKE $folderPrefix ESCAPE '\\'";
             command.Parameters.AddWithValue("$folderPrefix", EscapeLike(folder) + "/%");
         }
+        AddFilterParameters(command, filterSql);
         command.Parameters.AddWithValue("$match", match);
         var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         return Convert.ToInt32(value);
@@ -1628,6 +1814,7 @@ internal static partial class DocumentStore
         string scanWindowSql,
         string like,
         string folder,
+        VaultSearchFilter filter,
         CancellationToken cancellationToken)
     {
         using var command = connection.CreateCommand();
@@ -1654,6 +1841,7 @@ internal static partial class DocumentStore
                 "$folderPrefix",
                 EscapeLike(folder) + "/%");
         }
+        AddFilterParameters(command, BuildSearchFilterSql(filter));
         var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         return Convert.ToInt32(value);
     }
@@ -1738,6 +1926,10 @@ internal static partial class DocumentStore
 
     [GeneratedRegex(@"\s+")]
     private static partial Regex WhitespaceRegex();
+
+    private sealed record SearchFilterSql(
+        string Sql,
+        IReadOnlyList<(string Name, object Value)> Parameters);
 
     private sealed record HeadingItem(int Level, string Text);
 

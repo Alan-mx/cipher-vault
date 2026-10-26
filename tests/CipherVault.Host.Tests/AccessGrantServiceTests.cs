@@ -444,6 +444,94 @@ public sealed class AccessGrantServiceTests
     }
 
     [Fact]
+    public void ScopedGrantParsesPathsAndHonorsFolderBoundaries()
+    {
+        var parsed = AccessGrantPathPolicy.TryParse(
+            ["read:Projects", "write:Inbox", "delete:Trash"],
+            out var scopes,
+            out var paths);
+
+        Assert.True(parsed);
+        Assert.Equal(
+            AccessGrantScope.Read |
+            AccessGrantScope.Write |
+            AccessGrantScope.Delete,
+            scopes);
+        Assert.False(paths.GlobalRead);
+        Assert.False(paths.GlobalWrite);
+        Assert.False(paths.GlobalDelete);
+        Assert.True(paths.AllowsRead("Projects/note.md"));
+        Assert.True(paths.AllowsRead("projects/nested/note.md"));
+        Assert.False(paths.AllowsRead("Projects2/note.md"));
+        Assert.True(paths.AllowsRead("Inbox/note.md"));
+        Assert.True(paths.AllowsRead("Trash/note.md"));
+        Assert.True(paths.AllowsWrite("Inbox/note.md"));
+        Assert.False(paths.AllowsWrite("Projects/note.md"));
+        Assert.True(paths.AllowsDelete("Trash/note.md"));
+        Assert.False(paths.AllowsDelete("Inbox/note.md"));
+    }
+
+    [Fact]
+    public void GlobalScopeOverridesScopedPathTokens()
+    {
+        Assert.True(AccessGrantPathPolicy.TryParse(
+            ["read", "read:Projects"],
+            out _,
+            out var paths));
+
+        Assert.True(paths.GlobalRead);
+        Assert.True(paths.AllowsRead("Anywhere/note.md"));
+        Assert.True(
+            paths.ToScopeNames(AccessGrantScope.Read)
+                .SequenceEqual(["read"]));
+    }
+
+    [Theory]
+    [InlineData("read:../secret")]
+    [InlineData("write:.")]
+    [InlineData("delete:")]
+    [InlineData("execute:Projects")]
+    public void InvalidPathScopeIsRejected(string value)
+    {
+        Assert.False(AccessGrantPathPolicy.TryParse(
+            [value],
+            out _,
+            out _));
+    }
+
+    [Fact]
+    public async Task ScopedGrantIsRetainedInIssuedRecord()
+    {
+        var now = DateTimeOffset.Parse("2026-10-21T10:00:00Z");
+        var service = new AccessGrantService(
+            timeProvider: new MutableTimeProvider(now));
+        Assert.True(AccessGrantPathPolicy.TryParse(
+            ["read:Projects"],
+            out var scopes,
+            out var paths));
+
+        var outcome = await service.RequestAsync(
+            "agent",
+            Guid.NewGuid(),
+            McpAccessMode.ReadOnly,
+            scopes,
+            paths,
+            Generation(now, TimeSpan.FromHours(1)),
+            (approval, _) =>
+            {
+                Assert.Same(paths, approval.PathPolicy);
+                return Task.FromResult(new AccessGrantApprovalResult(
+                    true,
+                    scopes));
+            },
+            Guid.NewGuid());
+
+        Assert.Equal(AccessGrantRequestStatus.Approved, outcome.Status);
+        var issued = Assert.IsType<IssuedAccessGrant>(outcome.IssuedGrant);
+        Assert.Equal(paths, issued.Record.PathPolicy);
+    }
+
+    [Fact]
     public async Task RevokeByIdUsesCustomReason()
     {
         var now = DateTimeOffset.Parse("2026-10-21T10:00:00Z");

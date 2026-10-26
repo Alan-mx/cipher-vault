@@ -11,7 +11,13 @@ public sealed record AdminSearchNotesRequest(
     string Query,
     string? Folder,
     string? Cursor,
-    int Limit);
+    int Limit,
+    IReadOnlyList<string>? Tags = null,
+    string? Format = null,
+    DateTimeOffset? UpdatedAfter = null,
+    DateTimeOffset? UpdatedBefore = null,
+    bool? HasBacklinks = null,
+    bool OrphanOnly = false);
 
 public sealed record AdminReadNoteRequest(
     Guid DocumentId,
@@ -26,7 +32,8 @@ public sealed record AdminDocumentMapRequest(
     Guid DocumentId,
     int? MaxHeadings = null,
     int? MaxFrontMatterFields = null,
-    int? MaxLinks = null);
+    int? MaxLinks = null,
+    int? MaxResponseBytes = null);
 
 public sealed record AdminBacklinksRequest(
     Guid DocumentId,

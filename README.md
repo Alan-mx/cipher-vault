@@ -209,6 +209,16 @@ Bridge 启动后会验证 Host 和自身进程身份，请求用户批准 Access
 `--scopes read` 请求只读；`--scopes read,write` 请求读写；`delete` 必须显式加入
 scope。Agent 不接受长期 Bearer token，也不使用 direct HTTP MCP。
 
+scope 也可以限制到虚拟文件夹：
+
+```powershell
+--scopes read:Projects,write:Inbox,delete:Trash
+```
+
+路径按文件夹边界匹配，不匹配相似前缀；不可见文档统一返回 `not_found`。`read` 被
+路径限制时，`tag_list` 暂时拒绝，避免聚合计数泄露范围外标签；在根目录创建文档需要
+全局 write。
+
 当前 MCP 工具：
 
 - 读取：`vault_status`、`list_catalog`、`search_notes`、`read_note`、
@@ -220,9 +230,16 @@ scope。Agent 不接受长期 Bearer token，也不使用 direct HTTP MCP。
 `find_unlinked_mentions` 只扫描正文中的纯文本标题提及，排除 Frontmatter、代码、
 HTML 注释和已有 Wiki Link；工具只返回候选，不自动修改文档。
 
-`get_document_map` 的标题、Frontmatter 字段和出链默认各限制为 100 项，并通过
-`headingsTruncated`、`frontMatterTruncated`、`linksTruncated` 标识是否截断。
-MCP 错误响应包含稳定的 `code`、`message`、`retryable`，适用时包含恢复提示 `hint`。
+`get_document_map` 的标题、Frontmatter 字段和出链默认各限制为 100 项，整个结果默认
+限制为 64 KiB，并通过 `headingsTruncated`、`frontMatterTruncated`、
+`linksTruncated`、`estimatedBytes`、`bytesTruncated` 标识裁剪状态。MCP 错误响应
+包含稳定的 `code`、`message`、`retryable`，适用时包含恢复提示 `hint` 和结构化
+`details`。
+
+`search_notes` 支持标签 AND、`md`/`txt` 格式、更新时间范围、入链存在性和孤立文档
+过滤；1～2 字符查询扫描最近 10000 篇活动文档，并返回 `isTruncated` 覆盖状态。
+MCP 初始化会提供操作说明；创建、追加、更新、精准修改和删除结果包含
+`auditEventId`，可直接关联审计记录。
 
 `update_note` 的 `updateBacklinks` 默认关闭；需要同步改写标题引用时显式设为 `true`。
 

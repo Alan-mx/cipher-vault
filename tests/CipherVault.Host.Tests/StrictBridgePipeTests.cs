@@ -542,6 +542,96 @@ public sealed class StrictBridgePipeTests
     }
 
     [Fact]
+    public async Task ScopedGrantRestrictsBridgeReadsAndWritesToFolder()
+    {
+        await using var environment = await CreateRealBridgeEnvironmentAsync();
+        var gateway = environment.Fixture.App.Services
+            .GetRequiredService<HostVaultGateway>();
+        var other = await gateway.ExecuteAsync(
+            (vault, token) => vault.CreateNoteAsync(
+                "Other Note",
+                "Other",
+                "md",
+                "# Other Note",
+                null,
+                VaultActorKind.System,
+                token));
+        var acceptTask = environment.Server.AcceptOnceAsync();
+        await using var client = await BridgePipeClientConnection.ConnectAsync(
+            new BridgePipeClientOptions(
+                environment.Options.PipeName,
+                environment.Options.ClientId,
+                environment.Options.AccessMode,
+                new HashSet<string>(StringComparer.Ordinal)
+                {
+                    "read:Projects",
+                    "write:Projects"
+                },
+                environment.Options.AllowedClientPolicy,
+                CurrentProcessServicePolicy(environment.Options.OwnerSid)));
+        var grant = await client.RequestGrantAsync();
+        Assert.Contains("read:projects", grant.Scopes);
+        Assert.Contains("write:projects", grant.Scopes);
+
+        using var created = await CallToolAsync(
+            client,
+            "create_note",
+            [
+                ("title", "Project Note"),
+                ("folder", "Projects"),
+                ("content", "# Project Note")
+            ]);
+        Assert.True(
+            created.RootElement.GetProperty("ok").GetBoolean(),
+            created.RootElement.GetRawText());
+
+        using var deniedCreate = await CallToolAsync(
+            client,
+            "create_note",
+            [
+                ("title", "Denied Note"),
+                ("folder", "Other"),
+                ("content", "# Denied")
+            ]);
+        Assert.False(
+            deniedCreate.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal(
+            "access_denied",
+            deniedCreate.RootElement
+                .GetProperty("error")
+                .GetProperty("code")
+                .GetString());
+
+        using var catalog = await CallToolAsync(
+            client,
+            "list_catalog",
+            [("limit", 20)]);
+        var titles = catalog.RootElement
+            .GetProperty("page")
+            .GetProperty("items")
+            .EnumerateArray()
+            .Select(item => item.GetProperty("title").GetString())
+            .ToArray();
+        Assert.Contains("Project Note", titles);
+        Assert.DoesNotContain("Other Note", titles);
+
+        using var deniedRead = await CallToolAsync(
+            client,
+            "read_note",
+            [("documentId", other.DocumentId)]);
+        Assert.False(deniedRead.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal(
+            "not_found",
+            deniedRead.RootElement
+                .GetProperty("error")
+                .GetProperty("code")
+                .GetString());
+
+        await client.DisposeAsync();
+        _ = await acceptTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
     public async Task BrokerUnavailableGrantFailureKeepsErrorCode()
     {
         await using var environment = await CreateRealBridgeEnvironmentAsync();
@@ -970,11 +1060,21 @@ public sealed class StrictBridgePipeTests
             BridgeGrantRequest request,
             CancellationToken cancellationToken)
         {
+            if (!AccessGrantPathPolicy.TryParse(
+                    request.Scopes,
+                    out var requestedScopes,
+                    out var requestedPaths))
+            {
+                throw new AdminPipeRpcException(
+                    "invalid_input",
+                    "Bridge scope is invalid.");
+            }
             var outcome = await grants.RequestAsync(
                 session.ClientId,
                 session.BridgeInstanceId,
                 session.AccessMode,
-                ParseScopes(request.Scopes),
+                requestedScopes,
+                requestedPaths,
                 new AccessGrantVaultGeneration(
                     _vaultSessionId,
                     _vaultExpiresAt),
@@ -987,6 +1087,7 @@ public sealed class StrictBridgePipeTests
                             approval.TokenAccessMode,
                             approval.RequestedScopes,
                             approval.AllowedScopes,
+                            approval.PathPolicy,
                             grants.IdleLifetime,
                             grants.HardLifetime),
                         token);
@@ -1068,23 +1169,6 @@ public sealed class StrictBridgePipeTests
                 reasonCode);
         }
 
-        private static AccessGrantScope ParseScopes(
-            IReadOnlyList<string> values)
-        {
-            var scopes = AccessGrantScope.None;
-            foreach (var value in values)
-            {
-                scopes |= value.ToLowerInvariant() switch
-                {
-                    "read" => AccessGrantScope.Read,
-                    "write" => AccessGrantScope.Write,
-                    "delete" => AccessGrantScope.Delete,
-                    _ => throw new InvalidDataException(
-                        "Unsupported test scope.")
-                };
-            }
-            return AccessGrantScopes.Normalize(scopes);
-        }
     }
 
     private static BridgeStatusData CreateStatus(

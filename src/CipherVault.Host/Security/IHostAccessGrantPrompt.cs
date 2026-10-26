@@ -8,6 +8,7 @@ public sealed record HostAccessGrantPromptRequest(
     McpAccessMode TokenAccessMode,
     AccessGrantScope RequestedScopes,
     AccessGrantScope AllowedScopes,
+    AccessGrantPathPolicy PathPolicy,
     TimeSpan IdleLifetime,
     TimeSpan HardLifetime);
 

@@ -240,6 +240,247 @@ public sealed class KnowledgeGraphTests
     }
 
     [Fact]
+    public async Task SearchNotesAppliesStructuredFilters()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var target = await fixture.Service.CreateNoteAsync(
+            "Search Target",
+            null,
+            "md",
+            "# Search Target\nfilterable target",
+            ["Target"],
+            VaultActorKind.UserUi);
+        var bothTags = await fixture.Service.CreateNoteAsync(
+            "Both Tags",
+            "team",
+            "md",
+            "# Both Tags\nfilterable alpha",
+            ["Security", "MCP"],
+            VaultActorKind.UserUi);
+        var oneTagAndLink = await fixture.Service.CreateNoteAsync(
+            "One Tag And Link",
+            "other",
+            "md",
+            "# One Tag And Link\nfilterable beta [[Search Target]]",
+            ["Security"],
+            VaultActorKind.UserUi);
+        var mcpOnly = await fixture.Service.CreateNoteAsync(
+            "MCP Only",
+            null,
+            "md",
+            "# MCP Only\nfilterable gamma",
+            ["MCP"],
+            VaultActorKind.UserUi);
+        var text = await fixture.Service.CreateNoteAsync(
+            "Text Search",
+            null,
+            "txt",
+            "filterable plain text",
+            ["Text"],
+            VaultActorKind.UserUi);
+        await fixture.ExecuteDatabaseSqlAsync(
+            $"""
+            UPDATE documents
+            SET updated_at_ms = 1000
+            WHERE document_id =
+                '{oneTagAndLink.DocumentId.ToString("D").ToLowerInvariant()}';
+            """);
+
+        var bothTagPage = await fixture.Service.SearchNotesAsync(
+            "filterable",
+            null,
+            null,
+            20,
+            new VaultSearchFilter(Tags: ["Security", "MCP"]));
+        Assert.Equal(
+            bothTags.DocumentId,
+            Assert.Single(bothTagPage.Hits).DocumentId);
+
+        var textPage = await fixture.Service.SearchNotesAsync(
+            "filterable",
+            null,
+            null,
+            20,
+            new VaultSearchFilter(Format: "txt"));
+        Assert.Equal(text.DocumentId, Assert.Single(textPage.Hits).DocumentId);
+
+        var timePage = await fixture.Service.SearchNotesAsync(
+            "filterable",
+            null,
+            null,
+            20,
+            new VaultSearchFilter(
+                UpdatedAfter: DateTimeOffset.FromUnixTimeMilliseconds(2_000)));
+        Assert.DoesNotContain(
+            timePage.Hits,
+            hit => hit.DocumentId == oneTagAndLink.DocumentId);
+
+        var backlinkPage = await fixture.Service.SearchNotesAsync(
+            "filterable",
+            null,
+            null,
+            20,
+            new VaultSearchFilter(HasBacklinks: true));
+        Assert.Equal(
+            target.DocumentId,
+            Assert.Single(backlinkPage.Hits).DocumentId);
+
+        var orphanPage = await fixture.Service.SearchNotesAsync(
+            "filterable",
+            null,
+            null,
+            20,
+            new VaultSearchFilter(OrphanOnly: true));
+        Assert.Contains(orphanPage.Hits, hit => hit.DocumentId == bothTags.DocumentId);
+        Assert.Contains(orphanPage.Hits, hit => hit.DocumentId == mcpOnly.DocumentId);
+        Assert.DoesNotContain(
+            orphanPage.Hits,
+            hit => hit.DocumentId == oneTagAndLink.DocumentId);
+        Assert.DoesNotContain(
+            orphanPage.Hits,
+            hit => hit.DocumentId == target.DocumentId);
+
+        var invalid = await Assert.ThrowsAsync<VaultException>(() =>
+            fixture.Service.SearchNotesAsync(
+                "filterable",
+                null,
+                null,
+                20,
+                new VaultSearchFilter(
+                    HasBacklinks: true,
+                    OrphanOnly: true)));
+        Assert.Equal(VaultErrorCode.InvalidInput, invalid.Code);
+    }
+
+    [Fact]
+    public async Task ShortQueryFindsDocumentBeyondLegacyScanWindow()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var target = await fixture.Service.CreateNoteAsync(
+            "Short Query Target",
+            null,
+            "md",
+            "# Short Query Target\nxy unique",
+            null,
+            VaultActorKind.UserUi);
+        var targetId = target.DocumentId.ToString("D").ToLowerInvariant();
+        await fixture.ExecuteDatabaseSqlAsync(
+            $"""
+            UPDATE documents
+            SET updated_at_ms = 1000
+            WHERE document_id = '{targetId}';
+
+            WITH RECURSIVE seq(n) AS (
+                SELECT 1
+                UNION ALL
+                SELECT n + 1 FROM seq WHERE n < 1001
+            )
+            INSERT INTO documents(
+                document_id, title, title_norm, source_path, source_path_norm,
+                link_path_norm, format, content, headings_json, tags_json,
+                payload_hmac, revision, links_indexed_revision,
+                created_at_ms, updated_at_ms)
+            SELECT
+                '00000000-0000-0000-0000-' || printf('%012d', n),
+                'Bulk ' || n,
+                'bulk ' || n,
+                'bulk/' || n || '.md',
+                'bulk/' || n || '.md',
+                'bulk/' || n,
+                'md',
+                'unrelated content',
+                '[]',
+                '[]',
+                X'00',
+                1,
+                1,
+                2000,
+                1000 + n
+            FROM seq;
+            """);
+
+        var page = await fixture.Service.SearchNotesAsync(
+            "xy",
+            null,
+            null,
+            10);
+
+        Assert.Contains(page.Hits, hit => hit.DocumentId == target.DocumentId);
+        Assert.Equal(1002, page.Coverage.TotalDocuments);
+        Assert.False(page.Coverage.IsTruncated);
+    }
+
+    [Fact]
+    public async Task WriteResultsExposeAuditEventIds()
+    {
+        await using var fixture = await KnowledgeFixture.CreateAsync();
+        var created = await fixture.Service.CreateNoteAsync(
+            "审计标识",
+            null,
+            "md",
+            "# 审计\n正文",
+            null,
+            VaultActorKind.UserUi);
+        var appended = await fixture.Service.AppendNoteAsync(
+            created.DocumentId,
+            created.Revision,
+            "\n追加",
+            VaultActorKind.UserUi);
+        var updated = await fixture.Service.UpdateNoteAsync(
+            created.DocumentId,
+            appended.Revision,
+            new VaultNotePatch(Title: "审计标识更新"),
+            VaultActorKind.UserUi);
+        var dryRun = await fixture.Service.PatchNoteAsync(
+            created.DocumentId,
+            updated.Revision,
+            new VaultNotePatchCommand(
+                "heading",
+                ["审计"],
+                null,
+                "append",
+                "- dry run",
+                null,
+                true),
+            VaultActorKind.UserUi);
+        Assert.Null(dryRun.AuditEventId);
+        var patched = await fixture.Service.PatchNoteAsync(
+            created.DocumentId,
+            updated.Revision,
+            new VaultNotePatchCommand(
+                "heading",
+                ["审计"],
+                null,
+                "append",
+                "- patch",
+                null,
+                false),
+            VaultActorKind.UserUi);
+        var deleted = await fixture.Service.DeleteNoteAsync(
+            created.DocumentId,
+            patched.Revision,
+            VaultActorKind.UserUi);
+
+        var eventIds = new[]
+        {
+            created.AuditEventId,
+            appended.AuditEventId,
+            updated.AuditEventId,
+            patched.AuditEventId,
+            deleted.AuditEventId
+        };
+        Assert.All(eventIds, id => Assert.NotNull(id));
+        Assert.Equal(eventIds.Length, eventIds.Distinct().Count());
+        var audit = await fixture.Service.GetAuditPageAsync(
+            new VaultAuditQuery(
+                DocumentId: created.DocumentId,
+                Limit: 100));
+        Assert.All(
+            eventIds,
+            id => Assert.Contains(audit.Items, item => item.EventId == id));
+    }
+
+    [Fact]
     public async Task FrontMatterLinksAreExcludedFromGraphAndRenameRewrite()
     {
         await using var fixture = await KnowledgeFixture.CreateAsync();
@@ -962,6 +1203,10 @@ public sealed class KnowledgeGraphTests
                     false),
                 VaultActorKind.UserUi));
         Assert.Equal(VaultErrorCode.Conflict, conflict.Code);
+        Assert.NotNull(conflict.Details);
+        Assert.Equal(
+            items.Revision,
+            Assert.IsType<int>(conflict.Details!["currentRevision"]));
     }
 
     [Theory]

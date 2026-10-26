@@ -87,6 +87,23 @@ internal sealed class InProcessHostVaultClient : IHostVaultClient
             cancellationToken);
     }
 
+    public Task<VaultSearchPage> SearchNotesAsync(
+        string query,
+        string? folder,
+        string? cursor,
+        int limit,
+        VaultSearchFilter filter,
+        CancellationToken cancellationToken = default)
+    {
+        return _vault.SearchNotesAsync(
+            query,
+            folder,
+            cursor,
+            limit,
+            filter,
+            cancellationToken);
+    }
+
     public Task<VaultReadResult> ReadNoteAsync(
         Guid documentId,
         int offset,

@@ -262,7 +262,7 @@ public sealed class BrokerAccessGrantPrompt(
         var expiresAt = DateTimeOffset.UtcNow.AddMinutes(2);
         var requested = string.Join(
             ",",
-            AccessGrantScopes.ToNames(request.RequestedScopes)
+            request.PathPolicy.ToScopeNames(request.RequestedScopes)
                 .OrderBy(value => value, StringComparer.Ordinal));
         var allowed = AccessGrantScopes.ToNames(request.AllowedScopes)
             .OrderBy(value => value, StringComparer.Ordinal)

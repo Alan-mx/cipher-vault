@@ -3,6 +3,7 @@ using CipherVault.Core.Documents;
 using CipherVault.Host.Client;
 using CipherVault.Host.Mcp;
 using CipherVault.Host.Security;
+using ModelContextProtocol.Server;
 
 namespace CipherVault.Mcp.Tests;
 
@@ -30,7 +31,12 @@ public sealed class BridgeToolContractTests
             await tools.ListCatalog("folder", "cursor", 25, cancellationToken));
         Assert.Equal(
             PassThroughResult,
-            await tools.SearchNotes("query", "folder", "cursor", 5, cancellationToken));
+            await tools.SearchNotes(
+                "query",
+                "folder",
+                "cursor",
+                5,
+                cancellationToken: cancellationToken));
         Assert.Equal(
             PassThroughResult,
             await tools.ReadNote("d80c2e83-636f-47a8-a3f2-e473beec9922", 10, 500, cancellationToken));
@@ -84,7 +90,8 @@ public sealed class BridgeToolContractTests
                 ["query"] = "query",
                 ["folder"] = "folder",
                 ["cursor"] = "cursor",
-                ["limit"] = 5
+                ["limit"] = 5,
+                ["orphanOnly"] = false
             }),
             ("read_note", (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>
             {
@@ -258,6 +265,71 @@ public sealed class BridgeToolContractTests
     }
 
     [Fact]
+    public void SearchNotesMapperForwardsStructuredFilters()
+    {
+        Assert.True(BridgeToolCatalog.TryGet("search_notes", out var definition));
+        var updatedAfter = DateTimeOffset.Parse(
+            "2026-01-01T00:00:00Z",
+            System.Globalization.CultureInfo.InvariantCulture);
+        var updatedBefore = updatedAfter.AddDays(30);
+        var mapped = BridgeToolMapper.Map(
+            definition,
+            JsonSerializer.SerializeToElement(new
+            {
+                query = "query",
+                tags = new[] { "Security", "MCP" },
+                format = "md",
+                updatedAfter,
+                updatedBefore,
+                hasBacklinks = false
+            }));
+
+        Assert.Equal(
+            ["Security", "MCP"],
+            mapped.AdminPayload.GetProperty("tags")
+                .EnumerateArray()
+                .Select(item => item.GetString()!)
+                .ToArray());
+        Assert.Equal(
+            "md",
+            mapped.AdminPayload.GetProperty("format").GetString());
+        Assert.False(
+            mapped.AdminPayload.GetProperty("hasBacklinks").GetBoolean());
+        Assert.Equal(
+            updatedAfter,
+            mapped.AdminPayload.GetProperty("updatedAfter").GetDateTimeOffset());
+    }
+
+    [Fact]
+    public async Task SearchNotesToolForwardsStructuredFilters()
+    {
+        var bridge = new RecordingMcpBridgeClient();
+        var tools = new BridgeVaultTools(bridge);
+        var updatedAfter = DateTimeOffset.Parse(
+            "2026-01-01T00:00:00Z",
+            System.Globalization.CultureInfo.InvariantCulture);
+
+        await tools.SearchNotes(
+            "query",
+            tags: ["Security"],
+            format: "md",
+            updatedAfter: updatedAfter,
+            orphanOnly: true);
+
+        var call = Assert.Single(bridge.Calls);
+        Assert.Equal(
+            ["Security"],
+            Assert.IsType<string[]>(call.Arguments["tags"]));
+        Assert.Equal(
+            "md",
+            Assert.IsType<string>(call.Arguments["format"]));
+        Assert.Equal(
+            updatedAfter,
+            Assert.IsType<DateTimeOffset>(call.Arguments["updatedAfter"]));
+        Assert.True(Assert.IsType<bool>(call.Arguments["orphanOnly"]));
+    }
+
+    [Fact]
     public void DocumentMapMapperAndLimiterBoundEachCollection()
     {
         Assert.True(
@@ -269,13 +341,17 @@ public sealed class BridgeToolContractTests
                 documentId = "d80c2e83-636f-47a8-a3f2-e473beec9922",
                 maxHeadings = 1,
                 maxFrontMatterFields = 1,
-                maxLinks = 2
+                maxLinks = 2,
+                maxResponseBytes = 1024
             }));
         Assert.Equal(1, mapped.AdminPayload.GetProperty("maxHeadings").GetInt32());
         Assert.Equal(
             1,
             mapped.AdminPayload.GetProperty("maxFrontMatterFields").GetInt32());
         Assert.Equal(2, mapped.AdminPayload.GetProperty("maxLinks").GetInt32());
+        Assert.Equal(
+            1024,
+            mapped.AdminPayload.GetProperty("maxResponseBytes").GetInt32());
 
         var map = new VaultDocumentMap(
             Guid.NewGuid(),
@@ -326,7 +402,7 @@ public sealed class BridgeToolContractTests
             0,
             DateTimeOffset.UtcNow);
 
-        var limited = BridgeDocumentMapLimiter.Apply(map, 1, 1, 2);
+        var limited = BridgeDocumentMapLimiter.Apply(map, 1, 1, 2, null);
 
         Assert.Single(limited.Headings);
         Assert.Single(limited.FrontMatterFields);
@@ -334,11 +410,38 @@ public sealed class BridgeToolContractTests
         Assert.True(limited.HeadingsTruncated);
         Assert.True(limited.FrontMatterTruncated);
         Assert.True(limited.LinksTruncated);
-        var full = BridgeDocumentMapLimiter.Apply(map, null, null, null);
+        Assert.False(limited.BytesTruncated);
+        Assert.True(limited.EstimatedBytes > 0);
+        var full = BridgeDocumentMapLimiter.Apply(map, null, null, null, null);
         Assert.Equal(2, full.Headings.Count);
         Assert.Equal(2, full.FrontMatterFields.Count);
         Assert.Equal(3, full.OutgoingLinks.Count);
         Assert.False(full.HeadingsTruncated);
+
+        var largeMap = map with
+        {
+            OutgoingLinks = Enumerable.Range(0, 20)
+                .Select(index => new VaultOutgoingLink(
+                    new string((char)('a' + index % 26), 100),
+                    "display",
+                    null,
+                    "references",
+                    "unresolved",
+                    null,
+                    [],
+                    index * 110,
+                    index * 110 + 105))
+                .ToArray()
+        };
+        var byteLimited = BridgeDocumentMapLimiter.Apply(
+            largeMap,
+            null,
+            null,
+            null,
+            600);
+        Assert.True(byteLimited.BytesTruncated);
+        Assert.True(byteLimited.EstimatedBytes <= 600);
+        Assert.True(byteLimited.OutgoingLinks.Count < 20);
     }
 
     [Fact]
@@ -354,6 +457,24 @@ public sealed class BridgeToolContractTests
         Assert.Contains(
             "required scope",
             error.GetProperty("hint").GetString(),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ServerMetadataProvidesAgentInstructions()
+    {
+        var options = new McpServerOptions();
+
+        BridgeVaultServerMetadata.Configure(options);
+
+        Assert.Equal("CipherVault", options.ServerInfo?.Name);
+        Assert.Contains(
+            "revision_conflict",
+            options.ServerInstructions,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "find_unlinked_mentions",
+            options.ServerInstructions,
             StringComparison.Ordinal);
     }
 

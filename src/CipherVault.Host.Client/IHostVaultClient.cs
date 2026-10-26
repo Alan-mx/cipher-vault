@@ -42,6 +42,14 @@ public interface IHostVaultClient : IAsyncDisposable
         int limit,
         CancellationToken cancellationToken = default);
 
+    Task<VaultSearchPage> SearchNotesAsync(
+        string query,
+        string? folder,
+        string? cursor,
+        int limit,
+        VaultSearchFilter filter,
+        CancellationToken cancellationToken = default);
+
     Task<VaultReadResult> ReadNoteAsync(
         Guid documentId,
         int offset,

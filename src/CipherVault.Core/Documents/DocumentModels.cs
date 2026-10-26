@@ -33,3 +33,11 @@ public sealed record VaultSearchPage(
     IReadOnlyList<VaultSearchHit> Hits,
     VaultSearchCoverage Coverage,
     string? NextCursor);
+
+public sealed record VaultSearchFilter(
+    IReadOnlyList<string>? Tags = null,
+    string? Format = null,
+    DateTimeOffset? UpdatedAfter = null,
+    DateTimeOffset? UpdatedBefore = null,
+    bool? HasBacklinks = null,
+    bool OrphanOnly = false);

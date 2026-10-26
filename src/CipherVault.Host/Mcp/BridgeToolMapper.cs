@@ -48,7 +48,13 @@ public static class BridgeToolMapper
                     RequiredString(arguments, "query"),
                     OptionalString(arguments, "folder"),
                     OptionalString(arguments, "cursor"),
-                    OptionalInt(arguments, "limit", 10))),
+                    OptionalInt(arguments, "limit", 10),
+                    OptionalStringArray(arguments, "tags"),
+                    OptionalString(arguments, "format"),
+                    OptionalDateTimeOffset(arguments, "updatedAfter"),
+                    OptionalDateTimeOffset(arguments, "updatedBefore"),
+                    OptionalNullableBool(arguments, "hasBacklinks"),
+                    OptionalBool(arguments, "orphanOnly", false))),
             "read_note" => Map(
                 definition,
                 new AdminReadNoteRequest(
@@ -66,7 +72,8 @@ public static class BridgeToolMapper
                     RequiredGuid(arguments, "documentId"),
                     OptionalInt(arguments, "maxHeadings", 100),
                     OptionalInt(arguments, "maxFrontMatterFields", 100),
-                    OptionalInt(arguments, "maxLinks", 100))),
+                    OptionalInt(arguments, "maxLinks", 100),
+                    OptionalInt(arguments, "maxResponseBytes", 64 * 1024))),
             "get_backlinks" => Map(
                 definition,
                 new AdminBacklinksRequest(
@@ -219,6 +226,43 @@ public static class BridgeToolMapper
             throw InvalidProperty(name);
         }
         return value.GetBoolean();
+    }
+
+    private static bool? OptionalNullableBool(
+        JsonElement args,
+        string name)
+    {
+        if (!args.TryGetProperty(name, out var value) ||
+            value.ValueKind == JsonValueKind.Null)
+        {
+            return null;
+        }
+        if (value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+        {
+            throw InvalidProperty(name);
+        }
+        return value.GetBoolean();
+    }
+
+    private static DateTimeOffset? OptionalDateTimeOffset(
+        JsonElement args,
+        string name)
+    {
+        if (!args.TryGetProperty(name, out var value) ||
+            value.ValueKind == JsonValueKind.Null)
+        {
+            return null;
+        }
+        if (value.ValueKind != JsonValueKind.String ||
+            !DateTimeOffset.TryParse(
+                value.GetString(),
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.RoundtripKind,
+                out var result))
+        {
+            throw InvalidProperty(name);
+        }
+        return result;
     }
 
     private static Guid RequiredGuid(JsonElement args, string name)

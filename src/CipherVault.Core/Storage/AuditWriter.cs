@@ -8,7 +8,7 @@ namespace CipherVault.Core.Storage;
 
 internal static class AuditWriter
 {
-    public static Task AppendAsync(
+    public static Task<Guid> AppendAsync(
         SqliteConnection connection,
         VaultActorKind actor,
         Guid? sessionId,
@@ -31,7 +31,7 @@ internal static class AuditWriter
             cancellationToken);
     }
 
-    public static async Task AppendAsync(
+    public static async Task<Guid> AppendAsync(
         SqliteConnection connection,
         VaultAuditContext auditContext,
         Guid? sessionId,
@@ -44,7 +44,7 @@ internal static class AuditWriter
     {
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken)
             .ConfigureAwait(false);
-        await AppendAsync(
+        var eventId = await AppendAsync(
             connection,
             (SqliteTransaction)transaction,
             auditContext,
@@ -56,6 +56,7 @@ internal static class AuditWriter
             detailsJson,
             cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return eventId;
     }
 
     public static async Task<bool> TryAppendAsync(
@@ -96,7 +97,7 @@ internal static class AuditWriter
         }
     }
 
-    public static Task AppendAsync(
+    public static Task<Guid> AppendAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         VaultActorKind actor,
@@ -121,7 +122,7 @@ internal static class AuditWriter
             cancellationToken);
     }
 
-    public static async Task AppendAsync(
+    public static async Task<Guid> AppendAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         VaultAuditContext auditContext,
@@ -146,7 +147,8 @@ internal static class AuditWriter
                 $action, $documentId, $correlationId, $result, $bytesReturned,
                 $details);
             """;
-        command.Parameters.AddWithValue("$eventId", Guid.NewGuid().ToString("D"));
+        var eventId = Guid.NewGuid();
+        command.Parameters.AddWithValue("$eventId", eventId.ToString("D"));
         command.Parameters.AddWithValue("$occurredAt", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         command.Parameters.AddWithValue("$actor", ToActorValue(auditContext.Actor));
         command.Parameters.AddWithValue(
@@ -166,6 +168,7 @@ internal static class AuditWriter
             "$details",
             MergeDetails(detailsJson, auditContext));
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        return eventId;
     }
 
     private static string? ExtractCorrelationId(string detailsJson)

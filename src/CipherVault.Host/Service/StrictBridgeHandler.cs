@@ -1,3 +1,4 @@
+using System.Text.Json;
 using CipherVault.Core.Configuration;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
@@ -40,11 +41,14 @@ public sealed class StrictBridgeHandler(
                 "auth_required",
                 "Vault must be unlocked.");
         }
-        if (!TryParseScopes(request.Scopes, out var requestedScopes))
+        if (!AccessGrantPathPolicy.TryParse(
+                request.Scopes,
+                out var requestedScopes,
+                out var requestedPaths))
         {
             throw new AdminPipeRpcException(
                 "invalid_input",
-                "Bridge scope must be read, write or delete.");
+                "Bridge scope must use read, write, delete, or action:folder.");
         }
 
         var outcome = await grants.RequestAsync(
@@ -52,6 +56,7 @@ public sealed class StrictBridgeHandler(
             session.BridgeInstanceId,
             session.AccessMode,
             requestedScopes,
+            requestedPaths,
             new AccessGrantVaultGeneration(
                 snapshot.SessionId.Value,
                 snapshot.HardExpiresAt.Value < session.ExpiresAt
@@ -66,6 +71,7 @@ public sealed class StrictBridgeHandler(
                         approval.TokenAccessMode,
                         approval.RequestedScopes,
                         approval.AllowedScopes,
+                        approval.PathPolicy,
                         grants.IdleLifetime,
                         grants.HardLifetime),
                     token).ConfigureAwait(false);
@@ -88,7 +94,8 @@ public sealed class StrictBridgeHandler(
             record.ClientInstanceId,
             record.Scopes,
             record.VaultSessionId!.Value,
-            record.VerifiedProcessSessionId);
+            record.VerifiedProcessSessionId,
+            record.PathPolicy);
         return new BridgeIssuedGrant(
             new BridgeGrantData(
                 record.GrantId,
@@ -96,7 +103,7 @@ public sealed class StrictBridgeHandler(
                 session.AccessMode == McpAccessMode.ReadWrite
                     ? "readWrite"
                     : "readOnly",
-                AccessGrantScopes.ToNames(record.Scopes)
+                record.PathPolicy!.ToScopeNames(record.Scopes)
                     .OrderBy(value => value, StringComparer.Ordinal)
                     .ToArray(),
                 record.HardExpiresAt!.Value),
@@ -198,6 +205,13 @@ public sealed class StrictBridgeHandler(
                 grant.VaultSessionId,
                 AdminSessionState.Active,
                 RevocationReason: null);
+            var pathAccess = BridgePathAccess.From(grant);
+            await EnsurePathAccessAsync(
+                request.ToolName,
+                request.Arguments,
+                adminSession,
+                pathAccess,
+                cancellationToken).ConfigureAwait(false);
             var mapped = BridgeToolMapper.Map(
                 definition,
                 request.Arguments);
@@ -206,7 +220,10 @@ public sealed class StrictBridgeHandler(
                 mapped.AdminMethod,
                 mapped.AdminPayload,
                 cancellationToken).ConfigureAwait(false);
-            var resultElement = BridgeToolEnvelope.SerializeResult(result);
+            var resultElement = BridgePathAccessGuard.FilterResult(
+                request.ToolName,
+                BridgeToolEnvelope.SerializeResult(result),
+                pathAccess);
             return definition.ResultKind switch
             {
                 BridgeToolResultKind.Page =>
@@ -245,8 +262,130 @@ public sealed class StrictBridgeHandler(
         {
             return BridgeToolEnvelope.Error(
                 BridgeToolErrorMapper.ToCode(exception),
-                exception.Message);
+                exception.Message,
+                exception.Details);
         }
+    }
+
+    private async Task EnsurePathAccessAsync(
+        string toolName,
+        JsonElement arguments,
+        AdminSession adminSession,
+        BridgePathAccess access,
+        CancellationToken cancellationToken)
+    {
+        if (!access.Restricted)
+        {
+            return;
+        }
+        if (toolName == "tag_list" && access.ReadRestricted)
+        {
+            throw new BridgeToolException(
+                "access_denied",
+                "tag_list is unavailable while using folder-scoped access.");
+        }
+        if (toolName == "create_note")
+        {
+            var targetFolder = OptionalString(arguments, "folder");
+            if (string.IsNullOrWhiteSpace(targetFolder) ||
+                !access.AllowsWrite(targetFolder))
+            {
+                throw new BridgeToolException(
+                    "access_denied",
+                    "The write scope does not allow this folder.");
+            }
+            return;
+        }
+        if (!BridgePathAccessGuard.RequiresDocumentLookup(toolName))
+        {
+            return;
+        }
+        if (!TryGetDocumentId(arguments, out var documentId))
+        {
+            throw new BridgeToolException(
+                "invalid_input",
+                "The documentId argument is required.");
+        }
+        var virtualPath = await GetVirtualPathAsync(
+            adminSession,
+            documentId,
+            cancellationToken).ConfigureAwait(false);
+        if (!access.AllowsRead(virtualPath))
+        {
+            throw new BridgeToolException(
+                "not_found",
+                "Document was not found.");
+        }
+        if (BridgePathAccessGuard.IsWriteTool(toolName) &&
+            !access.AllowsWrite(virtualPath))
+        {
+            throw new BridgeToolException(
+                "not_found",
+                "Document was not found.");
+        }
+        if (toolName == "delete_note" &&
+            !access.AllowsDelete(virtualPath))
+        {
+            throw new BridgeToolException(
+                "not_found",
+                "Document was not found.");
+        }
+        if (toolName == "update_note" &&
+            OptionalString(arguments, "folder") is { } folder &&
+            !access.AllowsWrite(folder))
+        {
+            throw new BridgeToolException(
+                "access_denied",
+                "The write scope does not allow the destination folder.");
+        }
+    }
+
+    private async Task<string> GetVirtualPathAsync(
+        AdminSession adminSession,
+        Guid documentId,
+        CancellationToken cancellationToken)
+    {
+        var result = await _rpc.HandleAsync(
+            adminSession,
+            "admin.notes.map",
+            JsonSerializer.SerializeToElement(
+                new AdminDocumentMapRequest(documentId, 0, 0, 0, 1)),
+            cancellationToken).ConfigureAwait(false);
+        return result is VaultDocumentMap map
+            ? map.VirtualPath
+            : throw new VaultException(
+                VaultErrorCode.NotFound,
+                "Document was not found.");
+    }
+
+    private static Guid? OptionalGuid(JsonElement arguments, string name)
+    {
+        if (!arguments.TryGetProperty(name, out var value) ||
+            value.ValueKind != JsonValueKind.String ||
+            !Guid.TryParse(value.GetString(), out var result))
+        {
+            return null;
+        }
+        return result;
+    }
+
+    private static bool TryGetDocumentId(
+        JsonElement arguments,
+        out Guid documentId)
+    {
+        var id = OptionalGuid(arguments, "documentId");
+        documentId = id ?? Guid.Empty;
+        return id is not null && documentId != Guid.Empty;
+    }
+
+    private static string? OptionalString(
+        JsonElement arguments,
+        string name)
+    {
+        return arguments.TryGetProperty(name, out var value) &&
+            value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
     }
 
     public async Task<BridgeStatusData> GetStatusAsync(
@@ -262,7 +401,9 @@ public sealed class StrictBridgeHandler(
             : grants.PeekBridgeGrant(grant);
         var active = validation?.Status == AccessGrantValidationStatus.Valid;
         var scopes = active && validation?.Grant is not null
-            ? AccessGrantScopes.ToNames(validation.Grant.Scopes)
+            ? (validation.Grant.PathPolicy ??
+                    AccessGrantPathPolicy.Unrestricted)
+                .ToScopeNames(validation.Grant.Scopes)
                 .OrderBy(value => value, StringComparer.Ordinal)
                 .ToArray()
             : [];
@@ -288,28 +429,6 @@ public sealed class StrictBridgeHandler(
         await grants.RevokeByProcessSessionAsync(
             processSessionId,
             reasonCode).ConfigureAwait(false);
-    }
-
-    private static bool TryParseScopes(
-        IReadOnlyList<string> values,
-        out AccessGrantScope scopes)
-    {
-        scopes = AccessGrantScope.None;
-        foreach (var value in values)
-        {
-            var normalized = value?.ToLowerInvariant();
-            scopes |= normalized switch
-            {
-                "read" => AccessGrantScope.Read,
-                "write" => AccessGrantScope.Write,
-                "delete" => AccessGrantScope.Delete,
-                _ => throw new AdminPipeRpcException(
-                    "invalid_input",
-                    "Bridge scope must be read, write or delete.")
-            };
-        }
-        scopes = AccessGrantScopes.Normalize(scopes);
-        return scopes != AccessGrantScope.None;
     }
 
     private static AdminPipeRpcException MapRequestFailure(

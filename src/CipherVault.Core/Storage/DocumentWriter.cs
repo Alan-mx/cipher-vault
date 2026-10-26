@@ -216,7 +216,7 @@ internal static class DocumentWriter
                 DocumentLinkIndexer.ResolutionKeys(title, sourcePath),
                 cancellationToken).ConfigureAwait(false);
         }
-        await AuditWriter.AppendAsync(
+        var auditEventId = await AuditWriter.AppendAsync(
             connection,
             transaction,
             auditContext,
@@ -227,7 +227,7 @@ internal static class DocumentWriter
             null,
             "{}",
             cancellationToken).ConfigureAwait(false);
-        return new VaultWriteResult(documentId, 1, now);
+        return new VaultWriteResult(documentId, 1, now, auditEventId);
     }
 
     public static async Task<VaultWriteResult> AppendAsync(
@@ -258,7 +258,7 @@ internal static class DocumentWriter
                 cancellationToken).ConfigureAwait(false);
             if (current.Revision != expectedRevision)
             {
-                throw new VaultException(VaultErrorCode.Conflict, "Document revision changed.");
+                throw RevisionConflict(current.Revision);
             }
 
             var content = current.Content + appendedContent;
@@ -344,7 +344,7 @@ internal static class DocumentWriter
                 content,
                 timestamp,
                 cancellationToken).ConfigureAwait(false);
-            await AuditWriter.AppendAsync(
+            var auditEventId = await AuditWriter.AppendAsync(
                 connection,
                 sqliteTransaction,
                 auditContext,
@@ -356,7 +356,11 @@ internal static class DocumentWriter
                 "{}",
                 cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return new VaultWriteResult(documentId, newRevision, now);
+            return new VaultWriteResult(
+                documentId,
+                newRevision,
+                now,
+                auditEventId);
         }
         catch
         {
@@ -396,7 +400,7 @@ internal static class DocumentWriter
                 cancellationToken).ConfigureAwait(false);
             if (current.Revision != expectedRevision)
             {
-                throw new VaultException(VaultErrorCode.Conflict, "Document revision changed.");
+                throw RevisionConflict(current.Revision);
             }
 
             var newTitle = patch.Title ?? current.Title;
@@ -550,7 +554,7 @@ internal static class DocumentWriter
                         newTitle,
                         sourcePath)),
                 cancellationToken).ConfigureAwait(false);
-            await AuditWriter.AppendAsync(
+            var auditEventId = await AuditWriter.AppendAsync(
                 connection,
                 sqliteTransaction,
                 auditContext,
@@ -567,7 +571,11 @@ internal static class DocumentWriter
                 }),
                 cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return new VaultWriteResult(documentId, newRevision, now);
+            return new VaultWriteResult(
+                documentId,
+                newRevision,
+                now,
+                auditEventId);
         }
         catch (SqliteException exception) when (exception.SqliteErrorCode == 19)
         {
@@ -607,9 +615,7 @@ internal static class DocumentWriter
                 cancellationToken).ConfigureAwait(false);
             if (current.Revision != expectedRevision)
             {
-                throw new VaultException(
-                    VaultErrorCode.Conflict,
-                    "Document revision changed.");
+                throw RevisionConflict(current.Revision);
             }
             if (current.Format != "md")
             {
@@ -723,7 +729,7 @@ internal static class DocumentWriter
                 newContent,
                 timestamp,
                 cancellationToken).ConfigureAwait(false);
-            await AuditWriter.AppendAsync(
+            var auditEventId = await AuditWriter.AppendAsync(
                 connection,
                 sqliteTransaction,
                 auditContext,
@@ -747,7 +753,8 @@ internal static class DocumentWriter
                 true,
                 computation.UnifiedDiff,
                 computation.DiffTruncated,
-                true);
+                true,
+                auditEventId);
         }
         catch
         {
@@ -778,7 +785,7 @@ internal static class DocumentWriter
                 cancellationToken).ConfigureAwait(false);
             if (current.Revision != expectedRevision)
             {
-                throw new VaultException(VaultErrorCode.Conflict, "Document revision changed.");
+                throw RevisionConflict(current.Revision);
             }
 
             var now = DateTimeOffset.UtcNow;
@@ -805,7 +812,7 @@ internal static class DocumentWriter
                 sqliteTransaction,
                 documentId.ToString("D").ToLowerInvariant(),
                 cancellationToken).ConfigureAwait(false);
-            await AuditWriter.AppendAsync(
+            var auditEventId = await AuditWriter.AppendAsync(
                 connection,
                 sqliteTransaction,
                 auditContext,
@@ -817,7 +824,11 @@ internal static class DocumentWriter
                 JsonSerializer.Serialize(new { purgeAfter }),
                 cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return new VaultDeleteResult(documentId, current.Revision, purgeAfter);
+            return new VaultDeleteResult(
+                documentId,
+                current.Revision,
+                purgeAfter,
+                auditEventId);
         }
         catch
         {
@@ -849,7 +860,7 @@ internal static class DocumentWriter
                 cancellationToken).ConfigureAwait(false);
             if (current.Revision != expectedRevision)
             {
-                throw new VaultException(VaultErrorCode.Conflict, "Document revision changed.");
+                throw RevisionConflict(current.Revision);
             }
 
             var (sourcePath, sourcePathNorm) = renamePath is null
@@ -1079,7 +1090,7 @@ internal static class DocumentWriter
                 cancellationToken).ConfigureAwait(false);
             if (current.Revision != expectedRevision)
             {
-                throw new VaultException(VaultErrorCode.Conflict, "Document revision changed.");
+                throw RevisionConflict(current.Revision);
             }
             var revision = await ReadRevisionAsync(
                 connection,
@@ -1949,6 +1960,17 @@ internal static class DocumentWriter
                 "Document tags are invalid.",
                 exception);
         }
+    }
+
+    private static VaultException RevisionConflict(int currentRevision)
+    {
+        return new VaultException(
+            VaultErrorCode.Conflict,
+            "Document revision changed.",
+            new Dictionary<string, object?>
+            {
+                ["currentRevision"] = currentRevision
+            });
     }
 
     private sealed record CurrentDocument(

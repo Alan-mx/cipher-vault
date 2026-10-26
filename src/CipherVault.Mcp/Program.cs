@@ -39,7 +39,7 @@ try
     var builder = Host.CreateApplicationBuilder(Array.Empty<string>());
     builder.Logging.ClearProviders();
     var mcpServer = builder.Services
-        .AddMcpServer()
+        .AddMcpServer(BridgeVaultServerMetadata.Configure)
         .WithStdioServerTransport()
         .WithTools<BridgeVaultTools>(tools);
     mcpServer.WithRequestFilters(filters =>
@@ -124,6 +124,33 @@ public interface IMcpBridgeClient
     Task RevokeGrantAsync(CancellationToken cancellationToken = default);
 }
 
+public static class BridgeVaultServerMetadata
+{
+    public const string Instructions =
+        """
+        CipherVault is a local encrypted knowledge vault.
+        Prefer search_notes, list_catalog, or scan_notes before reading documents; do not assume full-vault coverage.
+        Read the current revision before any mutation. On revision_conflict, re-read and retry with the returned currentRevision.
+        Respect truncated, nextCursor, estimatedBytes, and bytesTruncated fields in tool results.
+        find_unlinked_mentions only suggests plain-text relationships and never modifies content.
+        delete_note moves a document to the encrypted recycle bin.
+        """;
+
+    public static void Configure(McpServerOptions options)
+    {
+        options.ServerInfo = new Implementation
+        {
+            Name = "CipherVault",
+            Version = typeof(BridgeVaultTools).Assembly
+                .GetName()
+                .Version?
+                .ToString() ?? "dev",
+            Description = "Local encrypted Markdown and text knowledge vault."
+        };
+        options.ServerInstructions = Instructions;
+    }
+}
+
 public sealed record StrictBridgeSettings(
     CipherVaultInstallPublicManifest Manifest,
     string ManifestPath,
@@ -162,12 +189,20 @@ public sealed record StrictBridgeSettings(
                 StringSplitOptions.TrimEntries)
             .Select(value => value.ToLowerInvariant())
             .ToHashSet(StringComparer.Ordinal);
+        if (scopes.Any(scope => !IsValidScopeToken(scope)))
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "Bridge scope must use read, write, delete, or action:folder.");
+        }
         return new StrictBridgeSettings(
             manifest,
             manifestPath,
             pipe,
             GetOption(arguments, "--client-id") ?? "mcp",
-            scopes.SetEquals(["read"])
+            scopes.All(scope =>
+                scope == "read" ||
+                scope.StartsWith("read:", StringComparison.Ordinal))
                 ? McpAccessMode.ReadOnly
                 : McpAccessMode.ReadWrite,
             scopes);
@@ -181,6 +216,26 @@ public sealed record StrictBridgeSettings(
         return index >= 0 && index + 1 < arguments.Length
             ? arguments[index + 1]
             : null;
+    }
+
+    private static bool IsValidScopeToken(string value)
+    {
+        var parts = value.Split(
+            ':',
+            2,
+            StringSplitOptions.TrimEntries);
+        if (parts.Length == 1)
+        {
+            return parts[0] is "read" or "write" or "delete";
+        }
+        if (parts[0] is not ("read" or "write" or "delete"))
+        {
+            return false;
+        }
+        var folder = parts[1].Replace('\\', '/').Trim('/');
+        return folder.Length > 0 &&
+            !folder.Split('/').Any(part =>
+                part is "" or "." or "..");
     }
 }
 
@@ -595,12 +650,18 @@ public sealed class BridgeVaultTools
     }
 
     [McpServerTool(Name = "search_notes")]
-    [Description("Search active Markdown/TXT documents with FTS5 or a short-query scan limited to the 1000 most recently updated documents. Coverage includes totalDocuments and isTruncated; when truncated, an empty result does not prove the content is absent.")]
+    [Description("Search active Markdown/TXT documents with optional tag, format, updated-time, backlink, or orphan filters. One- and two-character queries scan up to the 10000 most recently updated documents. Coverage includes totalDocuments and isTruncated.")]
     public Task<string> SearchNotes(
         string query,
         string? folder = null,
         string? cursor = null,
         int limit = 10,
+        string[]? tags = null,
+        string? format = null,
+        DateTimeOffset? updatedAfter = null,
+        DateTimeOffset? updatedBefore = null,
+        bool? hasBacklinks = null,
+        bool orphanOnly = false,
         CancellationToken cancellationToken = default)
     {
         return CallAsync(
@@ -609,7 +670,13 @@ public sealed class BridgeVaultTools
                 ("query", query),
                 ("folder", folder),
                 ("cursor", cursor),
-                ("limit", limit)),
+                ("limit", limit),
+                ("tags", tags),
+                ("format", format),
+                ("updatedAfter", updatedAfter),
+                ("updatedBefore", updatedBefore),
+                ("hasBacklinks", hasBacklinks),
+                ("orphanOnly", orphanOnly)),
             cancellationToken);
     }
 
@@ -657,12 +724,13 @@ public sealed class BridgeVaultTools
     }
 
     [McpServerTool(Name = "get_document_map")]
-    [Description("Return bounded headings, top-level frontmatter, outgoing Wiki Links and backlink count without document content. Truncation flags identify omitted fields.")]
+    [Description("Return bounded headings, top-level frontmatter, outgoing Wiki Links and backlink count without document content. Defaults cap each collection at 100 items and the response at 64 KiB; truncation flags identify omitted fields.")]
     public Task<string> GetDocumentMap(
         string documentId,
         int maxHeadings = 100,
         int maxFrontMatterFields = 100,
         int maxLinks = 100,
+        int maxResponseBytes = 64 * 1024,
         CancellationToken cancellationToken = default)
     {
         return CallAsync(
@@ -671,7 +739,8 @@ public sealed class BridgeVaultTools
                 ("documentId", documentId),
                 ("maxHeadings", maxHeadings),
                 ("maxFrontMatterFields", maxFrontMatterFields),
-                ("maxLinks", maxLinks)),
+                ("maxLinks", maxLinks),
+                ("maxResponseBytes", maxResponseBytes)),
             cancellationToken);
     }
 
@@ -900,7 +969,10 @@ public sealed class BridgeVaultTools
             "delete_note" => "delete",
             _ => "read"
         };
-        return scopes.Contains(required);
+        return scopes.Contains(required) ||
+            scopes.Any(scope => scope.StartsWith(
+                required + ":",
+                StringComparison.Ordinal));
     }
 
     public static ToolAnnotations AnnotationsFor(string name)

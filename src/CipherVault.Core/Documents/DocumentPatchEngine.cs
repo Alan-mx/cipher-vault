@@ -47,11 +47,21 @@ internal static class DocumentPatchEngine
             .ToArray();
         if (matches.Length != 1)
         {
+            if (matches.Length > 1)
+            {
+                throw new VaultException(
+                    VaultErrorCode.PatchTargetNotFound,
+                    "The heading path is ambiguous.",
+                    new Dictionary<string, object?>
+                    {
+                        ["candidates"] = matches
+                            .Select(match => match.Path)
+                            .ToArray()
+                    });
+            }
             throw new VaultException(
                 VaultErrorCode.PatchTargetNotFound,
-                matches.Length == 0
-                    ? "The target heading was not found."
-                    : "The heading path is ambiguous.");
+                "The target heading was not found.");
         }
 
         var target = matches[0];
