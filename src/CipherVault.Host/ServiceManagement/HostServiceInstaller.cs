@@ -816,27 +816,6 @@ public sealed class HostServiceInstaller(
         }
     }
 
-    private static IEnumerable<string> EnumerateImagePathsFromConfiguration(
-        CipherVaultServiceConfigFile configuration)
-    {
-        return configuration.ProcessPolicy?.AllowedImages?
-            .Select(image => image.Path!)
-            ?? [];
-    }
-
-    private static string ImageKind(int index)
-    {
-        return index switch
-        {
-            0 => VerifiedProcessKind.HostService.ToString(),
-            1 => VerifiedProcessKind.AdminUi.ToString(),
-            2 => VerifiedProcessKind.AdminCli.ToString(),
-            3 => VerifiedProcessKind.AuthBroker.ToString(),
-            4 => VerifiedProcessKind.McpBridge.ToString(),
-            _ => $"client-{index}"
-        };
-    }
-
     private static CipherVaultPipeConfigFile FixedPipes()
     {
         return new CipherVaultPipeConfigFile

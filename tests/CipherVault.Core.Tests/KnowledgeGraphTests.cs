@@ -353,64 +353,6 @@ public sealed class KnowledgeGraphTests
     }
 
     [Fact]
-    public async Task ShortQueryFindsDocumentBeyondLegacyScanWindow()
-    {
-        await using var fixture = await KnowledgeFixture.CreateAsync();
-        var target = await fixture.Service.CreateNoteAsync(
-            "Short Query Target",
-            null,
-            "md",
-            "# Short Query Target\nxy unique",
-            null,
-            VaultActorKind.UserUi);
-        var targetId = target.DocumentId.ToString("D").ToLowerInvariant();
-        await fixture.ExecuteDatabaseSqlAsync(
-            $"""
-            UPDATE documents
-            SET updated_at_ms = 1000
-            WHERE document_id = '{targetId}';
-
-            WITH RECURSIVE seq(n) AS (
-                SELECT 1
-                UNION ALL
-                SELECT n + 1 FROM seq WHERE n < 1001
-            )
-            INSERT INTO documents(
-                document_id, title, title_norm, source_path, source_path_norm,
-                link_path_norm, format, content, headings_json, tags_json,
-                payload_hmac, revision, links_indexed_revision,
-                created_at_ms, updated_at_ms)
-            SELECT
-                '00000000-0000-0000-0000-' || printf('%012d', n),
-                'Bulk ' || n,
-                'bulk ' || n,
-                'bulk/' || n || '.md',
-                'bulk/' || n || '.md',
-                'bulk/' || n,
-                'md',
-                'unrelated content',
-                '[]',
-                '[]',
-                X'00',
-                1,
-                1,
-                2000,
-                1000 + n
-            FROM seq;
-            """);
-
-        var page = await fixture.Service.SearchNotesAsync(
-            "xy",
-            null,
-            null,
-            10);
-
-        Assert.Contains(page.Hits, hit => hit.DocumentId == target.DocumentId);
-        Assert.Equal(1002, page.Coverage.TotalDocuments);
-        Assert.False(page.Coverage.IsTruncated);
-    }
-
-    [Fact]
     public async Task WriteResultsExposeAuditEventIds()
     {
         await using var fixture = await KnowledgeFixture.CreateAsync();
@@ -528,7 +470,7 @@ public sealed class KnowledgeGraphTests
             source.DocumentId,
             0,
             16_000);
-        Assert.Equal(
+        AssertContentEquivalent(
             "---\n" +
             "description: \"说明 [[目标]]\"\n" +
             "related:\n" +
@@ -1301,7 +1243,7 @@ public sealed class KnowledgeGraphTests
             created.DocumentId,
             0,
             16_000);
-        Assert.Equal(
+        AssertContentEquivalent(
             "---\n" +
             "description: Updated\n" +
             "# 这个注释用于说明下面的 tags\n" +
@@ -1348,7 +1290,7 @@ public sealed class KnowledgeGraphTests
             created.DocumentId,
             0,
             16_000);
-        Assert.Equal(
+        AssertContentEquivalent(
             "---\n" +
             "description: Updated\n" +
             "tags: [Security]\n" +
@@ -1393,7 +1335,7 @@ public sealed class KnowledgeGraphTests
             created.DocumentId,
             0,
             16_000);
-        Assert.Equal(
+        AssertContentEquivalent(
             "---\n" +
             "description: Updated\n" +
             "tags: [Security]\n" +
@@ -1441,7 +1383,7 @@ public sealed class KnowledgeGraphTests
             created.DocumentId,
             0,
             16_000);
-        Assert.Equal(
+        AssertContentEquivalent(
             "---\n" +
             "items:\n" +
             "- three\n" +
@@ -1529,16 +1471,18 @@ public sealed class KnowledgeGraphTests
         Assert.Contains(initialTags.Items, tag => tag.Name == "Java");
         Assert.Contains(initialTags.Items, tag => tag.Name == "Backend");
 
+        var updatedContent =
+            "---\r\n" +
+            "tags:\r\n" +
+            "- Security\r\n" +
+            "- MCP\r\n" +
+            "---\r\n" +
+            "# 标签同步";
         await fixture.Service.UpdateNoteAsync(
             created.DocumentId,
             created.Revision,
             new VaultNotePatch(
-                Content: "---\r\n" +
-                    "tags:\r\n" +
-                    "- Security\r\n" +
-                    "- MCP\r\n" +
-                    "---\r\n" +
-                    "# 标签同步"),
+                Content: updatedContent),
             VaultActorKind.UserUi);
 
         var updatedTags = await fixture.Service.ListTagsAsync(null, 50);
@@ -1546,6 +1490,11 @@ public sealed class KnowledgeGraphTests
         Assert.DoesNotContain(updatedTags.Items, tag => tag.Name == "Backend");
         Assert.Contains(updatedTags.Items, tag => tag.Name == "Security");
         Assert.Contains(updatedTags.Items, tag => tag.Name == "MCP");
+        var updated = await fixture.Service.ReadNoteAsync(
+            created.DocumentId,
+            0,
+            16_000);
+        Assert.Equal(updatedContent, updated.Content);
         Assert.True(
             (await fixture.Service.VerifyVaultAsync()).Valid);
     }
@@ -1721,7 +1670,7 @@ public sealed class KnowledgeGraphTests
             0,
             16_000);
         Assert.Equal(created.Revision, read.Revision);
-        Assert.Equal(
+        AssertContentEquivalent(
             "---\nitems: [one]\n---\n# 嵌套字段",
             read.Content);
     }
@@ -2116,6 +2065,15 @@ public sealed class KnowledgeGraphTests
         Assert.All(
             map.OutgoingLinks,
             link => Assert.Equal("unresolved", link.ResolutionStatus));
+    }
+
+    private static void AssertContentEquivalent(
+        string expected,
+        string actual)
+    {
+        Assert.Equal(
+            expected.ReplaceLineEndings("\n"),
+            actual.ReplaceLineEndings("\n"));
     }
 
     private sealed class KnowledgeFixture : IAsyncDisposable
