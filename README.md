@@ -3,7 +3,7 @@
 Windows 11 本地加密 Markdown/TXT 资料库。当前版本使用 strict Windows Service
 架构；不再维护旧的 per-user Host、兼容 HTTP Admin/MCP 或旧版升级迁移。
 
-## Architecture
+## 架构
 
 ```text
 CipherVault.Ui.Wpf / CipherVault.Cli / CipherVault.Mcp
@@ -28,7 +28,7 @@ CipherVault.Ui.Wpf / CipherVault.Cli / CipherVault.Mcp
 - Vault 数据和运行目录固定在 `%ProgramData%\CipherVault`。
 - 程序和所有客户端映像固定在 `%ProgramFiles%\CipherVault`。
 
-## Security model
+## 安全模型
 
 - 文档内容、元数据、版本、回收站、FTS 和审计记录由 SQLCipher 加密。
 - 密码和离线恢复密钥分别解封随机主密钥。
@@ -44,17 +44,17 @@ CipherVault.Ui.Wpf / CipherVault.Cli / CipherVault.Mcp
 
 管理员、内核攻击、父进程注入、键盘记录和用户主动批准恶意进程仍超出保护范围。
 
-## Build and test
+## 构建与测试
 
 ```powershell
 dotnet build .\CipherVault.sln -c Release --nologo
 dotnet test .\CipherVault.sln -c Release --no-build --nologo
 ```
 
-## Publish and sign
+## 发布与签名
 
-发布产物只是 staging 目录和 ZIP，不是可直接安装的 strict 发布包；安装前必须完成
-代码签名：
+发布脚本产出的是已发布的 EXE 目录和 ZIP，不是 MSI/EXE 安装器。安装前必须完成代码
+签名：
 
 ```powershell
 .\scripts\publish.ps1
@@ -66,13 +66,44 @@ dotnet test .\CipherVault.sln -c Release --no-build --nologo
 使用 `signtool.exe`，未安装 Windows SDK 时回退到 PowerShell Authenticode 签名。
 所有客户端和 Host 必须由同一个代码签名证书签名。
 
-## Service install
+当前开发包使用自签名测试证书：
 
-在管理员 PowerShell 中安装：
+- 发布目录：`artifacts\publish\CipherVault-win-x64`
+- ZIP：`artifacts\publish\CipherVault-win-x64.zip`
+- 测试证书：`artifacts\publish\CipherVault-dev-codesign.cer`
+
+自签名证书只适合本机和隔离测试虚拟机，不适合正式分发。
+
+## 安装与升级
+
+程序必须安装在固定目录 `%ProgramFiles%\CipherVault`，运行数据固定在
+`%ProgramData%\CipherVault`。当前版本没有自动更新器，也不会创建开始菜单或桌面
+快捷方式。
+
+在测试虚拟机管理员 PowerShell 中信任开发证书：
+
+```powershell
+Import-Certificate `
+  -FilePath C:\Temp\CipherVault-dev-codesign.cer `
+  -CertStoreLocation Cert:\LocalMachine\Root
+```
+
+解压发布包并把全部程序文件放入安装目录：
+
+```powershell
+Expand-Archive C:\Temp\CipherVault-win-x64.zip -DestinationPath C:\Temp\CipherVault
+New-Item -ItemType Directory "$env:ProgramFiles\CipherVault" -Force
+Copy-Item C:\Temp\CipherVault\CipherVault-win-x64\* `
+  "$env:ProgramFiles\CipherVault" -Recurse -Force
+```
+
+在管理员 PowerShell 中安装并启动：
 
 ```powershell
 cd "$env:ProgramFiles\CipherVault"
 .\CipherVault.Cli.exe service install --signer-thumbprint <64位SHA-256签名者指纹>
+.\CipherVault.Cli.exe service start
+.\CipherVault.Cli.exe service status
 ```
 
 安装要求：
@@ -84,21 +115,35 @@ cd "$env:ProgramFiles\CipherVault"
 安装器会创建 Windows Service、解析 `NT SERVICE\CipherVaultHost` SID、设置
 ProgramData ACL，并生成只读的 `install-public.json`。
 
-常用命令：
+升级时先停止服务，将新签名 EXE 覆盖到 `%ProgramFiles%\CipherVault`，再执行一次
+`service install`。只要 `%ProgramData%\CipherVault` 的 Owner、服务账户和固定目录
+布局保持一致，安装器会生成新的 install ID，同时保留 Vault 数据：
 
 ```powershell
-.\CipherVault.Cli.exe service status
-.\CipherVault.Cli.exe service start
 .\CipherVault.Cli.exe service stop
-.\CipherVault.Cli.exe service uninstall
+.\CipherVault.Cli.exe service install --signer-thumbprint <64位SHA-256签名者指纹>
+.\CipherVault.Cli.exe service start
 ```
 
-`service uninstall` 只移除服务注册，不删除 `%ProgramData%\CipherVault` 或安装根。
-在 Owner、服务账户和固定目录布局一致的完整 strict 安装上，可以直接重新安装；
-安装器会生成新的 install ID 和安装清单并保留 Vault 数据。不完整、被篡改或包含
-reparse point 的 ProgramData 布局会被拒绝，不会被当作旧数据自动迁移。
+## 全新 Windows 11 验收
 
-管理员端到端冒烟：
+建议使用 Hyper-V/VMware 的干净 Windows 11 虚拟机和快照。当前项目尚未在最终用户的
+全新机器上完成首次安装验收，因此不要把主力机上的 Vault 作为唯一副本。
+
+验收顺序：
+
+1. 复制 `CipherVault-win-x64.zip` 和 `CipherVault-dev-codesign.cer` 到虚拟机。
+2. 信任测试证书，把发布文件复制到 `%ProgramFiles%\CipherVault`。
+3. 管理员 PowerShell 执行 `service install`、`service start` 和 `service status`。
+4. 启动 `CipherVault.Ui.Wpf.exe`，完成初始化、密码和恢复密钥确认。
+5. 重启 Windows，确认 `CipherVaultHost` 自动启动并可用密码或恢复密钥解锁。
+6. 创建文档、搜索、查看反向链接和局部关系图。
+7. 创建备份，恢复到新目录，并重新解锁验证文档内容。
+8. 测试 MCP 目录授权弹窗，确认显示具体目录而不是只有 `read/write/delete`。
+9. 强制结束 Broker，确认 Host 保持运行且 Broker 可重新注册。
+10. 执行卸载后重装，确认 install ID 更新且 Vault 数据哈希不变。
+
+自动验收脚本：
 
 ```powershell
 .\scripts\strict-service-smoke.ps1 -SignerThumbprint <64位SHA-256签名者指纹>
@@ -108,7 +153,7 @@ reparse point 的 ProgramData 布局会被拒绝，不会被当作旧数据自�
 并执行卸载后重装。默认保留数据；只有显式传入 `-RemoveData` 才删除
 `%ProgramData%\CipherVault`。
 
-## First use
+## 首次使用
 
 1. 启动 `CipherVault.Ui.Wpf.exe` 或执行 `.\CipherVault.Cli.exe status`。
 2. Broker 会弹出初始化向导；输入密码并保存离线恢复密钥。
@@ -118,7 +163,7 @@ reparse point 的 ProgramData 布局会被拒绝，不会被当作旧数据自�
 密码和恢复密钥只由当前用户 session 的 Broker 收集，通过已验证命名管道传给 Host。
 不要把它们写入配置、环境变量、聊天记录或代码。
 
-## Desktop and CLI
+## 桌面端与命令行
 
 WPF 提供日常读写、回收站、版本、备份、导出、导入和审计页面。CLI 提供相同能力的
 命令行版本：
@@ -136,7 +181,73 @@ WPF 提供日常读写、回收站、版本、备份、导出、导入和审计�
 `audit` 支持按文档 ID、动作、correlation ID、游标和数量过滤；游标会绑定当前过滤条件。
 `host-stop` 会先锁定 Vault，再触发 Windows Service 停止。
 
-## Knowledge network
+## 卸载与彻底清理
+
+当前版本没有 MSI 安装包，因此不会出现在“设置 → 应用”中，需要使用
+`CipherVault.Cli.exe service uninstall` 卸载。
+
+内置卸载有两个级别：
+
+| 命令 | 删除服务 | 删除 ProgramData | 删除 Program Files |
+| --- | --- | --- | --- |
+| `service uninstall` | 是 | 否 | 否 |
+| `service uninstall --remove-data` | 是 | 是 | 否 |
+
+`--remove-data` 会不可恢复地删除 Vault、恢复密钥、日志、服务配置、锁和 Transfer
+目录。执行前必须先在 WPF 中创建备份，并把 `.cvbackup` 保存到 ProgramData 之外。
+
+只卸载服务并保留数据：
+
+```powershell
+& "$env:ProgramFiles\CipherVault\CipherVault.Cli.exe" service uninstall
+```
+
+删除服务应用数据：
+
+```powershell
+& "$env:ProgramFiles\CipherVault\CipherVault.Cli.exe" service uninstall --remove-data
+```
+
+当前版本没有一键“彻底卸载”。如果需要删除 ProgramData、程序、当前测试证书和临时
+包，请关闭 WPF、MCP 和 Broker，然后在管理员 PowerShell 中按顺序执行：
+
+```powershell
+Get-Process `
+  CipherVault.Auth.Broker, CipherVault.Ui.Wpf, CipherVault.Mcp `
+  -ErrorAction SilentlyContinue |
+  Stop-Process -Force
+
+& "$env:ProgramFiles\CipherVault\CipherVault.Cli.exe" `
+  service uninstall --remove-data
+
+Remove-Item "$env:ProgramFiles\CipherVault" -Recurse -Force
+
+Remove-Item `
+  'Cert:\LocalMachine\Root\8CBC918D3C4B43B005F0B885FD5DEA48221CC5CA' `
+  -Force -ErrorAction SilentlyContinue
+Remove-Item `
+  'Cert:\CurrentUser\Root\8CBC918D3C4B43B005F0B885FD5DEA48221CC5CA' `
+  -Force -ErrorAction SilentlyContinue
+
+Remove-Item C:\Temp\CipherVault -Recurse -Force -ErrorAction SilentlyContinue
+```
+
+验证清理结果：
+
+```powershell
+Get-Service CipherVaultHost -ErrorAction SilentlyContinue
+Test-Path "$env:ProgramFiles\CipherVault"
+Test-Path "$env:ProgramData\CipherVault"
+Get-Process 'CipherVault.*' -ErrorAction SilentlyContinue
+```
+
+服务应不存在，两个路径应为 `False`，进程列表应为空。Windows 系统事件日志属于系统
+审计记录，不会由应用卸载自动清除。
+
+上面的证书 thumbprint 只对应当前开发测试证书。使用正式 CA 发布证书时，不要删除
+系统已有的受信任根证书。
+
+## 知识网络
 
 Markdown 文档支持文档级 Wiki Link：
 
@@ -191,7 +302,7 @@ Markdown 存在 Frontmatter `tags` 字段时，该字段是标签索引的权威
 精准修改支持按完整标题路径或顶层 frontmatter 字段执行 `append`、`prepend`、
 `replace` 和 `delete`。dry-run 只返回 diff，不写入正文。
 
-## MCP strict bridge
+## MCP 严格桥接
 
 MCP 客户端使用 `CipherVault.Mcp.exe`：
 
@@ -256,7 +367,7 @@ MCP 初始化会提供操作说明；创建、追加、更新、精准修改和�
 
 `update_note` 的 `updateBacklinks` 默认关闭；需要同步改写标题引用时显式设为 `true`。
 
-## Restore
+## 备份与恢复
 
 备份是加密的 `.cvbackup`。恢复到新目录不会替换当前服务 Vault：
 
@@ -300,6 +411,6 @@ MCP 初始化会提供操作说明；创建、追加、更新、精准修改和�
 - [Logseq: filtered views of the graph](https://discuss.logseq.com/t/presentation-mode-filtered-views-of-the-graph/22431)
   讨论表明用户更需要按标签、属性和上下文筛选的子图。
 
-## License
+## 许可证
 
-MIT License. See [LICENSE](LICENSE).
+本项目使用 MIT 许可证，详见 [LICENSE](LICENSE)。
