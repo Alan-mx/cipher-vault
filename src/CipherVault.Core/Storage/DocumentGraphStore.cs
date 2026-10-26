@@ -11,12 +11,15 @@ internal static class DocumentGraphStore
     public static async Task<VaultLocalGraphResult> GetLocalGraphAsync(
         SqliteConnection connection,
         VaultLocalGraphQuery query,
+        VaultReadScope readScope,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(readScope);
         var centerId = query.CenterDocumentId.ToString("D").ToLowerInvariant();
         await EnsureActiveDocumentAsync(
             connection,
             centerId,
+            readScope,
             cancellationToken).ConfigureAwait(false);
 
         var maxNodes = Math.Clamp(query.MaxNodes, 1, 200);
@@ -54,6 +57,19 @@ internal static class DocumentGraphStore
                 JOIN documents target
                   ON target.document_id = document_links.target_document_id
                  AND target.deleted_at_ms IS NULL
+            """);
+        VaultReadScopeSql.Append(
+            sql,
+            "source.source_path_norm",
+            readScope,
+            "graphSourceScope");
+        VaultReadScopeSql.Append(
+            sql,
+            "target.source_path_norm",
+            readScope,
+            "graphTargetScope");
+        sql.Append(
+            """
                 WHERE walk.depth < $depth
             )
             SELECT documents.document_id, documents.title, documents.source_path,
@@ -62,6 +78,11 @@ internal static class DocumentGraphStore
             JOIN documents ON documents.document_id = walk.document_id
             WHERE documents.deleted_at_ms IS NULL
             """);
+        VaultReadScopeSql.Append(
+            sql,
+            "documents.source_path_norm",
+            readScope,
+            "graphNodeScope");
         AppendTagFilter(sql, tags);
         AppendFolderFilter(sql, normalizedFolder);
         sql.Append(
@@ -81,6 +102,18 @@ internal static class DocumentGraphStore
         command.Parameters.AddWithValue("$limit", maxNodes + 1);
         AddTagParameters(command, tags);
         AddFolderParameter(command, normalizedFolder);
+        VaultReadScopeSql.AddParameters(
+            command,
+            readScope,
+            "graphSourceScope");
+        VaultReadScopeSql.AddParameters(
+            command,
+            readScope,
+            "graphTargetScope");
+        VaultReadScopeSql.AddParameters(
+            command,
+            readScope,
+            "graphNodeScope");
 
         var nodes = new List<GraphNodeRow>();
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken)
@@ -334,12 +367,24 @@ internal static class DocumentGraphStore
     private static async Task EnsureActiveDocumentAsync(
         SqliteConnection connection,
         string documentId,
+        VaultReadScope readScope,
         CancellationToken cancellationToken)
     {
         using var command = connection.CreateCommand();
-        command.CommandText =
-            "SELECT 1 FROM documents WHERE document_id = $id AND deleted_at_ms IS NULL;";
+        var sql = new StringBuilder(
+            "SELECT 1 FROM documents WHERE document_id = $id AND deleted_at_ms IS NULL");
+        VaultReadScopeSql.Append(
+            sql,
+            "source_path_norm",
+            readScope,
+            "graphCenterScope");
+        sql.Append(';');
+        command.CommandText = sql.ToString();
         command.Parameters.AddWithValue("$id", documentId);
+        VaultReadScopeSql.AddParameters(
+            command,
+            readScope,
+            "graphCenterScope");
         if (await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is null)
         {
             throw new VaultException(

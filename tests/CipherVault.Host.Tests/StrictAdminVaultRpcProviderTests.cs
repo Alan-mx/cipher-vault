@@ -422,6 +422,85 @@ public sealed class StrictAdminVaultRpcProviderTests
     }
 
     [Fact]
+    public async Task ScopedAdminSessionFiltersCatalogBeforePagination()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var sessions = fixture.App.Services.GetRequiredService<
+            HostSessionCoordinator>();
+        await sessions.UnlockAsync(HostCredentialPreference.Password);
+        var paths = CipherVaultServicePaths.Create(
+            Path.Combine(fixture.Root, "ProgramFiles"),
+            Path.Combine(fixture.Root, "ProgramData"),
+            Path.Combine(fixture.Root, "LocalAppData"));
+        var provider = new StrictAdminVaultRpcProvider(
+            fixture.App.Services.GetRequiredService<HostVaultGateway>(),
+            sessions,
+            new ApprovalStore(),
+            new TestApprovalPrompt(new ApprovalStore()),
+            new TransferCoordinator(paths),
+            new TestTransferPrompt());
+        var unscoped = CreateAdminSession();
+        await provider.HandleAsync(
+            unscoped,
+            "admin.notes.create",
+            JsonSerializer.SerializeToElement(
+                new HostCreateNoteRequest(
+                    "visible",
+                    "Projects",
+                    "md",
+                    "visible content",
+                    []),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            CancellationToken.None);
+        await provider.HandleAsync(
+            unscoped,
+            "admin.notes.create",
+            JsonSerializer.SerializeToElement(
+                new HostCreateNoteRequest(
+                    "visible-two",
+                    "Projects",
+                    "md",
+                    "visible content two",
+                    []),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            CancellationToken.None);
+        var hidden = Assert.IsType<VaultWriteResult>(await provider.HandleAsync(
+            unscoped,
+            "admin.notes.create",
+            JsonSerializer.SerializeToElement(
+                new HostCreateNoteRequest(
+                    "hidden",
+                    "Private",
+                    "md",
+                    "hidden content",
+                    []),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            CancellationToken.None));
+        Assert.True(AccessGrantPathPolicy.TryParse(
+            ["read:Projects"],
+            out _,
+            out var pathPolicy));
+        var scoped = CreateAdminSession(pathPolicy);
+
+        var result = Assert.IsType<VaultCatalogPage>(await provider.HandleAsync(
+            scoped,
+            "admin.catalog.list",
+            JsonSerializer.SerializeToElement(
+                new AdminCatalogListRequest(null, null, 1),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            CancellationToken.None));
+
+        var item = Assert.Single(result.Items);
+        Assert.StartsWith("Projects/", item.VirtualPath);
+        Assert.NotEqual(hidden.DocumentId, item.DocumentId);
+        Assert.NotNull(result.NextCursor);
+        Assert.DoesNotContain(
+            hidden.DocumentId.ToString("D"),
+            result.NextCursor!,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task ImportPreviewRejectsJunctionInStaging()
     {
         await using var fixture = await HostTestFixture.CreateAsync();
@@ -814,7 +893,8 @@ public sealed class StrictAdminVaultRpcProviderTests
         }
     }
 
-    private static AdminSession CreateAdminSession()
+    private static AdminSession CreateAdminSession(
+        AccessGrantPathPolicy? pathPolicy = null)
     {
         var now = DateTimeOffset.UtcNow;
         return new AdminSession(
@@ -840,7 +920,8 @@ public sealed class StrictAdminVaultRpcProviderTests
             now.AddHours(4),
             VaultSessionId: null,
             State: AdminSessionState.Active,
-            RevocationReason: null);
+            RevocationReason: null,
+            PathPolicy: pathPolicy);
     }
 
     private static void CreateJunction(string linkPath, string targetPath)

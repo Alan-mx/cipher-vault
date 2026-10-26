@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Windows.Automation;
 using CipherVault.Auth.Win;
 using CipherVault.Security.Win;
 
@@ -20,6 +21,80 @@ public sealed class WindowsAccessGrantPromptTests
             new AccessGrantPromptResult(true, true, true, true).ToScopeNames());
         Assert.Empty(
             new AccessGrantPromptResult(false, false, false, false).ToScopeNames());
+    }
+
+    [Fact]
+    public void ScopedActionsAndFoldersAreShownToTheUser()
+    {
+        string[] scopes =
+        [
+            "write:Inbox",
+            "delete:Trash",
+            "read",
+            "read:Projects"
+        ];
+
+        Assert.True(WindowsAccessGrantPrompt.IncludesAction(scopes, "read"));
+        Assert.True(WindowsAccessGrantPrompt.IncludesAction(scopes, "write"));
+        Assert.True(WindowsAccessGrantPrompt.IncludesAction(scopes, "delete"));
+        Assert.False(WindowsAccessGrantPrompt.IncludesAction(scopes, "admin"));
+
+        Assert.Equal(
+            [
+                "允许读取：全部文档（read）",
+                "允许读取：Projects/（read:Projects）",
+                "允许写入：Inbox/（write:Inbox）",
+                "允许删除：Trash/（delete:Trash）"
+            ],
+            WindowsAccessGrantPrompt.DescribeScopes(scopes));
+    }
+
+    [Fact]
+    public async Task PromptRendersConcreteFolderScopes()
+    {
+        if (!ShouldRunInteractiveUiTests())
+        {
+            return;
+        }
+
+        using var uiLock = UiAutomationLock.Acquire();
+        var title = CreateTitle();
+        var prompt = WindowsAccessGrantPrompt.RequestAsync(
+            title,
+            Request(
+                ("read:Projects", true, true),
+                ("write:Inbox", true, true),
+                ("delete:Trash", true, true)));
+        var window = await WaitForWindowAsync(title);
+        FocusWindow(window);
+
+        var root = AutomationElement.FromHandle(window);
+        var textElements = root.FindAll(
+            TreeScope.Descendants,
+            new PropertyCondition(
+                AutomationElement.ControlTypeProperty,
+                ControlType.Text));
+        var visibleText = textElements
+            .Cast<AutomationElement>()
+            .Select(element => element.Current.Name)
+            .ToArray();
+
+        Assert.Contains(
+            visibleText,
+            text => text.Contains("Projects/", StringComparison.Ordinal));
+        Assert.Contains(
+            visibleText,
+            text => text.Contains("Inbox/", StringComparison.Ordinal));
+        Assert.Contains(
+            visibleText,
+            text => text.Contains("Trash/", StringComparison.Ordinal));
+        Assert.Contains(
+            visibleText,
+            text => text.Contains("全部文档", StringComparison.Ordinal) is false);
+
+        SendKey(window, 0x1B);
+        var result = await prompt.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(result.Confirmed);
     }
 
     [Fact]

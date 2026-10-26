@@ -252,6 +252,40 @@ public sealed class BrokerPipeTests
     }
 
     [Fact]
+    public void AccessGrantBrokerRequestPreservesFolderScopes()
+    {
+        Assert.True(AccessGrantPathPolicy.TryParse(
+            ["read:Projects", "write:Inbox", "delete:Trash"],
+            out var scopes,
+            out var pathPolicy));
+        var request = new HostAccessGrantPromptRequest(
+            "test-agent",
+            Guid.NewGuid(),
+            McpAccessMode.ReadWrite,
+            scopes,
+            AccessGrantScope.Read |
+                AccessGrantScope.Write |
+                AccessGrantScope.Delete,
+            pathPolicy,
+            TimeSpan.FromMinutes(30),
+            TimeSpan.FromHours(4));
+
+        var approval = BrokerAccessGrantPrompt.CreateApprovalRequest(
+            Guid.NewGuid(),
+            PipeNonce.Create(),
+            request,
+            DateTimeOffset.UtcNow.AddMinutes(2));
+
+        Assert.Contains("read:projects", approval.RequestedScopes!);
+        Assert.Contains("write:inbox", approval.RequestedScopes!);
+        Assert.Contains("delete:trash", approval.RequestedScopes!);
+        Assert.Contains("read:projects", approval.AllowedScopes!);
+        Assert.Contains("projects", approval.DisplayDetails);
+        Assert.Contains("inbox", approval.DisplayDetails);
+        Assert.Contains("trash", approval.DisplayDetails);
+    }
+
+    [Fact]
     public void ApprovedGrantScopesRejectEscalationAndInvalidCombinations()
     {
         AssertInvalidGrantScopes(["write"]);

@@ -260,13 +260,11 @@ public sealed class BrokerAccessGrantPrompt(
         var approvalId = Guid.NewGuid();
         var nonce = PipeNonce.Create();
         var expiresAt = DateTimeOffset.UtcNow.AddMinutes(2);
-        var requested = string.Join(
-            ",",
-            request.PathPolicy.ToScopeNames(request.RequestedScopes)
-                .OrderBy(value => value, StringComparer.Ordinal));
-        var allowed = AccessGrantScopes.ToNames(request.AllowedScopes)
-            .OrderBy(value => value, StringComparer.Ordinal)
-            .ToArray();
+        var approvalRequest = CreateApprovalRequest(
+            approvalId,
+            nonce,
+            request,
+            expiresAt);
         BrokerApprovalDecision result;
         try
         {
@@ -274,29 +272,7 @@ public sealed class BrokerAccessGrantPrompt(
                     BrokerApprovalRequest,
                     BrokerApprovalDecision>(
                     "broker.approval.request",
-                    new BrokerApprovalRequest(
-                        approvalId,
-                        nonce,
-                        "AccessGrant",
-                        "授权 Agent 访问 CipherVault",
-                        $"客户端 {request.ClientId} 请求权限：{requested}",
-                        CanonicalJson.ComputeSha256(
-                            JsonSerializer.SerializeToElement(new
-                            {
-                                request.ClientId,
-                                request.ClientInstanceId,
-                                request.RequestedScopes
-                            })),
-                        expiresAt,
-                        AccessGrantScopes.ToNames(request.RequestedScopes)
-                            .OrderBy(value => value, StringComparer.Ordinal)
-                            .ToArray(),
-                        allowed,
-                        request.ClientId,
-                        request.ClientInstanceId,
-                        request.TokenAccessMode.ToString(),
-                        request.IdleLifetime.ToString(),
-                        request.HardLifetime.ToString()),
+                    approvalRequest,
                     expiresAt,
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -347,6 +323,47 @@ public sealed class BrokerAccessGrantPrompt(
                 request.RequestedScopes,
                 request.AllowedScopes,
                 result.ApprovedScopes));
+    }
+
+    public static BrokerApprovalRequest CreateApprovalRequest(
+        Guid approvalId,
+        string nonce,
+        HostAccessGrantPromptRequest request,
+        DateTimeOffset expiresAt)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var requestedScopes = request.PathPolicy
+            .ToScopeNames(request.RequestedScopes)
+            .OrderBy(value => value, StringComparer.Ordinal)
+            .ToArray();
+        var allowedScopes = request.PathPolicy
+            .ToScopeNames(request.AllowedScopes)
+            .OrderBy(value => value, StringComparer.Ordinal)
+            .ToArray();
+        var displayScopes = string.Join(", ", requestedScopes);
+        return new BrokerApprovalRequest(
+            approvalId,
+            nonce,
+            "AccessGrant",
+            "授权 Agent 访问 CipherVault",
+            $"客户端 {request.ClientId} 请求权限：{displayScopes}",
+            CanonicalJson.ComputeSha256(
+                JsonSerializer.SerializeToElement(new
+                {
+                    request.ClientId,
+                    request.ClientInstanceId,
+                    request.RequestedScopes,
+                    ScopeNames = requestedScopes,
+                    AllowedScopeNames = allowedScopes
+                })),
+            expiresAt,
+            requestedScopes,
+            allowedScopes,
+            request.ClientId,
+            request.ClientInstanceId,
+            request.TokenAccessMode.ToString(),
+            request.IdleLifetime.ToString(),
+            request.HardLifetime.ToString());
     }
 
     public static AccessGrantScope ResolveApprovedScopes(

@@ -21,7 +21,8 @@ public sealed record AdminSession(
     DateTimeOffset HardExpiresAt,
     Guid? VaultSessionId,
     AdminSessionState State,
-    string? RevocationReason);
+    string? RevocationReason,
+    AccessGrantPathPolicy? PathPolicy = null);
 
 public sealed class AdminSessionStore
 {

@@ -36,6 +36,13 @@ public interface IVaultService : IAsyncDisposable
         int limit,
         CancellationToken cancellationToken = default);
 
+    Task<VaultCatalogPage> ListCatalogAsync(
+        string? folder,
+        string? cursor,
+        int limit,
+        VaultReadScope readScope,
+        CancellationToken cancellationToken = default);
+
     Task<VaultSearchPage> SearchNotesAsync(
         string query,
         string? folder,
@@ -51,6 +58,15 @@ public interface IVaultService : IAsyncDisposable
         VaultSearchFilter filter,
         CancellationToken cancellationToken = default);
 
+    Task<VaultSearchPage> SearchNotesAsync(
+        string query,
+        string? folder,
+        string? cursor,
+        int limit,
+        VaultSearchFilter filter,
+        VaultReadScope readScope,
+        CancellationToken cancellationToken = default);
+
     Task<VaultReadResult> ReadNoteAsync(
         Guid documentId,
         int offset,
@@ -62,11 +78,35 @@ public interface IVaultService : IAsyncDisposable
         int limit,
         CancellationToken cancellationToken = default);
 
+    Task<VaultScanPage> ScanNotesAsync(
+        string? cursor,
+        int limit,
+        VaultReadScope readScope,
+        CancellationToken cancellationToken = default);
+
     Task<VaultDocumentMap> GetDocumentMapAsync(
         Guid documentId,
         CancellationToken cancellationToken = default);
 
+    Task<VaultDocumentMap> GetDocumentMapAsync(
+        Guid documentId,
+        VaultReadScope readScope,
+        CancellationToken cancellationToken = default);
+
     Task<VaultBacklinkPage> ListBacklinksAsync(
+        Guid documentId,
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken = default);
+
+    Task<VaultBacklinkPage> ListBacklinksAsync(
+        Guid documentId,
+        string? cursor,
+        int limit,
+        VaultReadScope readScope,
+        CancellationToken cancellationToken = default);
+
+    Task<VaultUnlinkedMentionPage> ListUnlinkedMentionsAsync(
         Guid documentId,
         string? cursor,
         int limit,
@@ -76,6 +116,7 @@ public interface IVaultService : IAsyncDisposable
         Guid documentId,
         string? cursor,
         int limit,
+        VaultReadScope readScope,
         CancellationToken cancellationToken = default);
 
     Task<VaultTagPage> ListTagsAsync(
@@ -85,6 +126,11 @@ public interface IVaultService : IAsyncDisposable
 
     Task<VaultLocalGraphResult> GetLocalGraphAsync(
         VaultLocalGraphQuery query,
+        CancellationToken cancellationToken = default);
+
+    Task<VaultLocalGraphResult> GetLocalGraphAsync(
+        VaultLocalGraphQuery query,
+        VaultReadScope readScope,
         CancellationToken cancellationToken = default);
 
     Task<VaultWriteResult> CreateNoteAsync(
@@ -537,6 +583,22 @@ public sealed class VaultService : IVaultService
         int limit,
         CancellationToken cancellationToken = default)
     {
+        return await ListCatalogAsync(
+            folder,
+            cursor,
+            limit,
+            VaultReadScope.Unrestricted,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<VaultCatalogPage> ListCatalogAsync(
+        string? folder,
+        string? cursor,
+        int limit,
+        VaultReadScope readScope,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(readScope);
         ThrowIfDisposed();
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -548,6 +610,7 @@ public sealed class VaultService : IVaultService
                 folder,
                 cursor,
                 limit,
+                readScope,
                 cancellationToken).ConfigureAwait(false);
             await EnsureSessionStillValidAsync(session, cancellationToken).ConfigureAwait(false);
             return page;
@@ -582,6 +645,26 @@ public sealed class VaultService : IVaultService
         VaultSearchFilter filter,
         CancellationToken cancellationToken = default)
     {
+        return await SearchNotesAsync(
+            query,
+            folder,
+            cursor,
+            limit,
+            filter,
+            VaultReadScope.Unrestricted,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<VaultSearchPage> SearchNotesAsync(
+        string query,
+        string? folder,
+        string? cursor,
+        int limit,
+        VaultSearchFilter filter,
+        VaultReadScope readScope,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(readScope);
         ThrowIfDisposed();
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -595,6 +678,7 @@ public sealed class VaultService : IVaultService
                 cursor,
                 limit,
                 filter,
+                readScope,
                 cancellationToken).ConfigureAwait(false);
             await EnsureSessionStillValidAsync(session, cancellationToken).ConfigureAwait(false);
             return page;
@@ -638,6 +722,20 @@ public sealed class VaultService : IVaultService
         int limit,
         CancellationToken cancellationToken = default)
     {
+        return await ScanNotesAsync(
+            cursor,
+            limit,
+            VaultReadScope.Unrestricted,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<VaultScanPage> ScanNotesAsync(
+        string? cursor,
+        int limit,
+        VaultReadScope readScope,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(readScope);
         ThrowIfDisposed();
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -648,6 +746,7 @@ public sealed class VaultService : IVaultService
                 session.SessionId,
                 cursor,
                 limit,
+                readScope,
                 cancellationToken).ConfigureAwait(false);
             await EnsureSessionStillValidAsync(session, cancellationToken).ConfigureAwait(false);
             return result;
@@ -662,6 +761,18 @@ public sealed class VaultService : IVaultService
         Guid documentId,
         CancellationToken cancellationToken = default)
     {
+        return await GetDocumentMapAsync(
+            documentId,
+            VaultReadScope.Unrestricted,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<VaultDocumentMap> GetDocumentMapAsync(
+        Guid documentId,
+        VaultReadScope readScope,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(readScope);
         ThrowIfDisposed();
         if (documentId == Guid.Empty)
         {
@@ -676,6 +787,7 @@ public sealed class VaultService : IVaultService
             var result = await DocumentLinkStore.GetDocumentMapAsync(
                 session.Connection,
                 documentId,
+                readScope,
                 cancellationToken).ConfigureAwait(false);
             await EnsureSessionStillValidAsync(session, cancellationToken).ConfigureAwait(false);
             return result;
@@ -692,6 +804,22 @@ public sealed class VaultService : IVaultService
         int limit,
         CancellationToken cancellationToken = default)
     {
+        return await ListBacklinksAsync(
+            documentId,
+            cursor,
+            limit,
+            VaultReadScope.Unrestricted,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<VaultBacklinkPage> ListBacklinksAsync(
+        Guid documentId,
+        string? cursor,
+        int limit,
+        VaultReadScope readScope,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(readScope);
         ThrowIfDisposed();
         if (documentId == Guid.Empty || limit is < 1 or > 100)
         {
@@ -709,6 +837,7 @@ public sealed class VaultService : IVaultService
                 documentId,
                 cursor,
                 limit,
+                readScope,
                 cancellationToken).ConfigureAwait(false);
             await EnsureSessionStillValidAsync(session, cancellationToken).ConfigureAwait(false);
             return result;
@@ -725,6 +854,22 @@ public sealed class VaultService : IVaultService
         int limit,
         CancellationToken cancellationToken = default)
     {
+        return await ListUnlinkedMentionsAsync(
+            documentId,
+            cursor,
+            limit,
+            VaultReadScope.Unrestricted,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<VaultUnlinkedMentionPage> ListUnlinkedMentionsAsync(
+        Guid documentId,
+        string? cursor,
+        int limit,
+        VaultReadScope readScope,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(readScope);
         ThrowIfDisposed();
         if (documentId == Guid.Empty || limit is < 1 or > 100)
         {
@@ -743,6 +888,7 @@ public sealed class VaultService : IVaultService
                 documentId,
                 cursor,
                 limit,
+                readScope,
                 cancellationToken).ConfigureAwait(false);
             await EnsureSessionStillValidAsync(session, cancellationToken)
                 .ConfigureAwait(false);
@@ -789,6 +935,18 @@ public sealed class VaultService : IVaultService
         VaultLocalGraphQuery query,
         CancellationToken cancellationToken = default)
     {
+        return await GetLocalGraphAsync(
+            query,
+            VaultReadScope.Unrestricted,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<VaultLocalGraphResult> GetLocalGraphAsync(
+        VaultLocalGraphQuery query,
+        VaultReadScope readScope,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(readScope);
         ThrowIfDisposed();
         if (query.CenterDocumentId == Guid.Empty ||
             query.Depth is < 1 or > 2 ||
@@ -807,6 +965,7 @@ public sealed class VaultService : IVaultService
             var result = await DocumentGraphStore.GetLocalGraphAsync(
                 session.Connection,
                 query,
+                readScope,
                 cancellationToken).ConfigureAwait(false);
             await EnsureSessionStillValidAsync(session, cancellationToken).ConfigureAwait(false);
             return result;

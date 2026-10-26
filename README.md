@@ -219,6 +219,12 @@ scope 也可以限制到虚拟文件夹：
 路径限制时，`tag_list` 暂时拒绝，避免聚合计数泄露范围外标签；在根目录创建文档需要
 全局 write。
 
+受限查询会在 Core 数据层先应用目录范围，再排序、分页和生成游标；游标指纹绑定同一
+范围，避免范围外文档 ID、路径、计数和截断状态进入响应。
+
+Access Grant 授权弹窗会逐项列出全局或具体目录范围，例如“允许读取：Projects/”；
+授权在空闲失效或最迟失效前复用，不会在每次读取文档时重新弹出密码框。
+
 当前 MCP 工具：
 
 - 读取：`vault_status`、`list_catalog`、`search_notes`、`read_note`、
@@ -240,6 +246,13 @@ HTML 注释和已有 Wiki Link；工具只返回候选，不自动修改文档�
 过滤；1～2 字符查询扫描最近 10000 篇活动文档，并返回 `isTruncated` 覆盖状态。
 MCP 初始化会提供操作说明；创建、追加、更新、精准修改和删除结果包含
 `auditEventId`，可直接关联审计记录。
+
+规模和解析基线：
+
+```powershell
+.\scripts\benchmark-search.ps1 -Documents 10005
+.\scripts\benchmark-frontmatter.ps1 -Iterations 10000
+```
 
 `update_note` 的 `updateBacklinks` 默认关闭；需要同步改写标题引用时显式设为 `true`。
 

@@ -51,6 +51,7 @@ public sealed class StrictAdminVaultRpcProvider(
                         catalogRequest.Folder,
                         catalogRequest.Cursor,
                         catalogRequest.Limit,
+                        ReadScope(session),
                         token),
                     cancellationToken).ConfigureAwait(false);
             case "admin.search.notes":
@@ -74,6 +75,7 @@ public sealed class StrictAdminVaultRpcProvider(
                             searchRequest.UpdatedBefore,
                             searchRequest.HasBacklinks,
                             searchRequest.OrphanOnly),
+                        ReadScope(session),
                         token),
                     cancellationToken).ConfigureAwait(false);
             case "admin.notes.read":
@@ -101,6 +103,7 @@ public sealed class StrictAdminVaultRpcProvider(
                     (service, token) => service.ScanNotesAsync(
                         scanRequest.Cursor,
                         scanRequest.Limit,
+                        ReadScope(session),
                         token),
                     cancellationToken).ConfigureAwait(false);
             case "admin.notes.map":
@@ -127,6 +130,7 @@ public sealed class StrictAdminVaultRpcProvider(
                 var documentMap = await vault.ExecuteAsync(
                     (service, token) => service.GetDocumentMapAsync(
                         mapRequest.DocumentId,
+                        ReadScope(session),
                         token),
                     cancellationToken).ConfigureAwait(false);
                 return BridgeDocumentMapLimiter.Apply(
@@ -155,6 +159,7 @@ public sealed class StrictAdminVaultRpcProvider(
                         backlinksRequest.DocumentId,
                         backlinksRequest.Cursor,
                         backlinksRequest.Limit,
+                        ReadScope(session),
                         token),
                     cancellationToken).ConfigureAwait(false);
             case "admin.notes.unlinked-mentions":
@@ -177,6 +182,7 @@ public sealed class StrictAdminVaultRpcProvider(
                         unlinkedRequest.DocumentId,
                         unlinkedRequest.Cursor,
                         unlinkedRequest.Limit,
+                        ReadScope(session),
                         token),
                     cancellationToken).ConfigureAwait(false);
             case "admin.tags.list":
@@ -224,6 +230,7 @@ public sealed class StrictAdminVaultRpcProvider(
                             graphRequest.Folder,
                             graphRequest.MaxNodes,
                             graphRequest.MaxEdges),
+                        ReadScope(session),
                         token),
                     cancellationToken).ConfigureAwait(false);
             case "admin.notes.create":
@@ -1128,6 +1135,13 @@ public sealed class StrictAdminVaultRpcProvider(
             VerifiedProcessKind.McpBridge => VaultActorKind.Mcp,
             _ => VaultActorKind.UserCli
         };
+    }
+
+    private static VaultReadScope ReadScope(AdminSession session)
+    {
+        return session.PathPolicy is { GlobalRead: false } pathPolicy
+            ? VaultReadScope.Restricted(pathPolicy.ReadPaths)
+            : VaultReadScope.Unrestricted;
     }
 
     private static void ConsumeApproval(

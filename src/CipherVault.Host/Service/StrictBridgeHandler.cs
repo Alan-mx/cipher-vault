@@ -204,7 +204,8 @@ public sealed class StrictBridgeHandler(
                 now + TimeSpan.FromHours(4),
                 grant.VaultSessionId,
                 AdminSessionState.Active,
-                RevocationReason: null);
+                RevocationReason: null,
+                PathPolicy: grant.PathPolicy);
             var pathAccess = BridgePathAccess.From(grant);
             await EnsurePathAccessAsync(
                 request.ToolName,

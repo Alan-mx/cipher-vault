@@ -10,18 +10,31 @@ internal static class DocumentLinkStore
     public static async Task<VaultDocumentMap> GetDocumentMapAsync(
         SqliteConnection connection,
         Guid documentId,
+        VaultReadScope readScope,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(readScope);
         var documentIdValue = documentId.ToString("D").ToLowerInvariant();
         using var document = connection.CreateCommand();
-        document.CommandText =
+        var documentSql = new StringBuilder(
             """
             SELECT document_id, title, source_path, format, revision,
                    headings_json, content, updated_at_ms
             FROM documents
-            WHERE document_id = $id AND deleted_at_ms IS NULL;
-            """;
+            WHERE document_id = $id AND deleted_at_ms IS NULL
+            """);
+        VaultReadScopeSql.Append(
+            documentSql,
+            "source_path_norm",
+            readScope,
+            "mapReadScope");
+        documentSql.Append(';');
+        document.CommandText = documentSql.ToString();
         document.Parameters.AddWithValue("$id", documentIdValue);
+        VaultReadScopeSql.AddParameters(
+            document,
+            readScope,
+            "mapReadScope");
 
         string title;
         string sourcePath;
@@ -51,6 +64,7 @@ internal static class DocumentLinkStore
         var outgoing = await ReadOutgoingLinksAsync(
             connection,
             documentIdValue,
+            readScope,
             cancellationToken).ConfigureAwait(false);
         var frontMatter = FrontMatterDocument.TryParse(content, out var snapshot)
             ? snapshot.Fields
@@ -62,7 +76,7 @@ internal static class DocumentLinkStore
             : [];
 
         using var backlinks = connection.CreateCommand();
-        backlinks.CommandText =
+        var backlinkSql = new StringBuilder(
             """
             SELECT count(*)
             FROM document_links
@@ -70,9 +84,20 @@ internal static class DocumentLinkStore
               ON source.document_id = document_links.source_document_id
             WHERE document_links.target_document_id = $id
               AND document_links.resolution_status = 'resolved'
-              AND source.deleted_at_ms IS NULL;
-            """;
+              AND source.deleted_at_ms IS NULL
+            """);
+        VaultReadScopeSql.Append(
+            backlinkSql,
+            "source.source_path_norm",
+            readScope,
+            "mapBacklinkScope");
+        backlinkSql.Append(';');
+        backlinks.CommandText = backlinkSql.ToString();
         backlinks.Parameters.AddWithValue("$id", documentIdValue);
+        VaultReadScopeSql.AddParameters(
+            backlinks,
+            readScope,
+            "mapBacklinkScope");
         var backlinkCount = Convert.ToInt32(
             await backlinks.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false));
 
@@ -95,15 +120,19 @@ internal static class DocumentLinkStore
         Guid documentId,
         string? cursor,
         int limit,
+        VaultReadScope readScope,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(readScope);
         var effectiveLimit = Math.Clamp(limit, 1, 100);
         var documentIdValue = documentId.ToString("D").ToLowerInvariant();
         await EnsureActiveDocumentAsync(
             connection,
             documentIdValue,
+            readScope,
             cancellationToken).ConfigureAwait(false);
-        var fingerprint = CursorCodec.Fingerprint(documentIdValue);
+        var fingerprint = CursorCodec.Fingerprint(
+            $"{documentIdValue}\u001F{readScope.Fingerprint}");
         BacklinkCursor? position = null;
         if (!string.IsNullOrWhiteSpace(cursor))
         {
@@ -142,6 +171,11 @@ internal static class DocumentLinkStore
               AND document_links.resolution_status = 'resolved'
               AND source.deleted_at_ms IS NULL
             """);
+        VaultReadScopeSql.Append(
+            sql,
+            "source.source_path_norm",
+            readScope,
+            "readScope");
         if (position is not null)
         {
             sql.Append(
@@ -167,6 +201,7 @@ internal static class DocumentLinkStore
         command.CommandText = sql.ToString();
         command.Parameters.AddWithValue("$targetId", documentIdValue);
         command.Parameters.AddWithValue("$limit", effectiveLimit + 1);
+        VaultReadScopeSql.AddParameters(command, readScope, "readScope");
         if (position is not null)
         {
             command.Parameters.AddWithValue("$afterUpdated", position.UpdatedAtMs);
@@ -221,8 +256,10 @@ internal static class DocumentLinkStore
             Guid documentId,
             string? cursor,
             int limit,
+            VaultReadScope readScope,
             CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(readScope);
         const int maxCandidateScan = 500;
         const int maxOccurrencesPerDocument = 3;
         var effectiveLimit = Math.Clamp(limit, 1, 100);
@@ -230,11 +267,13 @@ internal static class DocumentLinkStore
         var targetTitle = (await GetActiveDocumentTitleAsync(
                 connection,
                 targetId,
+                readScope,
                 cancellationToken)
             .ConfigureAwait(false))
             .Trim();
         var fingerprint = CursorCodec.Fingerprint(
-            $"{targetId}\u001F{DocumentLinkKeys.NormalizeTitle(targetTitle)}");
+            $"{targetId}\u001F{DocumentLinkKeys.NormalizeTitle(targetTitle)}" +
+            $"\u001F{readScope.Fingerprint}");
         UnlinkedMentionCursor? position = null;
         if (!string.IsNullOrWhiteSpace(cursor))
         {
@@ -269,6 +308,11 @@ internal static class DocumentLinkStore
               AND format = 'md'
               AND document_id <> $targetId
             """);
+        VaultReadScopeSql.Append(
+            sql,
+            "source_path_norm",
+            readScope,
+            "readScope");
         var canPrefilter = !HasCasedNonAscii(targetTitle);
         if (canPrefilter)
         {
@@ -296,6 +340,7 @@ internal static class DocumentLinkStore
         using var command = connection.CreateCommand();
         command.CommandText = sql.ToString();
         command.Parameters.AddWithValue("$targetId", targetId);
+        VaultReadScopeSql.AddParameters(command, readScope, "readScope");
         if (canPrefilter)
         {
             command.Parameters.AddWithValue(
@@ -482,6 +527,7 @@ internal static class DocumentLinkStore
     private static async Task<IReadOnlyList<VaultOutgoingLink>> ReadOutgoingLinksAsync(
         SqliteConnection connection,
         string sourceDocumentId,
+        VaultReadScope readScope,
         CancellationToken cancellationToken)
     {
         using var command = connection.CreateCommand();
@@ -563,6 +609,11 @@ internal static class DocumentLinkStore
                 target = null;
                 status = "unresolved";
             }
+            else if (target is not null && !readScope.Allows(target.VirtualPath))
+            {
+                target = null;
+                status = "unresolved";
+            }
             if (!string.Equals(status, "resolved", StringComparison.Ordinal))
             {
                 var resolution = resolutions[row.RawTargetNorm];
@@ -572,12 +623,28 @@ internal static class DocumentLinkStore
                     DocumentLinkResolutionStatus.Ambiguous => "ambiguous",
                     _ => "unresolved"
                 };
-                target = resolution.TargetDocumentId is null
-                    ? null
-                    : resolution.Candidates[0];
-                candidates = resolution.Status == DocumentLinkResolutionStatus.Ambiguous
-                    ? resolution.Candidates
-                    : [];
+                var visibleCandidates = resolution.Candidates
+                    .Where(candidate => readScope.Allows(candidate.VirtualPath))
+                    .ToArray();
+                if (resolution.Status ==
+                    DocumentLinkResolutionStatus.Ambiguous)
+                {
+                    target = null;
+                    candidates = visibleCandidates;
+                    if (readScope.IsRestricted && visibleCandidates.Length == 0)
+                    {
+                        status = "unresolved";
+                    }
+                }
+                else
+                {
+                    target = visibleCandidates.FirstOrDefault();
+                    candidates = [];
+                    if (target is null)
+                    {
+                        status = "unresolved";
+                    }
+                }
             }
             result.Add(new VaultOutgoingLink(
                 row.RawTarget,
@@ -596,12 +663,21 @@ internal static class DocumentLinkStore
     private static async Task EnsureActiveDocumentAsync(
         SqliteConnection connection,
         string documentId,
+        VaultReadScope readScope,
         CancellationToken cancellationToken)
     {
         using var command = connection.CreateCommand();
-        command.CommandText =
-            "SELECT 1 FROM documents WHERE document_id = $id AND deleted_at_ms IS NULL;";
+        var sql = new StringBuilder(
+            "SELECT 1 FROM documents WHERE document_id = $id AND deleted_at_ms IS NULL");
+        VaultReadScopeSql.Append(
+            sql,
+            "source_path_norm",
+            readScope,
+            "readScope");
+        sql.Append(';');
+        command.CommandText = sql.ToString();
         command.Parameters.AddWithValue("$id", documentId);
+        VaultReadScopeSql.AddParameters(command, readScope, "readScope");
         if (await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is null)
         {
             throw new VaultException(
@@ -613,16 +689,25 @@ internal static class DocumentLinkStore
     private static async Task<string> GetActiveDocumentTitleAsync(
         SqliteConnection connection,
         string documentId,
+        VaultReadScope readScope,
         CancellationToken cancellationToken)
     {
         using var command = connection.CreateCommand();
-        command.CommandText =
+        var sql = new StringBuilder(
             """
             SELECT title
             FROM documents
-            WHERE document_id = $id AND deleted_at_ms IS NULL;
-            """;
+            WHERE document_id = $id AND deleted_at_ms IS NULL
+            """);
+        VaultReadScopeSql.Append(
+            sql,
+            "source_path_norm",
+            readScope,
+            "readScope");
+        sql.Append(';');
+        command.CommandText = sql.ToString();
         command.Parameters.AddWithValue("$id", documentId);
+        VaultReadScopeSql.AddParameters(command, readScope, "readScope");
         var result = await command.ExecuteScalarAsync(cancellationToken)
             .ConfigureAwait(false);
         if (result is not string title)

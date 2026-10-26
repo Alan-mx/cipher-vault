@@ -24,11 +24,14 @@ internal static partial class DocumentStore
         string? folder,
         string? cursor,
         int limit,
+        VaultReadScope readScope,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(readScope);
         var effectiveLimit = Math.Clamp(limit, 1, 100);
         var normalizedFolder = NormalizeFolder(folder);
-        var fingerprint = CursorCodec.Fingerprint(normalizedFolder);
+        var fingerprint = CursorCodec.Fingerprint(
+            $"{normalizedFolder}\u001F{readScope.Fingerprint}");
         var hasCursor = CursorCodec.TryDecode(
             cursor,
             sessionId,
@@ -40,6 +43,7 @@ internal static partial class DocumentStore
             : await GetMaxUpdatedAtAsync(
                 connection,
                 normalizedFolder,
+                readScope,
                 cancellationToken).ConfigureAwait(false);
 
         var sql = new StringBuilder(
@@ -54,6 +58,11 @@ internal static partial class DocumentStore
         {
             sql.Append(" AND source_path_norm LIKE $folderPrefix ESCAPE '\\'");
         }
+        VaultReadScopeSql.Append(
+            sql,
+            "source_path_norm",
+            readScope,
+            "readScope");
         if (hasCursor)
         {
             sql.Append(
@@ -72,6 +81,7 @@ internal static partial class DocumentStore
         {
             command.Parameters.AddWithValue("$folderPrefix", EscapeLike(normalizedFolder) + "/%");
         }
+        VaultReadScopeSql.AddParameters(command, readScope, "readScope");
         command.Parameters.AddWithValue("$snapshotAt", snapshotAtMs);
         command.Parameters.AddWithValue("$limit", effectiveLimit + 1);
         if (hasCursor)
@@ -115,10 +125,12 @@ internal static partial class DocumentStore
         Guid sessionId,
         string? cursor,
         int limit,
+        VaultReadScope readScope,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(readScope);
         var effectiveLimit = Math.Clamp(limit, 1, 50);
-        var fingerprint = CursorCodec.Fingerprint(string.Empty);
+        var fingerprint = CursorCodec.Fingerprint(readScope.Fingerprint);
         var hasCursor = CursorCodec.TryDecode(
             cursor,
             sessionId,
@@ -130,6 +142,7 @@ internal static partial class DocumentStore
             : await GetMaxUpdatedAtAsync(
                 connection,
                 string.Empty,
+                readScope,
                 cancellationToken).ConfigureAwait(false);
 
         var sql = new StringBuilder(
@@ -140,6 +153,11 @@ internal static partial class DocumentStore
             WHERE deleted_at_ms IS NULL
               AND updated_at_ms <= $snapshotAt
             """);
+        VaultReadScopeSql.Append(
+            sql,
+            "source_path_norm",
+            readScope,
+            "readScope");
         if (hasCursor)
         {
             sql.Append(
@@ -154,6 +172,7 @@ internal static partial class DocumentStore
 
         using var command = connection.CreateCommand();
         command.CommandText = sql.ToString();
+        VaultReadScopeSql.AddParameters(command, readScope, "readScope");
         command.Parameters.AddWithValue("$snapshotAt", snapshotAtMs);
         command.Parameters.AddWithValue("$limit", effectiveLimit + 1);
         if (hasCursor)
@@ -805,6 +824,7 @@ internal static partial class DocumentStore
             cursor,
             limit,
             new VaultSearchFilter(),
+            VaultReadScope.Unrestricted,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -818,16 +838,42 @@ internal static partial class DocumentStore
         VaultSearchFilter filter,
         CancellationToken cancellationToken)
     {
+        return await SearchAsync(
+            connection,
+            sessionId,
+            query,
+            folder,
+            cursor,
+            limit,
+            filter,
+            VaultReadScope.Unrestricted,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public static async Task<VaultSearchPage> SearchAsync(
+        SqliteConnection connection,
+        Guid sessionId,
+        string query,
+        string? folder,
+        string? cursor,
+        int limit,
+        VaultSearchFilter filter,
+        VaultReadScope readScope,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(readScope);
         var normalizedQuery = NormalizeQuery(query);
         var effectiveLimit = Math.Clamp(limit, 1, MaxSearchLimit);
         var normalizedFolder = NormalizeFolder(folder);
         var normalizedFilter = NormalizeSearchFilter(filter);
         var fingerprint = CursorCodec.Fingerprint(
             $"{normalizedQuery}\u001F{normalizedFolder}\u001F" +
-            SearchFilterFingerprint(normalizedFilter));
+            $"{SearchFilterFingerprint(normalizedFilter)}\u001F" +
+            readScope.Fingerprint);
         var totalActive = await CountActiveDocumentsAsync(
             connection,
             normalizedFolder,
+            readScope,
             cancellationToken).ConfigureAwait(false);
 
         return normalizedQuery.Length >= 3
@@ -841,6 +887,7 @@ internal static partial class DocumentStore
                 cursor,
                 totalActive,
                 normalizedFilter,
+                readScope,
                 cancellationToken).ConfigureAwait(false)
             : await SearchShortAsync(
                 connection,
@@ -852,6 +899,7 @@ internal static partial class DocumentStore
                 cursor,
                 totalActive,
                 normalizedFilter,
+                readScope,
                 cancellationToken).ConfigureAwait(false);
     }
 
@@ -865,6 +913,7 @@ internal static partial class DocumentStore
         string? cursor,
         int totalActive,
         VaultSearchFilter filter,
+        VaultReadScope readScope,
         CancellationToken cancellationToken)
     {
         var hasCursor = CursorCodec.TryDecode(
@@ -876,6 +925,12 @@ internal static partial class DocumentStore
         var folderClause = folder.Length == 0
             ? string.Empty
             : " AND d.source_path_norm LIKE $folderPrefix ESCAPE '\\'";
+        var scopeSql = new StringBuilder();
+        VaultReadScopeSql.Append(
+            scopeSql,
+            "d.source_path_norm",
+            readScope,
+            "searchReadScope");
         var filterSql = BuildSearchFilterSql(filter);
         var match = $"\"{query.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
         var cursorClause = hasCursor
@@ -904,6 +959,7 @@ internal static partial class DocumentStore
                 WHERE documents_fts MATCH $match
                   AND d.deleted_at_ms IS NULL
                   {folderClause}
+                  {scopeSql}
                   {filterSql.Sql}
             ) ranked
             {cursorClause}
@@ -916,6 +972,10 @@ internal static partial class DocumentStore
         {
             command.Parameters.AddWithValue("$folderPrefix", EscapeLike(folder) + "/%");
         }
+        VaultReadScopeSql.AddParameters(
+            command,
+            readScope,
+            "searchReadScope");
         AddFilterParameters(command, filterSql);
         if (hasCursor)
         {
@@ -942,6 +1002,7 @@ internal static partial class DocumentStore
             match,
             folder,
             filter,
+            readScope,
             cancellationToken).ConfigureAwait(false);
         return BuildSearchPage(
             hits,
@@ -965,6 +1026,7 @@ internal static partial class DocumentStore
         string? cursor,
         int totalActive,
         VaultSearchFilter filter,
+        VaultReadScope readScope,
         CancellationToken cancellationToken)
     {
         var hasCursor = CursorCodec.TryDecode(
@@ -977,6 +1039,12 @@ internal static partial class DocumentStore
         var folderClause = folder.Length == 0
             ? string.Empty
             : " AND d.source_path_norm LIKE $folderPrefix ESCAPE '\\'";
+        var scopeSql = new StringBuilder();
+        VaultReadScopeSql.Append(
+            scopeSql,
+            "d.source_path_norm",
+            readScope,
+            "searchReadScope");
         var filterSql = BuildSearchFilterSql(filter);
         var scanWindowSql =
             $"""
@@ -985,6 +1053,7 @@ internal static partial class DocumentStore
              FROM documents d
              WHERE d.deleted_at_ms IS NULL
                {folderClause}
+               {scopeSql}
                {filterSql.Sql}
              ORDER BY d.updated_at_ms DESC, d.document_id
              LIMIT $scanLimit
@@ -1023,6 +1092,10 @@ internal static partial class DocumentStore
         {
             command.Parameters.AddWithValue("$folderPrefix", EscapeLike(folder) + "/%");
         }
+        VaultReadScopeSql.AddParameters(
+            command,
+            readScope,
+            "searchReadScope");
         AddFilterParameters(command, filterSql);
         if (hasCursor)
         {
@@ -1051,6 +1124,7 @@ internal static partial class DocumentStore
             like,
             folder,
             filter,
+            readScope,
             cancellationToken).ConfigureAwait(false);
         return BuildSearchPage(
             hits,
@@ -1147,6 +1221,7 @@ internal static partial class DocumentStore
     private static async Task<int> CountActiveDocumentsAsync(
         SqliteConnection connection,
         string folder,
+        VaultReadScope readScope,
         CancellationToken cancellationToken)
     {
         using var command = connection.CreateCommand();
@@ -1156,6 +1231,17 @@ internal static partial class DocumentStore
             command.CommandText += " AND source_path_norm LIKE $folderPrefix ESCAPE '\\'";
             command.Parameters.AddWithValue("$folderPrefix", EscapeLike(folder) + "/%");
         }
+        var sql = new StringBuilder(command.CommandText);
+        VaultReadScopeSql.Append(
+            sql,
+            "source_path_norm",
+            readScope,
+            "searchReadScope");
+        command.CommandText = sql.ToString();
+        VaultReadScopeSql.AddParameters(
+            command,
+            readScope,
+            "searchReadScope");
         var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         return Convert.ToInt32(value);
     }
@@ -1310,6 +1396,7 @@ internal static partial class DocumentStore
     private static async Task<long> GetMaxUpdatedAtAsync(
         SqliteConnection connection,
         string folder,
+        VaultReadScope readScope,
         CancellationToken cancellationToken)
     {
         using var command = connection.CreateCommand();
@@ -1324,6 +1411,14 @@ internal static partial class DocumentStore
                 "$folderPrefix",
                 EscapeLike(folder) + "/%");
         }
+        var sql = new StringBuilder(command.CommandText);
+        VaultReadScopeSql.Append(
+            sql,
+            "source_path_norm",
+            readScope,
+            "readScope");
+        command.CommandText = sql.ToString();
+        VaultReadScopeSql.AddParameters(command, readScope, "readScope");
         var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         return Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
     }
@@ -1785,9 +1880,16 @@ internal static partial class DocumentStore
         string match,
         string folder,
         VaultSearchFilter filter,
+        VaultReadScope readScope,
         CancellationToken cancellationToken)
     {
         var filterSql = BuildSearchFilterSql(filter);
+        var scopeSql = new StringBuilder();
+        VaultReadScopeSql.Append(
+            scopeSql,
+            "d.source_path_norm",
+            readScope,
+            "searchReadScope");
         using var command = connection.CreateCommand();
         command.CommandText =
             $"""
@@ -1796,6 +1898,7 @@ internal static partial class DocumentStore
             JOIN documents d ON d.document_id = documents_fts.document_id
             WHERE documents_fts MATCH $match
               AND d.deleted_at_ms IS NULL
+              {scopeSql}
               {filterSql.Sql}
             """;
         if (folder.Length > 0)
@@ -1803,6 +1906,10 @@ internal static partial class DocumentStore
             command.CommandText += " AND d.source_path_norm LIKE $folderPrefix ESCAPE '\\'";
             command.Parameters.AddWithValue("$folderPrefix", EscapeLike(folder) + "/%");
         }
+        VaultReadScopeSql.AddParameters(
+            command,
+            readScope,
+            "searchReadScope");
         AddFilterParameters(command, filterSql);
         command.Parameters.AddWithValue("$match", match);
         var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
@@ -1815,6 +1922,7 @@ internal static partial class DocumentStore
         string like,
         string folder,
         VaultSearchFilter filter,
+        VaultReadScope readScope,
         CancellationToken cancellationToken)
     {
         using var command = connection.CreateCommand();
@@ -1841,6 +1949,10 @@ internal static partial class DocumentStore
                 "$folderPrefix",
                 EscapeLike(folder) + "/%");
         }
+        VaultReadScopeSql.AddParameters(
+            command,
+            readScope,
+            "searchReadScope");
         AddFilterParameters(command, BuildSearchFilterSql(filter));
         var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         return Convert.ToInt32(value);

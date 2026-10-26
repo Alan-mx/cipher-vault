@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using CipherVault.Core;
@@ -32,6 +33,211 @@ public sealed class DocumentStoreTests
         Assert.Equal(2, page.Items.Count);
         Assert.All(page.Items, item => Assert.StartsWith("健康/", item.VirtualPath));
         Assert.Null(page.NextCursor);
+    }
+
+    [Fact]
+    public async Task ScopedCatalogScanAndSearchFilterBeforeCursorGeneration()
+    {
+        await using var fixture = await DocumentFixture.CreateAsync();
+        await fixture.Service.UnlockAsync(
+            fixture.VaultPath,
+            Password,
+            VaultCredentialType.Password);
+        var visibleOne = await fixture.Service.CreateNoteAsync(
+            "visible-one",
+            "Projects",
+            "md",
+            "scopevet alpha",
+            [],
+            VaultActorKind.Mcp);
+        var visibleTwo = await fixture.Service.CreateNoteAsync(
+            "visible-two",
+            "Projects",
+            "md",
+            "scopevet beta",
+            [],
+            VaultActorKind.Mcp);
+        var hidden = await fixture.Service.CreateNoteAsync(
+            "hidden",
+            "Private",
+            "md",
+            "scopevet secret",
+            [],
+            VaultActorKind.Mcp);
+        var scope = VaultReadScope.Restricted(["Projects"]);
+
+        var catalog = await fixture.Service.ListCatalogAsync(
+            null,
+            null,
+            1,
+            scope);
+        Assert.Single(catalog.Items);
+        Assert.StartsWith("Projects/", catalog.Items[0].VirtualPath);
+        AssertCursorClean(catalog.NextCursor, hidden.DocumentId, "Private/hidden");
+
+        var scan = await fixture.Service.ScanNotesAsync(null, 1, scope);
+        Assert.Single(scan.Items);
+        Assert.False(scan.Done);
+        AssertCursorClean(scan.NextCursor, hidden.DocumentId, "Private/hidden");
+
+        var search = await fixture.Service.SearchNotesAsync(
+            "scopevet",
+            null,
+            null,
+            1,
+            new VaultSearchFilter(),
+            scope);
+        var hit = Assert.Single(search.Hits);
+        Assert.StartsWith("Projects/", hit.VirtualPath);
+        Assert.Equal(2, search.Coverage.TotalDocuments);
+        Assert.Equal(2, search.Coverage.MatchedDocuments);
+        Assert.Equal(1, search.Coverage.ReturnedDocuments);
+        AssertCursorClean(search.NextCursor, hidden.DocumentId, "Private/hidden");
+
+        var secondSearch = await fixture.Service.SearchNotesAsync(
+            "scopevet",
+            null,
+            search.NextCursor,
+            1,
+            new VaultSearchFilter(),
+            scope);
+        var secondHit = Assert.Single(secondSearch.Hits);
+        Assert.NotEqual(hit.DocumentId, secondHit.DocumentId);
+        Assert.Null(secondSearch.NextCursor);
+        Assert.Contains(
+            secondHit.DocumentId,
+            new[] { visibleOne.DocumentId, visibleTwo.DocumentId });
+    }
+
+    [Fact]
+    public async Task ScopedKnowledgeQueriesHideSourcesTargetsCountsAndGraph()
+    {
+        await using var fixture = await DocumentFixture.CreateAsync();
+        await fixture.Service.UnlockAsync(
+            fixture.VaultPath,
+            Password,
+            VaultCredentialType.Password);
+        var target = await fixture.Service.CreateNoteAsync(
+            "ScopedTarget",
+            "Projects",
+            "md",
+            "# ScopedTarget",
+            [],
+            VaultActorKind.Mcp);
+        var center = await fixture.Service.CreateNoteAsync(
+            "center",
+            "Projects",
+            "md",
+            "[[ScopedTarget]] [[Private/secret]] [[Projects/edge]]",
+            [],
+            VaultActorKind.Mcp);
+        await fixture.Service.CreateNoteAsync(
+            "edge",
+            "Projects",
+            "md",
+            "# edge",
+            [],
+            VaultActorKind.Mcp);
+        await fixture.Service.CreateNoteAsync(
+            "visible-mention",
+            "Projects",
+            "md",
+            "ScopedTarget appears here.",
+            [],
+            VaultActorKind.Mcp);
+        await fixture.Service.CreateNoteAsync(
+            "visible-linked",
+            "Projects",
+            "md",
+            "[[ScopedTarget]]",
+            [],
+            VaultActorKind.Mcp);
+        await fixture.Service.CreateNoteAsync(
+            "visible-mention-two",
+            "Projects",
+            "md",
+            "ScopedTarget appears again.",
+            [],
+            VaultActorKind.Mcp);
+        var hiddenMention = await fixture.Service.CreateNoteAsync(
+            "hidden-mention",
+            "Private",
+            "md",
+            "ScopedTarget appears here too. [[ScopedTarget]]",
+            [],
+            VaultActorKind.Mcp);
+        var hiddenTarget = await fixture.Service.CreateNoteAsync(
+            "secret",
+            "Private",
+            "md",
+            "# secret",
+            [],
+            VaultActorKind.Mcp);
+        var scope = VaultReadScope.Restricted(["Projects"]);
+
+        var backlinks = await fixture.Service.ListBacklinksAsync(
+            target.DocumentId,
+            null,
+            1,
+            scope);
+        Assert.Single(backlinks.Items);
+        Assert.StartsWith("Projects/", backlinks.Items[0].SourceVirtualPath);
+        Assert.DoesNotContain(
+            backlinks.Items,
+            item => item.SourceDocumentId == hiddenMention.DocumentId);
+        AssertCursorClean(
+            backlinks.NextCursor,
+            hiddenMention.DocumentId,
+            "Private/hidden-mention");
+
+        var mentions = await fixture.Service.ListUnlinkedMentionsAsync(
+            target.DocumentId,
+            null,
+            1,
+            scope);
+        var mention = Assert.Single(mentions.Items);
+        Assert.NotEqual(hiddenMention.DocumentId, mention.SourceDocumentId);
+        Assert.NotEqual(target.DocumentId, mention.SourceDocumentId);
+        Assert.StartsWith("Projects/", mention.SourceVirtualPath);
+        Assert.DoesNotContain(
+            mentions.Items,
+            item => item.SourceDocumentId == hiddenMention.DocumentId);
+        AssertCursorClean(
+            mentions.NextCursor,
+            hiddenMention.DocumentId,
+            "Private/hidden-mention");
+
+        var map = await fixture.Service.GetDocumentMapAsync(
+            center.DocumentId,
+            scope);
+        Assert.Equal(0, map.BacklinkCount);
+        Assert.DoesNotContain(
+            map.OutgoingLinks,
+            link => link.Target?.VirtualPath.StartsWith(
+                "Private/",
+                StringComparison.OrdinalIgnoreCase) == true);
+        var privateLink = Assert.Single(
+            map.OutgoingLinks,
+            link => link.RawTarget == "Private/secret");
+        Assert.Equal("unresolved", privateLink.ResolutionStatus);
+        Assert.Null(privateLink.Target);
+
+        var graph = await fixture.Service.GetLocalGraphAsync(
+            new VaultLocalGraphQuery(
+                center.DocumentId,
+                2,
+                [],
+                null,
+                20,
+                50),
+            scope);
+        Assert.DoesNotContain(
+            graph.Nodes,
+            node => node.DocumentId == hiddenTarget.DocumentId);
+        Assert.DoesNotContain(
+            graph.Edges,
+            edge => edge.SourceDocumentId == hiddenTarget.DocumentId ||
+                edge.TargetDocumentId == hiddenTarget.DocumentId);
     }
 
     [Fact]
@@ -1318,6 +1524,29 @@ public sealed class DocumentStoreTests
         {
             return (false, exception.Code);
         }
+    }
+
+    private static void AssertCursorClean(
+        string? cursor,
+        Guid forbiddenDocumentId,
+        string forbiddenPath)
+    {
+        Assert.NotNull(cursor);
+        var normalized = cursor
+            .Replace('-', '+')
+            .Replace('_', '/');
+        normalized = normalized.PadRight(
+            normalized.Length + ((4 - normalized.Length % 4) % 4),
+            '=');
+        var payload = Encoding.UTF8.GetString(Convert.FromBase64String(normalized));
+        Assert.DoesNotContain(
+            forbiddenDocumentId.ToString("D"),
+            payload,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(
+            forbiddenPath,
+            payload,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     private sealed class DocumentFixture : IAsyncDisposable

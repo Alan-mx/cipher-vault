@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Security.Principal;
+using System.Text;
 using System.Text.Json;
 using CipherVault.Core;
 using CipherVault.Core.Configuration;
@@ -584,6 +585,17 @@ public sealed class StrictBridgePipeTests
         Assert.True(
             created.RootElement.GetProperty("ok").GetBoolean(),
             created.RootElement.GetRawText());
+        using var createdSecond = await CallToolAsync(
+            client,
+            "create_note",
+            [
+                ("title", "Project Note Two"),
+                ("folder", "Projects"),
+                ("content", "# Project Note Two")
+            ]);
+        Assert.True(
+            createdSecond.RootElement.GetProperty("ok").GetBoolean(),
+            createdSecond.RootElement.GetRawText());
 
         using var deniedCreate = await CallToolAsync(
             client,
@@ -605,15 +617,34 @@ public sealed class StrictBridgePipeTests
         using var catalog = await CallToolAsync(
             client,
             "list_catalog",
-            [("limit", 20)]);
-        var titles = catalog.RootElement
-            .GetProperty("page")
+            [("limit", 1)]);
+        var catalogPage = catalog.RootElement.GetProperty("page");
+        var titles = catalogPage
             .GetProperty("items")
             .EnumerateArray()
             .Select(item => item.GetProperty("title").GetString())
             .ToArray();
-        Assert.Contains("Project Note", titles);
+        Assert.Single(titles);
+        var firstCatalogItem = catalogPage
+            .GetProperty("items")
+            .EnumerateArray()
+            .First();
+        Assert.StartsWith("Projects/", firstCatalogItem
+            .GetProperty("virtualPath")
+            .GetString());
         Assert.DoesNotContain("Other Note", titles);
+        var nextCursor = catalogPage.GetProperty("nextCursor").GetString();
+        Assert.NotNull(nextCursor);
+        var cursorPayload = Encoding.UTF8.GetString(
+            Convert.FromBase64String(PadCursor(nextCursor!)));
+        Assert.DoesNotContain(
+            other.DocumentId.ToString("D"),
+            cursorPayload,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(
+            "Other/",
+            cursorPayload,
+            StringComparison.OrdinalIgnoreCase);
 
         using var deniedRead = await CallToolAsync(
             client,
@@ -1190,6 +1221,16 @@ public sealed class StrictBridgePipeTests
                     .OrderBy(value => value, StringComparer.Ordinal)
                     .ToArray(),
             GrantExpiresAt: null);
+    }
+
+    private static string PadCursor(string cursor)
+    {
+        var normalized = cursor
+            .Replace('-', '+')
+            .Replace('_', '/');
+        return normalized.PadRight(
+            normalized.Length + ((4 - normalized.Length % 4) % 4),
+            '=');
     }
 
     private sealed class MutableTimeProvider(DateTimeOffset now) : TimeProvider

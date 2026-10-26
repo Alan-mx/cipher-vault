@@ -39,6 +39,52 @@ public sealed record AccessGrantPromptResult(
 
 public static class WindowsAccessGrantPrompt
 {
+    public static bool IncludesAction(
+        IEnumerable<string> scopes,
+        string action)
+    {
+        return scopes.Any(scope =>
+        {
+            var separator = scope.IndexOf(':');
+            var value = separator < 0 ? scope : scope[..separator];
+            return string.Equals(
+                value.Trim(),
+                action,
+                StringComparison.OrdinalIgnoreCase);
+        });
+    }
+
+    public static IReadOnlyList<string> DescribeScopes(
+        IEnumerable<string> scopes)
+    {
+        return scopes
+            .Select(ParseScope)
+            .Where(scope => scope.Action.Length > 0)
+            .DistinctBy(scope => (scope.Action, scope.Folder))
+            .OrderBy(scope => scope.Action switch
+            {
+                "read" => 0,
+                "write" => 1,
+                "delete" => 2,
+                _ => 3
+            })
+            .ThenBy(scope => scope.Folder, StringComparer.OrdinalIgnoreCase)
+            .Select(scope =>
+            {
+                var action = scope.Action switch
+                {
+                    "read" => "允许读取",
+                    "write" => "允许写入",
+                    "delete" => "允许删除",
+                    _ => $"未知权限 {scope.Action}"
+                };
+                return scope.Folder is null
+                    ? $"{action}：全部文档（{scope.Action}）"
+                    : $"{action}：{scope.Folder.Trim('/')}/（{scope.Action}:{scope.Folder.Trim('/')}）";
+            })
+            .ToArray();
+    }
+
     public static Task<AccessGrantPromptResult> RequestAsync(
         string title,
         AccessGrantPromptRequest request,
@@ -84,31 +130,31 @@ public static class WindowsAccessGrantPrompt
             AccessGrantPromptRequest request)
         {
             Title = title;
-            Width = 480;
-            Height = 340;
+            Width = 560;
+            Height = 460;
             ResizeMode = ResizeMode.NoResize;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             Topmost = true;
             ShowInTaskbar = true;
 
-            var allowRead = request.AllowedScopes.Contains("read");
-            var allowWrite = request.AllowedScopes.Contains("write");
-            var allowDelete = request.AllowedScopes.Contains("delete");
-            var requestRead = request.RequestedScopes.Contains("read");
-            var requestWrite = request.RequestedScopes.Contains("write");
-            var requestDelete = request.RequestedScopes.Contains("delete");
+            var allowRead = IncludesAction(request.AllowedScopes, "read");
+            var allowWrite = IncludesAction(request.AllowedScopes, "write");
+            var allowDelete = IncludesAction(request.AllowedScopes, "delete");
+            var requestRead = IncludesAction(request.RequestedScopes, "read");
+            var requestWrite = IncludesAction(request.RequestedScopes, "write");
+            var requestDelete = IncludesAction(request.RequestedScopes, "delete");
 
             _readBox = CreateScopeCheckBox(
-                "读取（read，必需）",
+                "读取（必需）",
                 enabled: false,
                 allowRead && requestRead);
             _writeBox = CreateScopeCheckBox(
-                "写入（write）",
+                "写入",
                 allowWrite && requestWrite,
                 allowWrite && requestWrite);
             _deleteAllowed = allowDelete && requestDelete;
             _deleteBox = CreateScopeCheckBox(
-                "删除（delete，需写入）",
+                "删除（需写入）",
                 enabled: false,
                 isChecked: false);
             _writeBox.Checked += (_, _) => UpdateDeleteAvailability();
@@ -168,6 +214,21 @@ public static class WindowsAccessGrantPrompt
                 Text = $"Token 权限上限：{request.TokenAccessMode}",
                 Margin = new Thickness(0, 4, 0, 12)
             });
+            panel.Children.Add(new TextBlock
+            {
+                Text = "本次请求的目录范围：",
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(0, 0, 0, 4)
+            });
+            foreach (var line in DescribeScopes(request.RequestedScopes))
+            {
+                panel.Children.Add(new TextBlock
+                {
+                    Text = $"• {line}",
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(12, 0, 0, 3)
+                });
+            }
             panel.Children.Add(_readBox);
             panel.Children.Add(_writeBox);
             panel.Children.Add(_deleteBox);
@@ -178,7 +239,12 @@ public static class WindowsAccessGrantPrompt
                 TextWrapping = TextWrapping.Wrap
             });
             panel.Children.Add(buttons);
-            Content = panel;
+            Content = new ScrollViewer
+            {
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                Content = panel
+            };
             Loaded += (_, _) => approveButton.Focus();
         }
 
@@ -217,5 +283,13 @@ public static class WindowsAccessGrantPrompt
             _confirmed = true;
             Close();
         }
+    }
+
+    private static (string Action, string? Folder) ParseScope(string scope)
+    {
+        var parts = scope.Split(':', 2, StringSplitOptions.TrimEntries);
+        return (
+            parts[0].ToLowerInvariant(),
+            parts.Length > 1 && parts[1].Length > 0 ? parts[1] : null);
     }
 }
