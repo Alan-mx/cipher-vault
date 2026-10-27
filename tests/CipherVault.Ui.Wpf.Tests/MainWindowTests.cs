@@ -4,6 +4,8 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using CipherVault.Auth.Win;
 using CipherVault.Core;
@@ -711,6 +713,133 @@ public sealed class MainWindowTests
     }
 
     [Fact]
+    public async Task DocumentWorkspaceRendersLocalGraph()
+    {
+        if (!ShouldRunInteractiveUiTests())
+        {
+            return;
+        }
+
+        using var uiLock = UiAutomationLock.Acquire();
+        await RunOnStaAsync(async () =>
+        {
+            using var fixture = new WindowFixture();
+            await fixture.InitializeVaultAsync();
+            await using var service = new InProcessHostVaultClient();
+            await service.UnlockAsync(
+                fixture.VaultPath,
+                Password,
+                VaultCredentialType.Password);
+            var target = await service.CreateNoteAsync(
+                "图目标",
+                null,
+                "md",
+                "# 图目标\n正文",
+                null);
+            await service.CreateNoteAsync(
+                "图来源",
+                null,
+                "md",
+                "[[图目标]]",
+                null);
+            var workspace = new DocumentWorkspaceView();
+            workspace.Initialize(service);
+            var window = new Window
+            {
+                Width = 1000,
+                Height = 700,
+                Content = workspace
+            };
+            try
+            {
+                window.Show();
+                Assert.True(await workspace.LoadDocumentAsync(target.DocumentId));
+                Find<TabControl>(workspace, "ContextTabs").SelectedIndex = 2;
+                InvokePrivate(
+                    workspace,
+                    "RefreshGraphButton_Click",
+                    workspace,
+                    new RoutedEventArgs());
+                await WaitUntilAsync(
+                    () => Find<TextBlock>(workspace, "GraphSummary").Text.Contains(
+                        "2 个节点",
+                        StringComparison.Ordinal),
+                    TimeSpan.FromSeconds(10));
+                var graphHost = Find<DockPanel>(workspace, "GraphHost");
+                var graphCanvas = await WaitUntilGraphCanvasAsync(
+                    graphHost,
+                    TimeSpan.FromSeconds(10));
+                Assert.NotNull(graphCanvas.RenderTransform);
+                AssertGraphContainsVisiblePixels(graphHost);
+            }
+            finally
+            {
+                workspace.Clear();
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task GraphRefreshDoesNotRenderAfterWorkspaceIsCleared()
+    {
+        if (!ShouldRunInteractiveUiTests())
+        {
+            return;
+        }
+
+        using var uiLock = UiAutomationLock.Acquire();
+        await RunOnStaAsync(async () =>
+        {
+            using var fixture = new WindowFixture();
+            await fixture.InitializeVaultAsync();
+            await using var service = new InProcessHostVaultClient();
+            await service.UnlockAsync(
+                fixture.VaultPath,
+                Password,
+                VaultCredentialType.Password);
+            var target = await service.CreateNoteAsync(
+                "待清空图",
+                null,
+                "md",
+                "# 待清空图",
+                null);
+            var workspace = new DocumentWorkspaceView();
+            workspace.Initialize(service);
+            var window = new Window
+            {
+                Width = 1000,
+                Height = 700,
+                Content = workspace
+            };
+            try
+            {
+                window.Show();
+                Assert.True(await workspace.LoadDocumentAsync(target.DocumentId));
+                Find<TabControl>(workspace, "ContextTabs").SelectedIndex = 2;
+                InvokePrivate(
+                    workspace,
+                    "RefreshGraphButton_Click",
+                    workspace,
+                    new RoutedEventArgs());
+                workspace.Clear();
+                await Task.Delay(500);
+
+                var graphHost = Find<DockPanel>(workspace, "GraphHost");
+                Assert.Empty(graphHost.Children);
+                Assert.Equal(
+                    "点击“刷新图谱”加载当前文档关系",
+                    Find<TextBlock>(workspace, "GraphSummary").Text);
+            }
+            finally
+            {
+                workspace.Clear();
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
     public Task SessionRemainingTimeIsFormattedForUi()
     {
         return RunOnStaAsync(() =>
@@ -939,6 +1068,64 @@ public sealed class MainWindowTests
             }
             await Task.Delay(25);
         }
+    }
+
+    private static async Task<Canvas> WaitUntilGraphCanvasAsync(
+        DockPanel graphHost,
+        TimeSpan timeout)
+    {
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            graphHost.UpdateLayout();
+            var canvases = graphHost.Children.OfType<Canvas>().ToArray();
+            if (graphHost.ActualWidth > 100 &&
+                graphHost.ActualHeight > 100 &&
+                canvases.Length == 1 &&
+                canvases[0].ActualWidth > 0 &&
+                canvases[0].ActualHeight > 0 &&
+                canvases[0].Children.Count > 0)
+            {
+                return canvases[0];
+            }
+            await Task.Delay(25);
+        }
+        var children = string.Join(
+            ", ",
+            graphHost.Children
+                .Cast<FrameworkElement>()
+                .Select(child =>
+                    $"{child.GetType().Name}=" +
+                    $"{child.ActualWidth:0.#}x{child.ActualHeight:0.#}"));
+        throw new TimeoutException(
+            $"Graph host={graphHost.ActualWidth:0.#}x" +
+            $"{graphHost.ActualHeight:0.#}; children=[{children}]");
+    }
+
+    private static void AssertGraphContainsVisiblePixels(FrameworkElement graphHost)
+    {
+        var width = Math.Max(1, (int)Math.Ceiling(graphHost.ActualWidth));
+        var height = Math.Max(1, (int)Math.Ceiling(graphHost.ActualHeight));
+        var bitmap = new RenderTargetBitmap(
+            width,
+            height,
+            96,
+            96,
+            PixelFormats.Pbgra32);
+        bitmap.Render(graphHost);
+        var stride = width * 4;
+        var pixels = new byte[stride * height];
+        bitmap.CopyPixels(pixels, stride, 0);
+        var colors = new HashSet<int>();
+        for (var offset = 0; offset < pixels.Length; offset += 4)
+        {
+            var color = BitConverter.ToInt32(pixels, offset);
+            if (colors.Add(color) && colors.Count > 1)
+            {
+                return;
+            }
+        }
+        Assert.Fail("The local graph rendered no visible content.");
     }
 
     private static bool ShouldRunInteractiveUiTests()

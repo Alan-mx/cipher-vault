@@ -157,8 +157,10 @@
                             <TextBlock x:Name="GraphSummary" Foreground="#667085"
                                        Margin="0,2,0,6" Text="选择文档后加载图谱" />
                         </StackPanel>
-                        <Border x:Name="GraphHost" Grid.Row="1"
-                                Background="#FAFBFC" />
+                        <DockPanel x:Name="GraphHost" Grid.Row="1"
+                                   Background="#FAFBFC"
+                                   ClipToBounds="True"
+                                   LastChildFill="True" />
                     </Grid>
                 </TabItem>
             </TabControl>

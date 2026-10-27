@@ -30,10 +30,12 @@ public partial class DocumentWorkspaceView : UserControl
     private List<VaultCatalogItem>? _linkTargets;
     private WikiLinkCompletion? _linkCompletion;
     private GraphViewer? _graphViewer;
+    private long _graphRequestVersion;
 
     public DocumentWorkspaceView()
     {
         InitializeComponent();
+        GraphHost.MouseLeftButtonDown += GraphCanvas_MouseLeftButtonDown;
     }
 
     public event EventHandler? DocumentSaved;
@@ -726,6 +728,8 @@ public partial class DocumentWorkspaceView : UserControl
         {
             return;
         }
+        var documentId = _documentId.Value;
+        var requestVersion = ++_graphRequestVersion;
         try
         {
             var depth = GraphDepthComboBox.SelectedIndex == 1 ? 2 : 1;
@@ -733,7 +737,7 @@ public partial class DocumentWorkspaceView : UserControl
                 .Split(',', StringSplitOptions.RemoveEmptyEntries |
                             StringSplitOptions.TrimEntries);
             var query = new VaultLocalGraphQuery(
-                _documentId.Value,
+                documentId,
                 depth,
                 tags,
                 string.IsNullOrWhiteSpace(GraphFolderTextBox.Text)
@@ -742,11 +746,20 @@ public partial class DocumentWorkspaceView : UserControl
                 200,
                 500);
             var graph = await _service.GetLocalGraphAsync(query).ConfigureAwait(true);
+            if (_documentId != documentId ||
+                requestVersion != _graphRequestVersion)
+            {
+                return;
+            }
             RenderGraph(graph);
         }
         catch (Exception exception)
         {
-            ShowError(exception);
+            if (_documentId == documentId &&
+                requestVersion == _graphRequestVersion)
+            {
+                ShowError(exception);
+            }
         }
     }
 
@@ -785,15 +798,12 @@ public partial class DocumentWorkspaceView : UserControl
             }
         }
 
-        var canvas = new Canvas();
-        GraphHost.Child = canvas;
+        ResetGraph();
         var viewer = new GraphViewer
         {
             RunLayoutAsync = true
         };
-        viewer.BindToPanel(canvas);
-        viewer.LayoutComplete += (_, _) => viewer.SetInitialTransform();
-        canvas.MouseLeftButtonDown += GraphCanvas_MouseLeftButtonDown;
+        viewer.BindToPanel(GraphHost);
         _graphViewer = viewer;
         viewer.Graph = graph;
         GraphSummary.Text =
@@ -826,7 +836,12 @@ public partial class DocumentWorkspaceView : UserControl
 
     private void ResetGraph()
     {
-        GraphHost.Child = null;
+        _graphRequestVersion++;
+        if (_graphViewer is not null)
+        {
+            _graphViewer.CancelToken.Canceled = true;
+        }
+        GraphHost.Children.Clear();
         GraphSummary.Text = "点击“刷新图谱”加载当前文档关系";
         _graphViewer = null;
     }
