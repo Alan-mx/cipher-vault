@@ -67,6 +67,15 @@ public sealed record StoredAccessGrantRevokeAllOutcome(
     int AlreadyRevokedCount,
     int AlreadyExpiredCount);
 
+public sealed record StoredAccessGrantCancellation(
+    Guid GrantId,
+    string ClientId,
+    Guid ClientInstanceId,
+    Guid ProcessSessionId,
+    Guid VaultSessionId,
+    int RequestedScopes,
+    string ReasonCode);
+
 public sealed record AccessDeniedAudit(
     string ClientId,
     Guid ClientInstanceId,
@@ -107,8 +116,14 @@ public interface IAccessGrantStore
 
     Task<StoredAccessGrantRevokeAllOutcome> RevokeAllAsync(
         IReadOnlyCollection<Guid> activeGrantIds,
+        IReadOnlyCollection<StoredAccessGrantCancellation> pendingCancellations,
         string reason,
         DateTimeOffset now,
+        VaultAuditContext auditContext,
+        CancellationToken cancellationToken = default);
+
+    Task AppendPendingCancellationAsync(
+        StoredAccessGrantCancellation cancellation,
         VaultAuditContext auditContext,
         CancellationToken cancellationToken = default);
 

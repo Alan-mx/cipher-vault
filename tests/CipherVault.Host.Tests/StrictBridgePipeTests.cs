@@ -6,6 +6,7 @@ using System.Text.Json;
 using CipherVault.Core;
 using CipherVault.Core.Configuration;
 using CipherVault.Core.Documents;
+using CipherVault.Core.Grants;
 using CipherVault.Core.Session;
 using CipherVault.Host.Client;
 using CipherVault.Host.Contracts;
@@ -275,6 +276,143 @@ public sealed class StrictBridgePipeTests
 
         _ = await client.CloseSessionAsync();
         _ = await acceptTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task RevokedGrantBlocksExistingSessionDocumentOperations()
+    {
+        var timeout = TimeSpan.FromSeconds(10);
+        await using var environment = await CreateRealBridgeEnvironmentAsync();
+        var gateway = environment.Fixture.App.Services
+            .GetRequiredService<HostVaultGateway>();
+        var created = await gateway.ExecuteAsync(
+            (vault, token) => vault.CreateNoteAsync(
+                "Revocation Guard",
+                "notes",
+                "md",
+                "# Revocation Guard\n\nOriginal content.",
+                null,
+                VaultActorKind.System,
+                token)).WaitAsync(timeout);
+        var acceptTask = environment.Server.AcceptOnceAsync();
+        await using var client = await BridgePipeClientConnection.ConnectAsync(
+            new BridgePipeClientOptions(
+                environment.Options.PipeName,
+                environment.Options.ClientId,
+                environment.Options.AccessMode,
+                new HashSet<string>(StringComparer.Ordinal)
+                {
+                    "read",
+                    "write",
+                    "delete"
+                },
+                environment.Options.AllowedClientPolicy,
+                CurrentProcessServicePolicy(environment.Options.OwnerSid)))
+            .WaitAsync(timeout);
+        _ = await client.RequestGrantAsync().WaitAsync(timeout);
+        using (var before = await CallToolAsync(
+                   client,
+                   "read_note",
+                   [("documentId", created.DocumentId)]).WaitAsync(timeout))
+        {
+            Assert.True(before.RootElement.GetProperty("ok").GetBoolean());
+        }
+        var record = Assert.Single(environment.Grants.List());
+        var revoked = await environment.Provider.HandleAsync(
+            CreateGrantAdminSession(record.VaultSessionId),
+            "admin.grants.revoke",
+            JsonSerializer.SerializeToElement(
+                new AdminAccessGrantRevokeRequest(record.GrantId),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            CancellationToken.None).WaitAsync(timeout);
+        Assert.Equal(
+            "revoked",
+            Assert.IsType<AdminAccessGrantRevokeResult>(revoked).Outcome);
+
+        using (var oldSessionRead = await CallToolAsync(
+                   client,
+                   "read_note",
+                   [("documentId", created.DocumentId)]).WaitAsync(timeout))
+        {
+            AssertGrantError(oldSessionRead, "access_grant_revoked");
+        }
+
+        var bridgeSession = CreateBridgeProcessSession(
+            environment,
+            record);
+        var grant = new AccessGrantContext(
+            record.GrantId,
+            record.ClientId,
+            record.ClientInstanceId,
+            record.Scopes,
+            record.VaultSessionId!.Value,
+            record.VerifiedProcessSessionId,
+            record.PathPolicy);
+        var calls = new[]
+        {
+            ToolCall(
+                "read_note",
+                new { documentId = created.DocumentId }),
+            ToolCall(
+                "search_notes",
+                new { query = "Revocation" }),
+            ToolCall(
+                "create_note",
+                new
+                {
+                    title = "Blocked Create",
+                    folder = "notes",
+                    content = "must not exist"
+                }),
+            ToolCall(
+                "update_note",
+                new
+                {
+                    documentId = created.DocumentId,
+                    expectedRevision = 1,
+                    title = "Blocked Update"
+                }),
+            ToolCall(
+                "delete_note",
+                new
+                {
+                    documentId = created.DocumentId,
+                    expectedRevision = 1
+                })
+        };
+        foreach (var call in calls)
+        {
+            var result = await environment.Handler.CallToolAsync(
+                bridgeSession,
+                grant,
+                call,
+                CancellationToken.None).WaitAsync(timeout);
+            using var document = JsonDocument.Parse(result);
+            AssertGrantError(document, "access_grant_revoked");
+        }
+
+        var catalog = await gateway.ExecuteAsync(
+            (vault, token) => vault.ListCatalogAsync(
+                folder: null,
+                cursor: null,
+                limit: 50,
+                VaultReadScope.Unrestricted,
+                token)).WaitAsync(timeout);
+        var catalogItem = Assert.Single(catalog.Items);
+        Assert.Equal("Revocation Guard", catalogItem.Title);
+        var current = await gateway.ExecuteAsync(
+            (vault, token) => vault.ReadNoteAsync(
+                created.DocumentId,
+                offset: 0,
+                maxChars: 10_000,
+                token)).WaitAsync(timeout);
+        Assert.Contains("Original content.", current.Content);
+        Assert.Equal("Revocation Guard", current.Title);
+        Assert.Equal(1, current.Revision);
+
+        _ = await client.CloseSessionAsync("revocation-test-complete")
+            .WaitAsync(timeout);
+        _ = await acceptTask.WaitAsync(timeout);
     }
 
     [Fact]
@@ -824,6 +962,76 @@ public sealed class StrictBridgePipeTests
         return JsonDocument.Parse(result);
     }
 
+    private static BridgeToolCallRequest ToolCall(
+        string toolName,
+        object arguments)
+    {
+        return new BridgeToolCallRequest(
+            toolName,
+            JsonSerializer.SerializeToElement(
+                arguments,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+    }
+
+    private static BridgeProcessSession CreateBridgeProcessSession(
+        StrictBridgeTestEnvironment environment,
+        AccessGrantRecord grant)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new BridgeProcessSession(
+            grant.VerifiedProcessSessionId,
+            grant.ClientInstanceId,
+            environment.Options.ServiceIdentity,
+            environment.Options.OwnerSid,
+            environment.Options.ServiceSid,
+            grant.ClientId,
+            McpAccessMode.ReadWrite,
+            now,
+            now.AddHours(1));
+    }
+
+    private static AdminSession CreateGrantAdminSession(Guid? vaultSessionId)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new AdminSession(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            new VerifiedProcessIdentity(
+                VerifiedProcessKind.AdminUi,
+                (uint)Environment.ProcessId,
+                now.AddMinutes(-1),
+                WindowsIdentity.GetCurrent().User!.Value,
+                "S-1-5-5-0-1",
+                1,
+                Environment.ProcessPath!,
+                new string('a', 64),
+                SignerThumbprint: null,
+                SignerSubject: null,
+                IntegrityLevel: 0x2000),
+            WindowsIdentity.GetCurrent().User!.Value,
+            "S-1-5-80-1",
+            now,
+            now,
+            now.AddMinutes(15),
+            now.AddHours(4),
+            vaultSessionId,
+            AdminSessionState.Active,
+            RevocationReason: null);
+    }
+
+    private static void AssertGrantError(
+        JsonDocument document,
+        string expectedCode)
+    {
+        Assert.False(document.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal(
+            expectedCode,
+            document.RootElement
+                .GetProperty("error")
+                .GetProperty("code")
+                .GetString());
+    }
+
     private static async Task<StrictBridgeTestEnvironment> CreateRealBridgeEnvironmentAsync(
         AccessGrantService? grants = null)
     {
@@ -843,7 +1051,8 @@ public sealed class StrictBridgePipeTests
             new ApprovalStore(),
             new RejectingApprovalPrompt(),
             new TransferCoordinator(paths),
-            new RejectingTransferPrompt());
+            new RejectingTransferPrompt(),
+            accessGrants: grants);
         var handler = new StrictBridgeHandler(
             sessions,
             grants,
@@ -856,7 +1065,8 @@ public sealed class StrictBridgePipeTests
             server,
             options,
             grants,
-            provider);
+            provider,
+            handler);
     }
 
     private static ProcessVerificationPolicy CurrentProcessBridgePolicy(
@@ -1055,13 +1265,15 @@ public sealed class StrictBridgePipeTests
             BridgePipeServer server,
             BridgePipeServerOptions options,
             AccessGrantService grants,
-            StrictAdminVaultRpcProvider provider)
+            StrictAdminVaultRpcProvider provider,
+            StrictBridgeHandler handler)
         {
             Fixture = fixture;
             Server = server;
             Options = options;
             Grants = grants;
             Provider = provider;
+            Handler = handler;
         }
 
         public HostTestFixture Fixture { get; }
@@ -1069,6 +1281,7 @@ public sealed class StrictBridgePipeTests
         public BridgePipeServerOptions Options { get; }
         public AccessGrantService Grants { get; }
         public StrictAdminVaultRpcProvider Provider { get; }
+        public StrictBridgeHandler Handler { get; }
 
         public async ValueTask DisposeAsync()
         {

@@ -41,6 +41,30 @@ public sealed class AdminPipeTests
     }
 
     [Fact]
+    public void AdminPipeDoesNotLeakUnexpectedExceptionMessage()
+    {
+        var method = typeof(AdminPipeServer).GetMethod(
+            "ToSafeErrorMessage",
+            BindingFlags.Static | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException(
+                "Admin error message mapping method was not found.");
+
+        Assert.Equal(
+            "The Host could not complete the request.",
+            method.Invoke(
+                obj: null,
+                [new InvalidOperationException(
+                    @"C:\ProgramData\CipherVault\secret.db")]));
+        Assert.Equal(
+            "Broker unavailable.",
+            method.Invoke(
+                obj: null,
+                [new AdminPipeRpcException(
+                    "approval_broker_unavailable",
+                    "Broker unavailable.")]));
+    }
+
+    [Fact]
     public async Task NamedPipeHostVaultClientReturnsStatusFromAdminPipe()
     {
         var pipeName = "CipherVault.Admin.ClientTest." + Guid.NewGuid().ToString("N");

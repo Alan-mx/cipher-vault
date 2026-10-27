@@ -384,8 +384,25 @@ public sealed class AdminPipeServer : IAsyncDisposable
             return PipeRpcCodec.Failure(
                 request.RequestId,
                 ToErrorCode(exception),
-                exception.Message);
+                ToSafeErrorMessage(exception));
         }
+    }
+
+    private static string ToSafeErrorMessage(Exception exception)
+    {
+        return exception switch
+        {
+            AdminPipeRpcException => exception.Message,
+            InvalidDataException => exception.Message,
+            HostException => exception.Message,
+            VaultException
+            {
+                Code: not (
+                    VaultErrorCode.StorageError or
+                    VaultErrorCode.UnsupportedPlatform)
+            } => exception.Message,
+            _ => "The Host could not complete the request."
+        };
     }
 
     private static string ToErrorCode(Exception exception)

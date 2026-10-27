@@ -20,6 +20,8 @@ public sealed class AccessGrantService : IDisposable
 
     private readonly object _sync = new();
     private const int MaxTerminalTombstones = 256;
+    private const int MaxRevokeAllSnapshots = 64;
+    private const int MaxPreviewTokenLength = 512;
     private readonly TimeProvider _timeProvider;
     private readonly TimeSpan _idleLifetime;
     private readonly TimeSpan _hardLifetime;
@@ -1163,14 +1165,42 @@ public sealed class AccessGrantService : IDisposable
             }
             if (pending is not null)
             {
-                _approvals?.RevokeByScope(
-                    pending.Record.VerifiedProcessSessionId,
-                    pending.VaultGeneration.SessionId);
+                var now = _timeProvider.GetUtcNow();
+                try
+                {
+                    await _store.AppendPendingCancellationAsync(
+                        ToPendingCancellation(
+                            pending.Record,
+                            pending.VaultGeneration.SessionId,
+                            "admin-requested"),
+                        auditContext,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch
+                {
+                    await LogGrantFailureAsync(
+                        "grant_revoke_failed",
+                        pending.Record.ClientId,
+                        pending.Record.ClientInstanceId,
+                        pending.Record.GrantId,
+                        ScopeNames(
+                            pending.Record.Scopes,
+                            pending.Record.PathPolicy),
+                        "storage_error",
+                        cancellationToken).ConfigureAwait(false);
+                    throw;
+                }
                 lock (_sync)
                 {
                     CancelPending(pending, "revoked");
                 }
-                var now = _timeProvider.GetUtcNow();
+                _approvals?.RevokeByScope(
+                    pending.Record.VerifiedProcessSessionId,
+                    pending.VaultGeneration.SessionId);
                 return new AdminAccessGrantRevokeResult(
                     grantId,
                     "cancelled",
@@ -1184,21 +1214,40 @@ public sealed class AccessGrantService : IDisposable
                 cancellationToken).ConfigureAwait(false)
                 ?? throw new KeyNotFoundException(
                     "The requested Access Grant was not found.");
-            _approvals?.RevokeByScope(
-                current.ProcessSessionId,
-                current.VaultSessionId);
-
-            var outcome = await _store.RevokeAsync(
-                grantId,
-                "admin-requested",
-                _timeProvider.GetUtcNow(),
-                auditContext,
-                cancellationToken).ConfigureAwait(false);
+            StoredAccessGrantRevokeOutcome outcome;
+            try
+            {
+                outcome = await _store.RevokeAsync(
+                    grantId,
+                    "admin-requested",
+                    _timeProvider.GetUtcNow(),
+                    auditContext,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+                await LogGrantFailureAsync(
+                    "grant_revoke_failed",
+                    current.ClientId,
+                    current.ClientInstanceId,
+                    current.GrantId,
+                    ScopeNames((AccessGrantScope)current.Scopes),
+                    "storage_error",
+                    cancellationToken).ConfigureAwait(false);
+                throw;
+            }
             if (outcome.Status == StoredAccessGrantRevokeStatus.NotFound)
             {
                 throw new KeyNotFoundException(
                     "The requested Access Grant was not found.");
             }
+            _approvals?.RevokeByScope(
+                current.ProcessSessionId,
+                current.VaultSessionId);
 
             lock (_sync)
             {
@@ -1296,6 +1345,13 @@ public sealed class AccessGrantService : IDisposable
         lock (_sync)
         {
             _revokeAllSnapshots[snapshot.TokenHash] = snapshot;
+            while (_revokeAllSnapshots.Count > MaxRevokeAllSnapshots)
+            {
+                var oldest = _revokeAllSnapshots
+                    .OrderBy(item => item.Value.ExpiresAt)
+                    .First().Key;
+                _revokeAllSnapshots.Remove(oldest);
+            }
         }
         return new AdminAccessGrantRevokeAllPreview(
             token,
@@ -1323,6 +1379,12 @@ public sealed class AccessGrantService : IDisposable
                 "Access Grant persistence is not available.");
         }
         ArgumentException.ThrowIfNullOrWhiteSpace(previewToken);
+        if (previewToken.Length > MaxPreviewTokenLength)
+        {
+            throw new AccessGrantPreviewException(
+                "invalid_input",
+                "The revocation preview token is invalid.");
+        }
         await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -1378,6 +1440,46 @@ public sealed class AccessGrantService : IDisposable
                     "Access Grants changed after the revocation preview.");
             }
 
+            StoredAccessGrantRevokeAllOutcome outcome;
+            try
+            {
+                outcome = await _store.RevokeAllAsync(
+                    snapshot.ActiveGrantIds,
+                    pending.Select(item =>
+                            ToPendingCancellation(
+                                item.Record,
+                                item.VaultSessionId,
+                                "admin-requested"))
+                        .ToArray(),
+                    "admin-requested",
+                    now,
+                    auditContext,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (VaultException exception) when (
+                exception.Code == VaultErrorCode.Conflict)
+            {
+                throw new AccessGrantPreviewException(
+                    "grants_changed",
+                    "Access Grants changed after the revocation preview.");
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+                await LogGrantFailureAsync(
+                    "grant_revoke_all_failed",
+                    clientId: null,
+                    clientInstanceId: null,
+                    grantId: null,
+                    grantScopes: null,
+                    "storage_error",
+                    cancellationToken).ConfigureAwait(false);
+                throw;
+            }
+
             foreach (var scope in snapshot.ApprovalScopes.Distinct())
             {
                 _approvals?.RevokeByScope(
@@ -1402,13 +1504,6 @@ public sealed class AccessGrantService : IDisposable
                     cancelledPending++;
                 }
             }
-
-            var outcome = await _store.RevokeAllAsync(
-                snapshot.ActiveGrantIds,
-                "admin-requested",
-                now,
-                auditContext,
-                cancellationToken).ConfigureAwait(false);
             lock (_sync)
             {
                 foreach (var grantId in snapshot.ActiveGrantIds)
@@ -1604,9 +1699,6 @@ public sealed class AccessGrantService : IDisposable
                     VaultActorKind.System,
                     "CipherVault.Host"),
                 cancellationToken).ConfigureAwait(false);
-            await _store.ExpireAsync(
-                now,
-                cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -1625,6 +1717,38 @@ public sealed class AccessGrantService : IDisposable
             throw new InvalidOperationException(
                 "Access Grant persistence is not available.");
         }
+        StoredAccessGrantRevokeAllOutcome outcome;
+        try
+        {
+            outcome = await _store.RevokeAllAsync(
+                active.Select(item => item.GrantId).ToArray(),
+                pending.Select(item => ToPendingCancellation(
+                        item.Record,
+                        item.VaultSessionId,
+                        reasonCode))
+                    .ToArray(),
+                reasonCode,
+                _timeProvider.GetUtcNow(),
+                new VaultAuditContext(VaultActorKind.System, "CipherVault.Host"),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            await LogGrantFailureAsync(
+                "grant_revoke_all_failed",
+                clientId: null,
+                clientInstanceId: null,
+                grantId: null,
+                grantScopes: null,
+                "storage_error",
+                cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+
         foreach (var scope in active
                      .Select(item => new ApprovalScope(
                          item.ProcessSessionId,
@@ -1641,6 +1765,7 @@ public sealed class AccessGrantService : IDisposable
 
         var cancelledPending = 0;
         var pendingRecords = new List<AccessGrantRecord>(pending.Count);
+        var activeRecords = new List<AccessGrantRecord>(active.Count);
         lock (_sync)
         {
             foreach (var view in pending)
@@ -1658,17 +1783,6 @@ public sealed class AccessGrantService : IDisposable
                 CancelPending(item, reasonCode);
                 cancelledPending++;
             }
-        }
-
-        var outcome = await _store.RevokeAllAsync(
-            active.Select(item => item.GrantId).ToArray(),
-            reasonCode,
-            _timeProvider.GetUtcNow(),
-            new VaultAuditContext(VaultActorKind.System, "CipherVault.Host"),
-            cancellationToken).ConfigureAwait(false);
-        var activeRecords = new List<AccessGrantRecord>(active.Count);
-        lock (_sync)
-        {
             foreach (var grant in active)
             {
                 if (_grants.TryGetValue(grant.GrantId, out var cached))
@@ -2177,6 +2291,50 @@ public sealed class AccessGrantService : IDisposable
             scopes,
             paths.ToScopeNames(scopes).Select(ToDisplayScope),
             isPending);
+    }
+
+    private static StoredAccessGrantCancellation ToPendingCancellation(
+        AccessGrantRecord record,
+        Guid vaultSessionId,
+        string reasonCode)
+    {
+        return new StoredAccessGrantCancellation(
+            record.GrantId,
+            record.ClientId,
+            record.ClientInstanceId,
+            record.VerifiedProcessSessionId,
+            vaultSessionId,
+            (int)record.RequestedScopes,
+            reasonCode);
+    }
+
+    private async Task LogGrantFailureAsync(
+        string eventType,
+        string? clientId,
+        Guid? clientInstanceId,
+        Guid? grantId,
+        string? grantScopes,
+        string reasonCode,
+        CancellationToken cancellationToken)
+    {
+        if (_securityLog is null)
+        {
+            return;
+        }
+        await SecurityLogSafety.TryWriteAsync(
+            _securityLog,
+            new HostSecurityLogEvent(
+                DateTimeOffset.UtcNow,
+                eventType,
+                clientId,
+                ConnectionId: null,
+                clientInstanceId,
+                grantId,
+                grantScopes,
+                RequestId: null,
+                "failed",
+                reasonCode),
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static string CreatePreviewToken()

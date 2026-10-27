@@ -184,7 +184,7 @@ public partial class AccessGrantManagementView : UserControl
                 "cancelled" => "待审批授权已取消。",
                 _ => "Host 返回了未知的撤销结果。"
             };
-        });
+        }, failurePrefix: "撤销授权");
     }
 
     private async void RevokeAllButton_Click(object sender, RoutedEventArgs e)
@@ -282,7 +282,9 @@ public partial class AccessGrantManagementView : UserControl
         VaultStateText.Text = "授权状态由 Host 提供";
     }
 
-    private async Task RunBusyAsync(Func<Task> action)
+    private async Task RunBusyAsync(
+        Func<Task> action,
+        string failurePrefix = "加载授权")
     {
         if (_busy)
         {
@@ -301,7 +303,7 @@ public partial class AccessGrantManagementView : UserControl
         }
         catch (Exception exception)
         {
-            StatusText.Text = $"加载授权失败：{exception.Message}";
+            StatusText.Text = $"{failurePrefix}失败：{exception.Message}";
             VaultStateText.Text = string.Empty;
         }
         finally

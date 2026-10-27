@@ -250,11 +250,6 @@ public sealed partial class VaultService
         await using var transaction = await session.Connection
             .BeginTransactionAsync(cancellationToken)
             .ConfigureAwait(false);
-        await EnsureClockAsync(
-            session.Connection,
-            (SqliteTransaction)transaction,
-            now,
-            cancellationToken).ConfigureAwait(false);
         await ExpireActiveAsync(
             session.Connection,
             (SqliteTransaction)transaction,
@@ -321,12 +316,14 @@ public sealed partial class VaultService
 
     public async Task<StoredAccessGrantRevokeAllOutcome> RevokeAllAsync(
         IReadOnlyCollection<Guid> activeGrantIds,
+        IReadOnlyCollection<StoredAccessGrantCancellation> pendingCancellations,
         string reason,
         DateTimeOffset now,
         VaultAuditContext auditContext,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(activeGrantIds);
+        ArgumentNullException.ThrowIfNull(pendingCancellations);
         ArgumentException.ThrowIfNullOrWhiteSpace(reason);
         ArgumentNullException.ThrowIfNull(auditContext);
         var requested = activeGrantIds.Distinct().ToArray();
@@ -337,11 +334,6 @@ public sealed partial class VaultService
         await using var transaction = await session.Connection
             .BeginTransactionAsync(cancellationToken)
             .ConfigureAwait(false);
-        await EnsureClockAsync(
-            session.Connection,
-            (SqliteTransaction)transaction,
-            now,
-            cancellationToken).ConfigureAwait(false);
         await ExpireActiveAsync(
             session.Connection,
             (SqliteTransaction)transaction,
@@ -417,6 +409,16 @@ public sealed partial class VaultService
             revokedCount++;
         }
 
+        foreach (var cancellation in pendingCancellations)
+        {
+            await AppendPendingCancellationAuditAsync(
+                session.Connection,
+                (SqliteTransaction)transaction,
+                cancellation,
+                auditContext,
+                cancellationToken).ConfigureAwait(false);
+        }
+
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return new StoredAccessGrantRevokeAllOutcome(
             revokedCount,
@@ -429,6 +431,27 @@ public sealed partial class VaultService
         CancellationToken cancellationToken = default)
     {
         return ExecuteExpirationAsync(now, cancellationToken);
+    }
+
+    public async Task AppendPendingCancellationAsync(
+        StoredAccessGrantCancellation cancellation,
+        VaultAuditContext auditContext,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(cancellation);
+        ArgumentNullException.ThrowIfNull(auditContext);
+        await using var sessionLease = await AcquireGrantSessionAsync(
+            cancellationToken).ConfigureAwait(false);
+        await using var transaction = await sessionLease.Session.Connection
+            .BeginTransactionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        await AppendPendingCancellationAuditAsync(
+            sessionLease.Session.Connection,
+            (SqliteTransaction)transaction,
+            cancellation,
+            auditContext,
+            cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<Guid>> RevokeStaleActiveAsync(
@@ -445,11 +468,6 @@ public sealed partial class VaultService
         await using var transaction = await session.Connection
             .BeginTransactionAsync(cancellationToken)
             .ConfigureAwait(false);
-        await EnsureClockAsync(
-            session.Connection,
-            (SqliteTransaction)transaction,
-            now,
-            cancellationToken).ConfigureAwait(false);
         var active = await ReadActiveGrantsAsync(
             session.Connection,
             (SqliteTransaction)transaction,
@@ -896,6 +914,40 @@ public sealed partial class VaultService
                 reasonCode = ReasonCode,
                 processSessionId = grant.ProcessSessionId.ToString("D"),
                 state = ToStateValue(grant.State)
+            }),
+            cancellationToken);
+    }
+
+    private static Task AppendPendingCancellationAuditAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        StoredAccessGrantCancellation cancellation,
+        VaultAuditContext auditContext,
+        CancellationToken cancellationToken)
+    {
+        var context = auditContext with
+        {
+            ClientName = string.IsNullOrWhiteSpace(auditContext.ClientName)
+                ? cancellation.ClientId
+                : auditContext.ClientName,
+            ClientInstanceId = cancellation.ClientInstanceId,
+            GrantId = cancellation.GrantId,
+            GrantScopes = ScopeNames(cancellation.RequestedScopes)
+        };
+        return AuditWriter.AppendAsync(
+            connection,
+            transaction,
+            context,
+            cancellation.VaultSessionId,
+            "grant_cancelled",
+            documentId: null,
+            result: "success",
+            bytesReturned: null,
+            JsonSerializer.Serialize(new
+            {
+                reasonCode = cancellation.ReasonCode,
+                processSessionId = cancellation.ProcessSessionId.ToString("D"),
+                state = "cancelled"
             }),
             cancellationToken);
     }

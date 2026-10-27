@@ -1,5 +1,6 @@
 using CipherVault.Core;
 using CipherVault.Core.Configuration;
+using CipherVault.Core.Documents;
 using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Security;
@@ -325,6 +326,77 @@ public sealed class HostSessionCoordinatorTests
         release.TrySetResult();
         Assert.Equal(42, await mutation);
 
+        await using var after = await coordinator.AcquireLeaseAsync();
+    }
+
+    [Theory]
+    [InlineData("read")]
+    [InlineData("write")]
+    [InlineData("delete")]
+    public async Task GrantMutationWaitsForRealDocumentOperation(
+        string operation)
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var coordinator = fixture.App.Services.GetRequiredService<
+            HostSessionCoordinator>();
+        var gateway = fixture.App.Services.GetRequiredService<
+            HostVaultGateway>();
+        await coordinator.UnlockAsync(HostCredentialPreference.Password);
+        var created = await gateway.ExecuteAsync(
+            (vault, token) => vault.CreateNoteAsync(
+                "Concurrent Grant Mutation",
+                "notes",
+                "md",
+                "# Concurrent Grant Mutation",
+                null,
+                VaultActorKind.System,
+                token));
+        var lease = await coordinator.AcquireLeaseAsync();
+        using var scope = gateway.UseLease(lease);
+        var mutationEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var mutation = coordinator.ExecuteGrantMutationAsync(
+            _ =>
+            {
+                mutationEntered.TrySetResult();
+                return Task.FromResult(42);
+            });
+        await Task.Delay(150);
+        Assert.False(mutation.IsCompleted);
+        Assert.False(mutationEntered.Task.IsCompleted);
+
+        object result = operation switch
+        {
+            "read" => await gateway.ExecuteAsync(
+                (vault, token) => vault.ReadNoteAsync(
+                    created.DocumentId,
+                    offset: 0,
+                    maxChars: 1_000,
+                    token)),
+            "write" => await gateway.ExecuteAsync(
+                (vault, token) => vault.UpdateNoteAsync(
+                    created.DocumentId,
+                    expectedRevision: 1,
+                    new VaultNotePatch(
+                        Title: "Concurrent Grant Mutation Updated",
+                        Content: "# Concurrent Grant Mutation Updated"),
+                    VaultActorKind.System,
+                    token)),
+            "delete" => await gateway.ExecuteAsync(
+                (vault, token) => vault.DeleteNoteAsync(
+                    created.DocumentId,
+                    expectedRevision: 1,
+                    VaultActorKind.System,
+                    token)),
+            _ => throw new ArgumentOutOfRangeException(nameof(operation))
+        };
+        Assert.NotNull(result);
+        Assert.False(mutation.IsCompleted);
+
+        scope.Dispose();
+        await lease.DisposeAsync();
+        await mutationEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(42, await mutation);
         await using var after = await coordinator.AcquireLeaseAsync();
     }
 
