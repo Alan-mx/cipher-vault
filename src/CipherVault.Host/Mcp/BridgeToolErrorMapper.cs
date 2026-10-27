@@ -54,6 +54,7 @@ public static class BridgeToolErrorMapper
             VaultErrorCode.FrontMatterInvalid => "frontmatter_invalid",
             VaultErrorCode.LinkIndexTooLarge => "link_index_too_large",
             VaultErrorCode.InvalidCursor => "invalid_cursor",
+            VaultErrorCode.ClockRollback => "clock_rollback",
             VaultErrorCode.StorageError => "storage_error",
             _ => "storage_error"
         };

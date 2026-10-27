@@ -20,6 +20,7 @@ public sealed class StrictBridgeHostedService(
     AccessGrantService grants,
     IHostAccessGrantPrompt grantPrompt,
     StrictAdminVaultRpcProvider rpc,
+    HostVaultGateway vaultGateway,
     OwnerSessionRegistry ownerSessions) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -63,7 +64,8 @@ public sealed class StrictBridgeHostedService(
             sessions,
             grants,
             grantPrompt,
-            rpc);
+            rpc,
+            vaultGateway);
         var serverOptions = new BridgePipeServerOptions
         {
             PipeName = configuration.Pipes?.Bridge

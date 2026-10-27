@@ -7,10 +7,11 @@ using CipherVault.Core.Errors;
 using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Security;
+using CipherVault.Core.Grants;
 
 namespace CipherVault.Host.Session;
 
-public sealed class HostSessionCoordinator
+public sealed class HostSessionCoordinator : IVaultSessionClosingHandler
 {
     private static readonly TimeSpan DefaultLockDrainTimeout = TimeSpan.FromSeconds(5);
     private readonly object _stateSync = new();
@@ -29,6 +30,8 @@ public sealed class HostSessionCoordinator
     private TaskCompletionSource? _leasesDrained;
     private CancellationTokenSource? _leaseCancellation;
     private bool _maintenanceActive;
+    private bool _grantMutationActive;
+    private TaskCompletionSource? _grantMutationDrained;
 
     public HostSessionCoordinator(
         IVaultService vault,
@@ -46,39 +49,20 @@ public sealed class HostSessionCoordinator
         _approvals = approvals;
         _adminSessions = adminSessions;
         _lockDrainTimeout = lockDrainTimeout ?? DefaultLockDrainTimeout;
+        _vault.SetSessionClosingHandler(this);
     }
 
     public async Task<HostSessionSnapshot> GetSnapshotAsync(
         CancellationToken cancellationToken = default)
     {
         var status = await _vault.GetStatusAsync(cancellationToken).ConfigureAwait(false);
-        bool revokeGrants;
         lock (_stateSync)
         {
             if (_state != VaultSessionState.Locking)
             {
-                var previousState = _state;
                 _state = status.State;
                 _lockReason = status.LockReason ?? _lockReason;
-                revokeGrants =
-                    previousState != VaultSessionState.Locked &&
-                    status.State == VaultSessionState.Locked;
-                if (revokeGrants)
-                {
-                    _leaseCancellation?.Cancel();
-                }
             }
-            else
-            {
-                revokeGrants = false;
-            }
-        }
-        if (revokeGrants)
-        {
-            await _accessGrants.RevokeAllAsync("vault-locked")
-                .ConfigureAwait(false);
-            _approvals?.RevokeAll();
-            _adminSessions?.RevokeAll("vault-locked");
         }
         lock (_stateSync)
         {
@@ -93,22 +77,21 @@ public sealed class HostSessionCoordinator
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            var current = await _vault.GetStatusAsync(cancellationToken).ConfigureAwait(false);
             lock (_stateSync)
             {
-                if (_state == VaultSessionState.Locking)
+                if (_state == VaultSessionState.Locking &&
+                    current.State != VaultSessionState.Locked)
                 {
                     throw new HostException(
                         HostErrorCode.LockInProgress,
                         "Vault lock is still in progress.");
                 }
-            }
-
-            var current = await _vault.GetStatusAsync(cancellationToken).ConfigureAwait(false);
-            if (current.State == VaultSessionState.Locked)
-            {
-                await _accessGrants.RevokeAllAsync("vault-relocked")
-                    .ConfigureAwait(false);
-                _approvals?.RevokeAll();
+                if (_state == VaultSessionState.Locking &&
+                    current.State == VaultSessionState.Locked)
+                {
+                    _state = VaultSessionState.Locked;
+                }
             }
             if (current.State is VaultSessionState.Unlocked or VaultSessionState.Expiring)
             {
@@ -142,6 +125,8 @@ public sealed class HostSessionCoordinator
                     prompt.Credential,
                     prompt.CredentialType,
                     cancellationToken).ConfigureAwait(false);
+                await _accessGrants.InitializeStoredSessionAsync(cancellationToken)
+                    .ConfigureAwait(false);
                 EnsureLeaseCancellation();
                 return MapAndSetState(unlocked);
             }
@@ -167,10 +152,6 @@ public sealed class HostSessionCoordinator
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await _accessGrants.RevokeAllAsync(reason).ConfigureAwait(false);
-            _approvals?.RevokeAll();
-            _adminSessions?.RevokeAll(reason);
-
             Task drainedTask;
             lock (_stateSync)
             {
@@ -221,6 +202,12 @@ public sealed class HostSessionCoordinator
                     HostErrorCode.MaintenanceInProgress,
                     "Vault maintenance is in progress.");
             }
+            if (_grantMutationActive)
+            {
+                throw new HostException(
+                    HostErrorCode.Conflict,
+                    "Access Grant state is changing.");
+            }
         }
 
         var status = await _vault.GetStatusAsync(cancellationToken).ConfigureAwait(false);
@@ -231,6 +218,12 @@ public sealed class HostSessionCoordinator
                 throw new HostException(
                     HostErrorCode.MaintenanceInProgress,
                     "Vault maintenance is in progress.");
+            }
+            if (_grantMutationActive)
+            {
+                throw new HostException(
+                    HostErrorCode.Conflict,
+                    "Access Grant state is changing.");
             }
             if (_state is not (
                     VaultSessionState.Unlocked or
@@ -261,6 +254,92 @@ public sealed class HostSessionCoordinator
             _connectedClients++;
         }
         return new HostClientConnection(ReleaseClient);
+    }
+
+    public async Task<T> ExecuteGrantMutationAsync<T>(
+        Func<CancellationToken, Task<T>> operation,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            Task drainedTask;
+            lock (_stateSync)
+            {
+                if (_grantMutationActive)
+                {
+                    throw new HostException(
+                        HostErrorCode.Conflict,
+                        "Access Grant mutation is already in progress.");
+                }
+                _grantMutationActive = true;
+                if (_activeLeases == 0)
+                {
+                    drainedTask = Task.CompletedTask;
+                }
+                else
+                {
+                    _grantMutationDrained ??= new TaskCompletionSource(
+                        TaskCreationOptions.RunContinuationsAsynchronously);
+                    drainedTask = _grantMutationDrained.Task;
+                }
+            }
+
+            try
+            {
+                await drainedTask.WaitAsync(
+                    _lockDrainTimeout,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                throw new HostException(
+                    HostErrorCode.Conflict,
+                    "Vault operations did not drain before Access Grant mutation.");
+            }
+
+            return await operation(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_stateSync)
+            {
+                _grantMutationActive = false;
+                _grantMutationDrained = null;
+            }
+            _operationGate.Release();
+        }
+    }
+
+    async Task IVaultSessionClosingHandler.HandleClosingAsync(
+        VaultSessionClosingContext context,
+        IAccessGrantStore store,
+        CancellationToken cancellationToken)
+    {
+        _ = store;
+        lock (_stateSync)
+        {
+            _state = VaultSessionState.Locking;
+            _lockReason = context.Reason;
+            _leaseCancellation?.Cancel();
+        }
+        try
+        {
+            await _accessGrants.RevokeAllAsync("vault-locked")
+                .ConfigureAwait(false);
+            _approvals?.RevokeAll();
+            _adminSessions?.RevokeAll(context.Reason);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+        finally
+        {
+            lock (_stateSync)
+            {
+                _state = VaultSessionState.Locked;
+                _lockReason = context.Reason;
+            }
+        }
     }
 
     public Task<T> ExecuteMaintenanceAsync<T>(
@@ -817,6 +896,7 @@ public sealed class HostSessionCoordinator
             if (_activeLeases == 0)
             {
                 _leasesDrained?.TrySetResult();
+                _grantMutationDrained?.TrySetResult();
             }
         }
     }
@@ -884,7 +964,8 @@ public sealed class HostSessionCoordinator
             _lockReason ?? status.LockReason,
             _activeLeases,
             ConnectedClients: _connectedClients,
-            status.RecoveryVerified);
+            status.RecoveryVerified,
+            status.LockCleanupWarning);
     }
 
     private static bool IsEmptyStrictVaultLayout(string path)

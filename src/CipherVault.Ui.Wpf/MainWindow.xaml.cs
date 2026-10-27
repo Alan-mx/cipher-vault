@@ -125,6 +125,7 @@ public partial class MainWindow : Window
         Closing += MainWindow_Closing;
         Closed += MainWindow_Closed;
         DocumentWorkspace.Initialize(_service);
+        AccessGrantManagement.Initialize(_service);
         DocumentWorkspace.DocumentSaved += DocumentWorkspace_DocumentSaved;
         ConfigureCredentialMode();
     }
@@ -394,6 +395,18 @@ public partial class MainWindow : Window
         else if (targetIndex == 2)
         {
             await RunBusyAsync(RefreshTrashAsync);
+        }
+        else if (targetIndex == 3)
+        {
+            var status = await _service.GetStatusAsync();
+            var available =
+                status.State != VaultSessionState.Locked &&
+                status.RecoveryVerified;
+            AccessGrantManagement.SetAccessAvailable(available);
+            if (available)
+            {
+                await AccessGrantManagement.RefreshAsync();
+            }
         }
     }
 
@@ -881,6 +894,7 @@ public partial class MainWindow : Window
             var status = await _service.GetStatusAsync();
             if (status.State == VaultSessionState.Locked)
             {
+                AccessGrantManagement.SetAccessAvailable(false);
                 if (_service is NamedPipeHostVaultClient)
                 {
                     StatusText.Text = GetStateText(status.State);
@@ -889,6 +903,11 @@ public partial class MainWindow : Window
                     SessionDetailText.Text = status.BrokerAvailable
                         ? "资料库由 strict 服务管理。请点击“解锁”，凭据将由本地授权程序收集。"
                         : "正在等待本地授权程序连接 strict 服务。";
+                    if (!string.IsNullOrWhiteSpace(status.LockCleanupWarning))
+                    {
+                        SessionDetailText.Text +=
+                            $"\n锁库收尾警告：{status.LockCleanupWarning}";
+                    }
                     ClearSensitiveUi();
                     return;
                 }
@@ -920,6 +939,7 @@ public partial class MainWindow : Window
             }
             else if (!status.RecoveryVerified)
             {
+                AccessGrantManagement.SetAccessAvailable(false);
                 StatusText.Text = "恢复密钥未确认";
                 SessionDetailText.Text =
                     "请先确认恢复密钥，或使用当前密码重新轮换恢复密钥，然后才能访问内容。";
@@ -927,6 +947,7 @@ public partial class MainWindow : Window
             }
             else
             {
+                AccessGrantManagement.SetAccessAvailable(true);
                 UnlockButton.IsEnabled = true;
                 InitializeButton.IsEnabled = true;
                 StatusText.Text = GetStateText(status.State);
@@ -934,6 +955,11 @@ public partial class MainWindow : Window
                 var hardRemaining = FormatRemaining(status.HardExpiresAt, DateTimeOffset.UtcNow);
                 SessionDetailText.Text =
                     $"会话 {status.SessionId} | 空闲锁定倒计时 {idleRemaining} | 最迟锁定倒计时 {hardRemaining}";
+                if (!string.IsNullOrWhiteSpace(status.LockCleanupWarning))
+                {
+                    SessionDetailText.Text +=
+                        $"\n锁库收尾警告：{status.LockCleanupWarning}";
+                }
             }
         }
         catch (Exception exception)
@@ -1039,6 +1065,7 @@ public partial class MainWindow : Window
         CatalogGrid.ItemsSource = null;
         TrashGrid.ItemsSource = null;
         DocumentWorkspace.Clear();
+        AccessGrantManagement.Clear(summary);
         MaintenanceOutput.Clear();
         CatalogSummaryText.Text = summary;
         TrashSummaryText.Text = summary;

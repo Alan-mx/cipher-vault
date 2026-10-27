@@ -140,11 +140,11 @@ internal static class AuditWriter
             """
             INSERT INTO audit_events(
                 event_id, occurred_at_ms, actor_kind, client_name, session_id,
-                action, document_id, correlation_id, result, bytes_returned,
+                grant_id, action, document_id, correlation_id, result, bytes_returned,
                 details_json)
             VALUES(
                 $eventId, $occurredAt, $actor, $clientName, $sessionId,
-                $action, $documentId, $correlationId, $result, $bytesReturned,
+                $grantId, $action, $documentId, $correlationId, $result, $bytesReturned,
                 $details);
             """;
         var eventId = Guid.NewGuid();
@@ -157,6 +157,9 @@ internal static class AuditWriter
                 ? DBNull.Value
                 : auditContext.ClientName);
         command.Parameters.AddWithValue("$sessionId", sessionId?.ToString("D") ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue(
+            "$grantId",
+            auditContext.GrantId?.ToString("D") ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("$action", action);
         command.Parameters.AddWithValue("$documentId", documentId?.ToString("D") ?? (object)DBNull.Value);
         command.Parameters.AddWithValue(

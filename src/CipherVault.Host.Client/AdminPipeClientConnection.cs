@@ -202,6 +202,63 @@ public sealed class AdminPipeClientConnection : IAsyncDisposable
             cancellationToken);
     }
 
+    public Task<AdminAccessGrantPage> ListAccessGrantsAsync(
+        string? state,
+        string? search,
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        return CallAsync<AdminAccessGrantListRequest, AdminAccessGrantPage>(
+            "admin.grants.list",
+            new AdminAccessGrantListRequest(
+                state,
+                search,
+                cursor,
+                limit),
+            cancellationToken);
+    }
+
+    public Task<AdminAccessGrantDetail> GetAccessGrantAsync(
+        Guid grantId,
+        CancellationToken cancellationToken = default)
+    {
+        return CallAsync<AdminAccessGrantGetRequest, AdminAccessGrantDetail>(
+            "admin.grants.get",
+            new AdminAccessGrantGetRequest(grantId),
+            cancellationToken);
+    }
+
+    public Task<AdminAccessGrantRevokeResult> RevokeAccessGrantAsync(
+        Guid grantId,
+        CancellationToken cancellationToken = default)
+    {
+        return CallAsync<AdminAccessGrantRevokeRequest, AdminAccessGrantRevokeResult>(
+            "admin.grants.revoke",
+            new AdminAccessGrantRevokeRequest(grantId),
+            cancellationToken);
+    }
+
+    public Task<AdminAccessGrantRevokeAllPreview>
+        PreviewRevokeAllAccessGrantsAsync(
+            CancellationToken cancellationToken = default)
+    {
+        return CallAsync<object, AdminAccessGrantRevokeAllPreview>(
+            "admin.grants.revoke_all.preview",
+            new { },
+            cancellationToken);
+    }
+
+    public Task<AdminAccessGrantRevokeAllResult> RevokeAllAccessGrantsAsync(
+        string previewToken,
+        CancellationToken cancellationToken = default)
+    {
+        return CallAsync<AdminAccessGrantRevokeAllRequest, AdminAccessGrantRevokeAllResult>(
+            "admin.grants.revoke_all",
+            new AdminAccessGrantRevokeAllRequest(previewToken),
+            cancellationToken);
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_disposed)

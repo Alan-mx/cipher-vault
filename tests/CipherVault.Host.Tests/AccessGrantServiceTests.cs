@@ -500,6 +500,22 @@ public sealed class AccessGrantServiceTests
     }
 
     [Fact]
+    public void OversizedScopePoliciesAreRejected()
+    {
+        var tooMany = Enumerable.Range(0, 49)
+            .Select(index => $"read:Folder{index}")
+            .ToArray();
+        Assert.False(AccessGrantPathPolicy.TryParse(
+            tooMany,
+            out _,
+            out _));
+        Assert.False(AccessGrantPathPolicy.TryParse(
+            [$"read:{new string('a', 257)}"],
+            out _,
+            out _));
+    }
+
+    [Fact]
     public async Task ScopedGrantIsRetainedInIssuedRecord()
     {
         var now = DateTimeOffset.Parse("2026-10-21T10:00:00Z");
@@ -704,8 +720,10 @@ public sealed class AccessGrantServiceTests
             await service.RevokeByProcessSessionAsync(
                 processA,
                 "bridge-disconnected"));
-        await Assert.ThrowsAsync<OperationCanceledException>(() =>
-            pendingRequest.WaitAsync(TimeSpan.FromSeconds(5)));
+        var pendingOutcome = await pendingRequest.WaitAsync(
+            TimeSpan.FromSeconds(5));
+        Assert.Equal(AccessGrantRequestStatus.Denied, pendingOutcome.Status);
+        Assert.Equal("cancelled", pendingOutcome.ReasonCode);
 
         Assert.Equal(
             AccessGrantValidationStatus.Revoked,

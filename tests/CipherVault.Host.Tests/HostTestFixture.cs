@@ -1,6 +1,7 @@
 using System.IO;
 using CipherVault.Core;
 using CipherVault.Core.Documents;
+using CipherVault.Core.Grants;
 using CipherVault.Core.Session;
 using CipherVault.Host.Security;
 using CipherVault.Host.Session;
@@ -80,7 +81,9 @@ internal sealed class HostTestFixture : IAsyncDisposable
         var approvals = new ApprovalStore();
         var adminSessions = new AdminSessionStore();
         var accessGrants = new AccessGrantService(
-            securityLog: new JsonlSecurityEventLog(securityLogDirectory));
+            securityLog: new JsonlSecurityEventLog(securityLogDirectory),
+            store: vault,
+            approvals: approvals);
         var sessions = new HostSessionCoordinator(
             vault,
             vaultPath,
@@ -91,6 +94,7 @@ internal sealed class HostTestFixture : IAsyncDisposable
         var services = new ServiceCollection()
             .AddSingleton(activity)
             .AddSingleton(vault)
+            .AddSingleton<IAccessGrantStore>(vault)
             .AddSingleton<IVaultService>(vault)
             .AddSingleton(credentialPrompt)
             .AddSingleton<IHostCredentialPrompt>(credentialPrompt)

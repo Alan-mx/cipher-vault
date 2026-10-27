@@ -12,4 +12,5 @@ public sealed record HostSessionSnapshot(
     string? LockReason,
     int ActiveLeases,
     int ConnectedClients,
-    bool RecoveryVerified);
+    bool RecoveryVerified,
+    string? LockCleanupWarning = null);

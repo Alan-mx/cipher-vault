@@ -38,6 +38,10 @@ CipherVault.Ui.Wpf / CipherVault.Cli / CipherVault.Mcp
 - Agent 默认使用 Access Grant；长期 token 只能申请短期 Grant。
 - Grant scopes 是 `read`、`write` 和 `delete`；删除必须显式批准。
 - MCP strict Bridge 通过本机命名管道申请 Grant，并在进程退出时立即撤销。
+- Grant 生命周期、撤销时间和审计保存在加密 Vault 中；WPF 可从 Host 查询历史并
+  撤销单项或全部目标授权。
+- 撤销后旧 Grant、旧 MCP 会话和重启后的旧凭据均不能继续读取资料。撤销错误不会
+  自动触发新授权；只有后续明确的新请求才会重新进入用户审批。
 - 永久删除、备份、导出、导入和恢复由一次性 Approval 绑定 OperationId、nonce、
   参数摘要、进程 session、Vault session 和过期时间。
 - 文件操作只允许通过受控 staging 完成跨账户交接。
@@ -168,9 +172,10 @@ ProgramData；升级时不要添加 `--remove-data`。只要
 
 ## 桌面端与命令行
 
-WPF 提供日常读写、回收站、版本、备份、导出、导入和审计页面。CLI 提供相同能力的
-命令行版本。WPF 可以保持打开，同时使用 CLI；Host 当前支持最多 4 个并发 Admin
-连接：
+WPF 提供日常读写、授权管理、回收站、版本、备份、导出、导入和审计页面。授权管理
+页可查看客户端、状态、权限、资源范围、时间和撤销原因，并支持单项撤销或撤销全部
+目标授权。CLI 提供文档和维护能力，但本版不提供授权管理命令。WPF 可以保持打开，
+同时使用 CLI；Host 当前支持最多 4 个并发 Admin 连接：
 
 ```powershell
 .\CipherVault.Cli.exe status
@@ -319,7 +324,8 @@ default_tools_approval_mode = "prompt"
 ```
 
 Bridge 启动后会验证 Host 和自身进程身份，请求用户批准 Access Grant，然后在进程
-内存中持有短期 Grant。Bridge 退出或 Vault 锁定会立即撤销 Grant。
+内存中持有短期 Grant。Bridge 退出或 Vault 锁定会立即撤销 Grant。用户在 WPF 撤销
+Grant 后，当前工具调用直接失败；不会在同一请求中自动重新审批或重试。
 
 `--scopes read` 请求只读；`--scopes read,write` 请求读写；`delete` 必须显式加入
 scope。Agent 不接受长期 Bearer token，也不使用 direct HTTP MCP。

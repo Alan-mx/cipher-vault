@@ -35,11 +35,12 @@ internal static class SqlCipherVaultStore
 
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         using var transaction = connection.BeginTransaction();
-        SetMeta(connection, transaction, "schema_version", "2");
+        SetMeta(connection, transaction, "schema_version", "3");
         SetMeta(connection, transaction, "vault_id", material.VaultId.ToString("D"));
         SetMeta(connection, transaction, "created_at_ms", now.ToString());
         SetMeta(connection, transaction, "recovery_verified_at_ms", "0");
         SetMeta(connection, transaction, "last_cleanup_at_ms", now.ToString());
+        SetMeta(connection, transaction, "access_grant_last_observed_at_ms", "0");
         transaction.Commit();
         VaultFileSecurity.ProtectFile(databasePath);
     }
@@ -187,7 +188,7 @@ internal static class SqlCipherVaultStore
         command.CommandText =
             "SELECT value FROM vault_meta WHERE key = 'schema_version';";
         var version = Convert.ToString(command.ExecuteScalar());
-        if (!string.Equals(version, "2", StringComparison.Ordinal))
+        if (!string.Equals(version, "3", StringComparison.Ordinal))
         {
             throw new VaultException(
                 VaultErrorCode.CorruptVault,

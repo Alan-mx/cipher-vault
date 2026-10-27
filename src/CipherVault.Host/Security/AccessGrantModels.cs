@@ -19,6 +19,9 @@ public sealed record AccessGrantPathPolicy(
     bool GlobalDelete,
     IReadOnlyList<string> DeletePaths)
 {
+    public const int MaxScopeTokens = 48;
+    public const int MaxPathLength = 256;
+
     public static AccessGrantPathPolicy Unrestricted { get; } = new(
         true,
         [],
@@ -90,6 +93,11 @@ public sealed record AccessGrantPathPolicy(
         out AccessGrantPathPolicy paths)
     {
         scopes = AccessGrantScope.None;
+        if (values.Count > MaxScopeTokens)
+        {
+            paths = Unrestricted;
+            return false;
+        }
         var globalRead = false;
         var globalWrite = false;
         var globalDelete = false;
@@ -186,6 +194,7 @@ public sealed record AccessGrantPathPolicy(
             .Trim('/')
             .ToLowerInvariant();
         if (normalized.Length == 0 ||
+            normalized.Length > MaxPathLength ||
             normalized.Split('/').Any(part => part is "" or "." or ".."))
         {
             normalized = string.Empty;
@@ -323,6 +332,13 @@ public sealed record AccessGrantValidationResult(
     AccessGrantContext? Grant,
     string? ReasonCode,
     AccessGrantRecord? Record = null);
+
+public sealed class AccessGrantPreviewException(
+    string code,
+    string message) : Exception(message)
+{
+    public string Code { get; } = code;
+}
 
 public static class AccessGrantScopes
 {

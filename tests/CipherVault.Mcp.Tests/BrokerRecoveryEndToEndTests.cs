@@ -201,7 +201,7 @@ public sealed class BrokerRecoveryEndToEndTests
     }
 
     [Fact]
-    public async Task ToolCallReauthorizesAfterBrokerKillWithoutDuplicateExecution()
+    public async Task ToolCallDoesNotReauthorizeAfterExplicitRevokeAndBrokerKill()
     {
         await using var environment =
             await BrokerRecoveryTestEnvironment.CreateAsync();
@@ -228,19 +228,16 @@ public sealed class BrokerRecoveryEndToEndTests
             environment.Token);
 
         using var document = JsonDocument.Parse(result);
-        Assert.True(document.RootElement.GetProperty("ok").GetBoolean());
+        Assert.False(document.RootElement.GetProperty("ok").GetBoolean());
         Assert.Equal(
-            DocumentId,
+            "access_grant_revoked",
             document.RootElement
-                .GetProperty("document")
-                .GetProperty("documentId")
+                .GetProperty("error")
+                .GetProperty("code")
                 .GetString());
-        Assert.Equal(2, environment.Handler.ToolCallCount);
-        Assert.Equal(1, environment.Handler.ToolExecutionCount);
-        Assert.Equal(1, environment.BrokerStarts);
-        var secondBroker = Assert.IsType<Process>(
-            environment.ReplacementBroker);
-        await environment.WaitForRegisteredAsync(secondBroker);
+        Assert.Equal(1, environment.Handler.ToolCallCount);
+        Assert.Equal(0, environment.Handler.ToolExecutionCount);
+        Assert.Equal(0, environment.BrokerStarts);
     }
 
     private static async Task WaitUntilAsync(

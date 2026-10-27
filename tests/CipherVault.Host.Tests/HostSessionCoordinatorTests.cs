@@ -296,6 +296,39 @@ public sealed class HostSessionCoordinatorTests
     }
 
     [Fact]
+    public async Task GrantMutationWaitsForLeaseAndBlocksNewLeases()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var coordinator = fixture.App.Services.GetRequiredService<
+            HostSessionCoordinator>();
+        await coordinator.UnlockAsync(HostCredentialPreference.Password);
+        var lease = await coordinator.AcquireLeaseAsync();
+        var entered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var mutation = coordinator.ExecuteGrantMutationAsync(
+            async _ =>
+            {
+                entered.TrySetResult();
+                await release.Task;
+                return 42;
+            });
+
+        await Task.Delay(100);
+        Assert.False(mutation.IsCompleted);
+        await Assert.ThrowsAsync<HostException>(() =>
+            coordinator.AcquireLeaseAsync());
+
+        await lease.DisposeAsync();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        release.TrySetResult();
+        Assert.Equal(42, await mutation);
+
+        await using var after = await coordinator.AcquireLeaseAsync();
+    }
+
+    [Fact]
     public async Task UnlockWaitsForLeasesLeftByCoreAutoLock()
     {
         await using var fixture = await HostTestFixture.CreateAsync();
@@ -315,6 +348,92 @@ public sealed class HostSessionCoordinatorTests
 
         Assert.NotEqual(first.SessionId, second.SessionId);
         Assert.Equal(VaultSessionState.Unlocked, second.State);
+    }
+
+    [Fact]
+    public async Task LockPersistsGrantRevocationAcrossReopen()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var coordinator = fixture.App.Services.GetRequiredService<
+            HostSessionCoordinator>();
+        var grants = fixture.App.Services.GetRequiredService<
+            AccessGrantService>();
+        var first = await coordinator.UnlockAsync(
+            HostCredentialPreference.Password);
+        var now = DateTimeOffset.UtcNow;
+        var issued = await grants.RequestAsync(
+            "mcp",
+            Guid.NewGuid(),
+            McpAccessMode.ReadOnly,
+            AccessGrantScope.Read,
+            new AccessGrantVaultGeneration(
+                Assert.IsType<Guid>(first.SessionId),
+                now.AddHours(1)),
+            (_, _) => Task.FromResult(
+                new AccessGrantApprovalResult(
+                    true,
+                    AccessGrantScope.Read)),
+            Guid.NewGuid());
+        Assert.Equal(AccessGrantRequestStatus.Approved, issued.Status);
+        var record = issued.IssuedGrant!.Record;
+        var context = new AccessGrantContext(
+            record.GrantId,
+            record.ClientId,
+            record.ClientInstanceId,
+            record.Scopes,
+            record.VaultSessionId!.Value,
+            record.VerifiedProcessSessionId,
+            record.PathPolicy);
+
+        await coordinator.LockAsync("test-lock");
+        Assert.Equal(
+            AccessGrantValidationStatus.Revoked,
+            grants.UseBridgeGrant(context).Status);
+        await coordinator.UnlockAsync(HostCredentialPreference.Password);
+
+        var page = await grants.ListStoredAsync(
+            state: "revoked",
+            search: "mcp",
+            cursor: null,
+            limit: 50);
+        var item = Assert.Single(page.Items);
+        var detail = await grants.GetStoredAsync(item.GrantId);
+        Assert.Equal("revoked", detail.State);
+        Assert.Equal("vault-locked", detail.RevocationReason);
+    }
+
+    [Fact]
+    public async Task SessionInitializationRevokesStaleActiveGrant()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var coordinator = fixture.App.Services.GetRequiredService<
+            HostSessionCoordinator>();
+        var grants = fixture.App.Services.GetRequiredService<
+            AccessGrantService>();
+        var unlocked = await coordinator.UnlockAsync(
+            HostCredentialPreference.Password);
+        var now = DateTimeOffset.UtcNow;
+        var issued = await grants.RequestAsync(
+            "mcp",
+            Guid.NewGuid(),
+            McpAccessMode.ReadOnly,
+            AccessGrantScope.Read,
+            new AccessGrantVaultGeneration(
+                Assert.IsType<Guid>(unlocked.SessionId),
+                now.AddHours(1)),
+            (_, _) => Task.FromResult(
+                new AccessGrantApprovalResult(
+                    true,
+                    AccessGrantScope.Read)),
+            Guid.NewGuid());
+        Assert.Equal(AccessGrantRequestStatus.Approved, issued.Status);
+
+        await grants.InitializeStoredSessionAsync();
+
+        var detail = await grants.GetStoredAsync(
+            issued.IssuedGrant!.Record.GrantId);
+        Assert.Equal("revoked", detail.State);
+        Assert.Equal("host-restarted", detail.RevocationReason);
     }
 
     private static async Task WaitUntilAsync(

@@ -7,6 +7,7 @@ public sealed class HostVaultGateway
 {
     private readonly HostSessionCoordinator _sessions;
     private readonly IVaultService _vault;
+    private readonly AsyncLocal<HostVaultLease?> _ambientLease = new();
 
     public HostVaultGateway(
         HostSessionCoordinator sessions,
@@ -31,8 +32,38 @@ public sealed class HostVaultGateway
         Func<IVaultService, CancellationToken, Task<T>> operation,
         CancellationToken cancellationToken = default)
     {
-        await using var lease = await _sessions.AcquireLeaseAsync(cancellationToken)
-            .ConfigureAwait(false);
+        var ambient = _ambientLease.Value;
+        if (ambient is not null)
+        {
+            return await ExecuteWithLeaseAsync(
+                ambient,
+                expectedSessionId,
+                operation,
+                cancellationToken).ConfigureAwait(false);
+        }
+        await using var lease = await _sessions.AcquireLeaseAsync(
+            cancellationToken).ConfigureAwait(false);
+        return await ExecuteWithLeaseAsync(
+            lease,
+            expectedSessionId,
+            operation,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public IDisposable UseLease(HostVaultLease lease)
+    {
+        ArgumentNullException.ThrowIfNull(lease);
+        var previous = _ambientLease.Value;
+        _ambientLease.Value = lease;
+        return new LeaseScope(this, previous);
+    }
+
+    private async Task<T> ExecuteWithLeaseAsync<T>(
+        HostVaultLease lease,
+        Guid? expectedSessionId,
+        Func<IVaultService, CancellationToken, Task<T>> operation,
+        CancellationToken cancellationToken)
+    {
         if (expectedSessionId is not null &&
             lease.SessionId != expectedSessionId)
         {
@@ -51,5 +82,15 @@ public sealed class HostVaultGateway
         CancellationToken cancellationToken = default)
     {
         return _sessions.ExecuteMaintenanceAsync(operation, cancellationToken);
+    }
+
+    private sealed class LeaseScope(
+        HostVaultGateway owner,
+        HostVaultLease? previous) : IDisposable
+    {
+        public void Dispose()
+        {
+            owner._ambientLease.Value = previous;
+        }
     }
 }

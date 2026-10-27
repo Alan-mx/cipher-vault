@@ -184,6 +184,129 @@ CREATE VIRTUAL TABLE documents_fts USING fts5(
     tokenize = 'trigram'
 );
 
+CREATE TABLE access_grants (
+    grant_id TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL COLLATE NOCASE,
+    client_display_name TEXT NOT NULL COLLATE NOCASE,
+    client_instance_id TEXT NOT NULL,
+    process_session_id TEXT NOT NULL,
+    vault_id TEXT NOT NULL,
+    vault_session_id TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('active', 'revoked', 'expired')),
+    scopes INTEGER NOT NULL CHECK (
+        scopes >= 0
+        AND scopes <= 7
+        AND ((scopes & 4) = 0 OR (scopes & 3) = 3)
+    ),
+    requested_scopes INTEGER NOT NULL CHECK (
+        requested_scopes >= 0
+        AND requested_scopes <= 7
+        AND ((requested_scopes & 4) = 0 OR (requested_scopes & 3) = 3)
+    ),
+    path_policy_json TEXT NOT NULL CHECK (json_valid(path_policy_json)),
+    created_at_ms INTEGER NOT NULL,
+    approved_at_ms INTEGER NOT NULL,
+    last_used_at_ms INTEGER,
+    idle_expires_at_ms INTEGER NOT NULL,
+    hard_expires_at_ms INTEGER NOT NULL,
+    revoked_at_ms INTEGER,
+    revocation_reason TEXT,
+    secret_hash BLOB NOT NULL CHECK (length(secret_hash) = 32),
+    CHECK (approved_at_ms >= created_at_ms),
+    CHECK (idle_expires_at_ms >= created_at_ms),
+    CHECK (hard_expires_at_ms >= idle_expires_at_ms),
+    CHECK (
+        (state = 'active'
+            AND revoked_at_ms IS NULL
+            AND revocation_reason IS NULL)
+        OR
+        (state = 'revoked'
+            AND revoked_at_ms IS NOT NULL
+            AND revoked_at_ms >= approved_at_ms
+            AND revocation_reason IS NOT NULL
+            AND length(revocation_reason) > 0)
+        OR
+        (state = 'expired'
+            AND revoked_at_ms IS NULL
+            AND revocation_reason IS NULL)
+    )
+);
+
+CREATE UNIQUE INDEX ux_access_grants_secret_hash
+    ON access_grants(secret_hash);
+
+CREATE UNIQUE INDEX ux_access_grants_active_process_slot
+    ON access_grants(client_id, client_instance_id)
+    WHERE state = 'active';
+
+CREATE INDEX ix_access_grants_state_created
+    ON access_grants(state, created_at_ms DESC, grant_id DESC);
+
+CREATE INDEX ix_access_grants_client_created
+    ON access_grants(client_id, created_at_ms DESC, grant_id DESC);
+
+CREATE INDEX ix_access_grants_process_session
+    ON access_grants(process_session_id, state);
+
+CREATE TRIGGER trg_access_grants_transition
+BEFORE UPDATE OF state ON access_grants
+WHEN NEW.state <> OLD.state
+    AND NOT (
+        OLD.state = 'active'
+        AND NEW.state IN ('revoked', 'expired')
+    )
+BEGIN
+    SELECT RAISE(ABORT, 'invalid access grant state transition');
+END;
+
+CREATE TRIGGER trg_access_grants_terminal_immutable
+BEFORE UPDATE ON access_grants
+WHEN OLD.state IN ('revoked', 'expired')
+BEGIN
+    SELECT RAISE(ABORT, 'terminal access grant is immutable');
+END;
+
+CREATE TRIGGER trg_access_grants_identity_immutable
+BEFORE UPDATE OF
+    grant_id,
+    client_id,
+    client_display_name,
+    client_instance_id,
+    process_session_id,
+    vault_id,
+    vault_session_id,
+    scopes,
+    requested_scopes,
+    path_policy_json,
+    created_at_ms,
+    approved_at_ms,
+    hard_expires_at_ms,
+    secret_hash
+ON access_grants
+WHEN NEW.grant_id IS NOT OLD.grant_id
+    OR NEW.client_id IS NOT OLD.client_id
+    OR NEW.client_display_name IS NOT OLD.client_display_name
+    OR NEW.client_instance_id IS NOT OLD.client_instance_id
+    OR NEW.process_session_id IS NOT OLD.process_session_id
+    OR NEW.vault_id IS NOT OLD.vault_id
+    OR NEW.vault_session_id IS NOT OLD.vault_session_id
+    OR NEW.scopes IS NOT OLD.scopes
+    OR NEW.requested_scopes IS NOT OLD.requested_scopes
+    OR NEW.path_policy_json IS NOT OLD.path_policy_json
+    OR NEW.created_at_ms IS NOT OLD.created_at_ms
+    OR NEW.approved_at_ms IS NOT OLD.approved_at_ms
+    OR NEW.hard_expires_at_ms IS NOT OLD.hard_expires_at_ms
+    OR NEW.secret_hash IS NOT OLD.secret_hash
+BEGIN
+    SELECT RAISE(ABORT, 'access grant identity is immutable');
+END;
+
+CREATE TRIGGER trg_access_grants_no_delete
+BEFORE DELETE ON access_grants
+BEGIN
+    SELECT RAISE(ABORT, 'access grant history is append-only');
+END;
+
 CREATE TABLE audit_events (
     event_id TEXT PRIMARY KEY,
     occurred_at_ms INTEGER NOT NULL,
@@ -192,6 +315,7 @@ CREATE TABLE audit_events (
     ),
     client_name TEXT,
     session_id TEXT,
+    grant_id TEXT,
     action TEXT NOT NULL,
     document_id TEXT,
     correlation_id TEXT,
@@ -210,6 +334,9 @@ CREATE INDEX ix_audit_document
 
 CREATE INDEX ix_audit_action
     ON audit_events(action, occurred_at_ms);
+
+CREATE INDEX ix_audit_grant
+    ON audit_events(grant_id, occurred_at_ms);
 
 CREATE INDEX ix_audit_correlation
     ON audit_events(correlation_id, occurred_at_ms);
@@ -272,4 +399,4 @@ CREATE TABLE export_jobs (
     error_json TEXT NOT NULL DEFAULT '{}'
 );
 
-PRAGMA user_version = 2;
+PRAGMA user_version = 3;

@@ -10,7 +10,8 @@ public sealed record HostSessionStatusData(
     string? LockReason,
     int ActiveLeases,
     int ConnectedClients,
-    bool RecoveryVerified);
+    bool RecoveryVerified,
+    string? LockCleanupWarning = null);
 
 public sealed record HostInitializeData(
     Guid VaultId,

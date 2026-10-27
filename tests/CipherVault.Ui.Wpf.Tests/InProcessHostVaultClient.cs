@@ -23,6 +23,15 @@ internal sealed class InProcessHostVaultClient : IHostVaultClient
     public int LockCallCount { get; private set; }
     public string? LastLockReason { get; private set; }
     public int StopHostCallCount { get; private set; }
+    public List<AdminAccessGrantListItem> AccessGrants { get; } = [];
+    public Func<
+        string?,
+        string?,
+        string?,
+        int,
+        CancellationToken,
+        Task<AdminAccessGrantPage>>? ListAccessGrantsHandler
+    { get; set; }
 
     public Task<VaultInitializeResult> InitializeAsync(
         string vaultPath,
@@ -379,6 +388,170 @@ internal sealed class InProcessHostVaultClient : IHostVaultClient
         CancellationToken cancellationToken = default)
     {
         return _vault.GetAuditPageAsync(query, cancellationToken);
+    }
+
+    public Task<AdminAccessGrantPage> ListAccessGrantsAsync(
+        string? state,
+        string? search,
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        _ = cursor;
+        _ = cancellationToken;
+        if (ListAccessGrantsHandler is not null)
+        {
+            return ListAccessGrantsHandler(
+                state,
+                search,
+                cursor,
+                limit,
+                cancellationToken);
+        }
+        var filteredSearch = AccessGrants
+            .Where(item =>
+                string.IsNullOrWhiteSpace(search) ||
+                item.ClientId.Contains(search, StringComparison.OrdinalIgnoreCase) ||
+                item.ClientDisplayName.Contains(
+                    search,
+                    StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var counts = new AdminAccessGrantStatusCounts(
+            filteredSearch.Length,
+            filteredSearch.Count(item => item.State == "active"),
+            filteredSearch.Count(item => item.State == "revoked"),
+            filteredSearch.Count(item => item.State == "expired"));
+        var items = filteredSearch
+            .Where(item =>
+                string.IsNullOrWhiteSpace(state) ||
+                string.Equals(item.State, state, StringComparison.Ordinal))
+            .Take(limit)
+            .ToArray();
+        return Task.FromResult(
+            new AdminAccessGrantPage(
+                items,
+                NextCursor: null,
+                TotalCount: items.Length,
+                counts));
+    }
+
+    public Task<AdminAccessGrantDetail> GetAccessGrantAsync(
+        Guid grantId,
+        CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+        var item = AccessGrants.SingleOrDefault(grant => grant.GrantId == grantId)
+            ?? throw new KeyNotFoundException("Access Grant was not found.");
+        return Task.FromResult(
+            new AdminAccessGrantDetail(
+                item.GrantId,
+                item.ClientId,
+                item.ClientDisplayName,
+                item.ClientInstanceId,
+                item.State,
+                item.Operations,
+                item.Operations,
+                item.ResourceScopes,
+                item.CreatedAt,
+                item.CreatedAt,
+                item.HardExpiresAt,
+                item.HardExpiresAt,
+                item.LastUsedAt,
+                null,
+                null));
+    }
+
+    public Task<AdminAccessGrantRevokeResult> RevokeAccessGrantAsync(
+        Guid grantId,
+        CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+        var index = AccessGrants.FindIndex(grant => grant.GrantId == grantId);
+        if (index < 0)
+        {
+            throw new KeyNotFoundException("Access Grant was not found.");
+        }
+        var item = AccessGrants[index];
+        var revoked = item with
+        {
+            State = "revoked",
+            LastUsedAt = item.LastUsedAt
+        };
+        AccessGrants[index] = revoked;
+        return Task.FromResult(
+            new AdminAccessGrantRevokeResult(
+                grantId,
+                "revoked",
+                DateTimeOffset.UtcNow,
+                "admin-requested"));
+    }
+
+    public Task<AdminAccessGrantRevokeAllPreview>
+        PreviewRevokeAllAccessGrantsAsync(
+            CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+        var active = AccessGrants
+            .Where(item => item.State == "active")
+            .ToArray();
+        var impacts = active
+            .GroupBy(item => new
+            {
+                item.ClientId,
+                item.ClientDisplayName
+            })
+            .Select(group => new AdminAccessGrantImpactGroup(
+                group.Key.ClientId,
+                group.Key.ClientDisplayName,
+                group.Count(),
+                0,
+                group.SelectMany(item => item.Operations)
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(value => value, StringComparer.Ordinal)
+                    .ToArray(),
+                group.SelectMany(item => item.ResourceScopes)
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(value => value, StringComparer.Ordinal)
+                    .ToArray()))
+            .ToArray();
+        return Task.FromResult(
+            new AdminAccessGrantRevokeAllPreview(
+                "test-preview",
+                DateTimeOffset.UtcNow.AddMinutes(2),
+                impacts,
+                active.Length,
+                0));
+    }
+
+    public Task<AdminAccessGrantRevokeAllResult>
+        RevokeAllAccessGrantsAsync(
+            string previewToken,
+            CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+        if (!string.Equals(previewToken, "test-preview", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Preview token is invalid.");
+        }
+        var revoked = 0;
+        for (var index = 0; index < AccessGrants.Count; index++)
+        {
+            if (AccessGrants[index].State != "active")
+            {
+                continue;
+            }
+            AccessGrants[index] = AccessGrants[index] with
+            {
+                State = "revoked"
+            };
+            revoked++;
+        }
+        return Task.FromResult(
+            new AdminAccessGrantRevokeAllResult(
+                revoked,
+                0,
+                0,
+                0));
     }
 
     public Task ChangePasswordAsync(

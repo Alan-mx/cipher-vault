@@ -361,6 +361,33 @@ public sealed class ApprovalStore
         }
     }
 
+    public int RevokeByScope(
+        Guid processSessionId,
+        Guid? vaultSessionId)
+    {
+        lock (_sync)
+        {
+            var count = 0;
+            foreach (var operation in _operations.Values.ToArray())
+            {
+                if (operation.State is not (
+                        ApprovalState.Pending or
+                        ApprovalState.Approved) ||
+                    operation.ProcessSessionId != processSessionId ||
+                    operation.VaultSessionId != vaultSessionId)
+                {
+                    continue;
+                }
+                _operations[operation.OperationId] = operation with
+                {
+                    State = ApprovalState.Revoked
+                };
+                count++;
+            }
+            return count;
+        }
+    }
+
     private void PruneExpired(DateTimeOffset now)
     {
         foreach (var operation in _operations.Values.ToArray())

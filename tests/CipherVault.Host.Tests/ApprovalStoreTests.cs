@@ -142,6 +142,66 @@ public sealed class ApprovalStoreTests
         Assert.Equal("approval_expired", consumed.ReasonCode);
     }
 
+    [Fact]
+    public void RevokeByScopeInvalidatesOnlyMatchingApprovals()
+    {
+        var store = new ApprovalStore();
+        using var parameters = JsonDocument.Parse("""{"documentId":"abc"}""");
+        var processA = Guid.NewGuid();
+        var processB = Guid.NewGuid();
+        var vaultSession = Guid.NewGuid();
+        var operationA = PrepareApproved(
+            store,
+            processA,
+            vaultSession,
+            parameters.RootElement);
+        var operationB = PrepareApproved(
+            store,
+            processB,
+            vaultSession,
+            parameters.RootElement);
+
+        Assert.Equal(1, store.RevokeByScope(processA, vaultSession));
+        Assert.Equal(
+            ApprovalConsumeStatus.NotApproved,
+            store.Consume(
+                operationA.OperationId,
+                ApprovalOperationKind.PurgeNote,
+                processA,
+                vaultSession,
+                operationA.ParametersHash).Status);
+        Assert.Equal(
+            ApprovalConsumeStatus.Consumed,
+            store.Consume(
+                operationB.OperationId,
+                ApprovalOperationKind.PurgeNote,
+                processB,
+                vaultSession,
+                operationB.ParametersHash).Status);
+    }
+
+    private static PreparedOperation PrepareApproved(
+        ApprovalStore store,
+        Guid processSessionId,
+        Guid vaultSessionId,
+        JsonElement parameters)
+    {
+        var operation = store.Prepare(
+            ApprovalOperationKind.PurgeNote,
+            processSessionId,
+            vaultSessionId,
+            parameters);
+        var request = store.CreateRequest(
+            operation,
+            "永久删除",
+            "删除 abc");
+        store.Decide(
+            request,
+            approved: true,
+            brokerProcessSessionId: Guid.NewGuid());
+        return operation;
+    }
+
     private sealed class ManualTimeProvider(DateTimeOffset now) : TimeProvider
     {
         private DateTimeOffset _now = now;

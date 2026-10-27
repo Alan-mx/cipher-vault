@@ -159,6 +159,10 @@
                 </Grid>
             </TabItem>
 
+            <TabItem Header="授权管理">
+                <local:AccessGrantManagementView x:Name="AccessGrantManagement" />
+            </TabItem>
+
             <TabItem Header="维护">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="16">

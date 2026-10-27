@@ -25,10 +25,12 @@ public sealed class StrictAdminVaultRpcProvider(
     ImportWorkspaceRegistry? importWorkspaces = null,
     CipherVaultServiceConfigFile? configuration = null,
     CipherVaultServicePaths? paths = null,
-    BrokerConnectionRegistry? brokerConnections = null) : IDisposable
+    BrokerConnectionRegistry? brokerConnections = null,
+    AccessGrantService? accessGrants = null) : IDisposable
 {
     private readonly ImportWorkspaceRegistry _importWorkspaces =
         importWorkspaces ?? new ImportWorkspaceRegistry();
+    private readonly AccessGrantService? _accessGrants = accessGrants;
 
     public async Task<object> HandleAsync(
         AdminSession session,
@@ -1024,6 +1026,152 @@ public sealed class StrictAdminVaultRpcProvider(
                         bridge.Image?.SignerThumbprint,
                         bridge.Image?.SignerSubject))
                     .ToArray();
+            case "admin.grants.list":
+                EnsureGrantManagementAdmin(session);
+                var grantListRequest =
+                    PipeRpcCodec.ReadPayload<AdminAccessGrantListRequest>(
+                        new PipeRpcRequest(
+                            PipeProtocol.Version,
+                            Guid.Empty,
+                            method,
+                            payload));
+                if (_accessGrants is null)
+                {
+                    throw new AdminPipeRpcException(
+                        "storage_error",
+                        "Access Grant management is unavailable.");
+                }
+                return await _accessGrants.ListStoredAsync(
+                    grantListRequest.State,
+                    grantListRequest.Search,
+                    grantListRequest.Cursor,
+                    grantListRequest.Limit,
+                    cancellationToken).ConfigureAwait(false);
+            case "admin.grants.get":
+                EnsureGrantManagementAdmin(session);
+                var grantGetRequest =
+                    PipeRpcCodec.ReadPayload<AdminAccessGrantGetRequest>(
+                        new PipeRpcRequest(
+                            PipeProtocol.Version,
+                            Guid.Empty,
+                            method,
+                            payload));
+                if (_accessGrants is null)
+                {
+                    throw new AdminPipeRpcException(
+                        "storage_error",
+                        "Access Grant management is unavailable.");
+                }
+                try
+                {
+                    return await _accessGrants.GetStoredAsync(
+                        grantGetRequest.GrantId,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (KeyNotFoundException)
+                {
+                    throw new AdminPipeRpcException(
+                        "not_found",
+                        "The requested Access Grant was not found.");
+                }
+            case "admin.grants.revoke":
+                EnsureGrantManagementAdmin(session);
+                var grantRevokeRequest =
+                    PipeRpcCodec.ReadPayload<AdminAccessGrantRevokeRequest>(
+                        new PipeRpcRequest(
+                            PipeProtocol.Version,
+                            Guid.Empty,
+                            method,
+                            payload));
+                if (_accessGrants is null)
+                {
+                    throw new AdminPipeRpcException(
+                        "storage_error",
+                        "Access Grant management is unavailable.");
+                }
+                try
+                {
+                    var auditContext = GrantAdminAuditContext(session);
+                    return await sessions.ExecuteGrantMutationAsync(
+                        token => _accessGrants.RevokeStoredAsync(
+                            grantRevokeRequest.GrantId,
+                            auditContext,
+                            token),
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (KeyNotFoundException)
+                {
+                    throw new AdminPipeRpcException(
+                        "not_found",
+                        "The requested Access Grant was not found.");
+                }
+            case "admin.grants.revoke_all.preview":
+                EnsureGrantManagementAdmin(session);
+                if (_accessGrants is null)
+                {
+                    throw new AdminPipeRpcException(
+                        "storage_error",
+                        "Access Grant management is unavailable.");
+                }
+                var previewSnapshot = await sessions.GetSnapshotAsync(
+                    cancellationToken).ConfigureAwait(false);
+                if (previewSnapshot.SessionId is null ||
+                    previewSnapshot.State is not (
+                        VaultSessionState.Unlocked or
+                        VaultSessionState.Expiring))
+                {
+                    throw new AdminPipeRpcException(
+                        "vault_locked",
+                        "Vault must be unlocked to manage Access Grants.");
+                }
+                return await _accessGrants.PreviewRevokeAllStoredAsync(
+                    session.SessionId,
+                    previewSnapshot.SessionId.Value,
+                    cancellationToken).ConfigureAwait(false);
+            case "admin.grants.revoke_all":
+                EnsureGrantManagementAdmin(session);
+                var grantRevokeAllRequest =
+                    PipeRpcCodec.ReadPayload<AdminAccessGrantRevokeAllRequest>(
+                        new PipeRpcRequest(
+                            PipeProtocol.Version,
+                            Guid.Empty,
+                            method,
+                            payload));
+                if (_accessGrants is null)
+                {
+                    throw new AdminPipeRpcException(
+                        "storage_error",
+                        "Access Grant management is unavailable.");
+                }
+                var executeSnapshot = await sessions.GetSnapshotAsync(
+                    cancellationToken).ConfigureAwait(false);
+                if (executeSnapshot.SessionId is null ||
+                    executeSnapshot.State is not (
+                        VaultSessionState.Unlocked or
+                        VaultSessionState.Expiring))
+                {
+                    throw new AdminPipeRpcException(
+                        "vault_locked",
+                        "Vault must be unlocked to manage Access Grants.");
+                }
+                try
+                {
+                    var auditContext = GrantAdminAuditContext(session);
+                    return await sessions.ExecuteGrantMutationAsync(
+                        token => _accessGrants.ExecuteRevokeAllStoredAsync(
+                            grantRevokeAllRequest.PreviewToken,
+                            session.SessionId,
+                            executeSnapshot.SessionId.Value,
+                            auditContext,
+                            token),
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (AccessGrantPreviewException exception)
+                {
+                    throw new AdminPipeRpcException(
+                        exception.Code,
+                        exception.Message);
+                }
             case "admin.service.stop":
                 {
                     var stopRequest = PipeRpcCodec.ReadPayload<HostStopRequest>(
@@ -1137,6 +1285,14 @@ public sealed class StrictAdminVaultRpcProvider(
         };
     }
 
+    private static VaultAuditContext GrantAdminAuditContext(
+        AdminSession session)
+    {
+        return new VaultAuditContext(
+            Actor(session),
+            Path.GetFileName(session.Client.FinalImagePath));
+    }
+
     private static VaultReadScope ReadScope(AdminSession session)
     {
         return session.PathPolicy is { GlobalRead: false } pathPolicy
@@ -1162,6 +1318,18 @@ public sealed class StrictAdminVaultRpcProvider(
             throw new AdminPipeRpcException(
                 consumed.ReasonCode ?? "approval_invalid",
                 "Operation approval could not be consumed.");
+        }
+    }
+
+    private static void EnsureGrantManagementAdmin(AdminSession session)
+    {
+        if (session.Client.Kind is not (
+                VerifiedProcessKind.AdminUi or
+                VerifiedProcessKind.AdminCli))
+        {
+            throw new AdminPipeRpcException(
+                "access_denied",
+                "Only the Vault Owner can manage Access Grants.");
         }
     }
 

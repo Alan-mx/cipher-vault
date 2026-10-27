@@ -2,6 +2,7 @@ using System.IO;
 using CipherVault.Core;
 using CipherVault.Core.Configuration;
 using CipherVault.Core.Errors;
+using CipherVault.Core.Grants;
 using CipherVault.Core.Security;
 using CipherVault.Core.Session;
 using CipherVault.Host.Security;
@@ -88,10 +89,14 @@ public sealed class StrictServiceHost : IAsyncDisposable
             builder.Services.AddSingleton<ISystemActivityProvider>(
                 serviceProvider => serviceProvider
                     .GetRequiredService<BrokerActivityProvider>());
-            builder.Services.AddSingleton<IVaultService>(serviceProvider =>
+            builder.Services.AddSingleton<VaultService>(serviceProvider =>
                 new VaultService(
                     serviceProvider.GetRequiredService<BrokerActivityProvider>(),
                     sessionOptions: sessionOptions));
+            builder.Services.AddSingleton<IVaultService>(serviceProvider =>
+                serviceProvider.GetRequiredService<VaultService>());
+            builder.Services.AddSingleton<IAccessGrantStore>(serviceProvider =>
+                serviceProvider.GetRequiredService<VaultService>());
             builder.Services.AddSingleton<BrokerConnectionRegistry>();
             builder.Services.AddSingleton<OwnerSessionRegistry>();
             builder.Services.AddSingleton<ApprovalStore>();
@@ -118,7 +123,11 @@ public sealed class StrictServiceHost : IAsyncDisposable
             builder.Services.AddSingleton(serviceProvider =>
                 new AccessGrantService(
                     securityLog:
-                        serviceProvider.GetRequiredService<ISecurityEventLog>()));
+                        serviceProvider.GetRequiredService<ISecurityEventLog>(),
+                    store:
+                        serviceProvider.GetRequiredService<IAccessGrantStore>(),
+                    approvals:
+                        serviceProvider.GetRequiredService<ApprovalStore>()));
             builder.Services.AddSingleton(serviceProvider =>
                 new HostSessionCoordinator(
                     serviceProvider.GetRequiredService<IVaultService>(),

@@ -932,6 +932,10 @@ public sealed class BridgeVaultTools
         var result = await _bridge
             .CallToolAsync(name, arguments, cancellationToken)
             .ConfigureAwait(false);
+        if (HasRevokedGrant(result))
+        {
+            return result;
+        }
         if (!HasLostGrant(result))
         {
             return result;
@@ -1080,6 +1084,34 @@ public sealed class BridgeVaultTools
                 "access_grant_expired" => true,
                 _ => false
             };
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool HasRevokedGrant(string result)
+    {
+        if (string.IsNullOrWhiteSpace(result))
+        {
+            return false;
+        }
+        try
+        {
+            using var document = JsonDocument.Parse(result);
+            var root = document.RootElement;
+            return root.ValueKind == JsonValueKind.Object &&
+                root.TryGetProperty("ok", out var ok) &&
+                ok.ValueKind == JsonValueKind.False &&
+                root.TryGetProperty("error", out var error) &&
+                error.ValueKind == JsonValueKind.Object &&
+                error.TryGetProperty("code", out var code) &&
+                code.ValueKind == JsonValueKind.String &&
+                string.Equals(
+                    code.GetString(),
+                    "access_grant_revoked",
+                    StringComparison.Ordinal);
         }
         catch (JsonException)
         {

@@ -175,6 +175,28 @@ public interface IHostVaultClient : IAsyncDisposable
         VaultAuditQuery query,
         CancellationToken cancellationToken = default);
 
+    Task<AdminAccessGrantPage> ListAccessGrantsAsync(
+        string? state,
+        string? search,
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken = default);
+
+    Task<AdminAccessGrantDetail> GetAccessGrantAsync(
+        Guid grantId,
+        CancellationToken cancellationToken = default);
+
+    Task<AdminAccessGrantRevokeResult> RevokeAccessGrantAsync(
+        Guid grantId,
+        CancellationToken cancellationToken = default);
+
+    Task<AdminAccessGrantRevokeAllPreview> PreviewRevokeAllAccessGrantsAsync(
+        CancellationToken cancellationToken = default);
+
+    Task<AdminAccessGrantRevokeAllResult> RevokeAllAccessGrantsAsync(
+        string previewToken,
+        CancellationToken cancellationToken = default);
+
     Task ChangePasswordAsync(
         string vaultPath,
         string currentPassword,

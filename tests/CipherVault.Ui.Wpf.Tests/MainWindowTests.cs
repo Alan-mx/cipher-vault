@@ -12,6 +12,7 @@ using CipherVault.Core;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Session;
 using CipherVault.Host.Client;
+using CipherVault.Host.Contracts;
 using CipherVault.Security.Win;
 using CipherVault.Ui.Wpf;
 
@@ -20,6 +21,86 @@ namespace CipherVault.Ui.Wpf.Tests;
 public sealed class MainWindowTests
 {
     private const string Password = "wpf integration password";
+
+    [Fact]
+    public async Task AccessGrantViewDisplaysCountsAndRows()
+    {
+        if (!ShouldRunInteractiveUiTests())
+        {
+            return;
+        }
+
+        using var uiLock = UiAutomationLock.Acquire();
+        await RunOnStaAsync(async () =>
+        {
+            var client = new InProcessHostVaultClient();
+            client.AccessGrants.Add(
+                new AdminAccessGrantListItem(
+                    Guid.NewGuid(),
+                    "mcp",
+                    "MCP",
+                    Guid.NewGuid(),
+                    "active",
+                    ["read"],
+                    ["read:*"],
+                    DateTimeOffset.UtcNow,
+                    DateTimeOffset.UtcNow.AddHours(1),
+                    null));
+            var view = new AccessGrantManagementView();
+            view.Initialize(client);
+            view.SetAccessAvailable(true);
+            await view.RefreshAsync();
+
+            Assert.Equal(
+                "总数 1",
+                Find<TextBlock>(view, "TotalCountText").Text);
+            Assert.Equal(
+                "有效 1",
+                Find<TextBlock>(view, "ActiveCountText").Text);
+            var grid = Find<DataGrid>(view, "GrantsGrid");
+            Assert.Single(grid.Items.Cast<object>());
+            grid.SelectedIndex = 0;
+            await WaitUntilAsync(
+                () => view.SelectedGrant is not null,
+                TimeSpan.FromSeconds(5));
+            Assert.Equal(
+                "mcp",
+                Assert.IsType<AdminAccessGrantDetail>(
+                    view.SelectedGrant).ClientId);
+            Assert.True(Find<Button>(view, "RevokeButton").IsEnabled);
+            Assert.True(Find<Button>(view, "RevokeAllButton").IsEnabled);
+
+            client.AccessGrants[0] = client.AccessGrants[0] with
+            {
+                State = "revoked"
+            };
+            await view.RefreshAsync();
+            grid = Find<DataGrid>(view, "GrantsGrid");
+            grid.SelectedIndex = 0;
+            await WaitUntilAsync(
+                () => view.SelectedGrant?.State == "revoked",
+                TimeSpan.FromSeconds(5));
+            Assert.False(Find<Button>(view, "RevokeButton").IsEnabled);
+
+            var delayed = new TaskCompletionSource<AdminAccessGrantPage>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            client.ListAccessGrantsHandler = (_, _, _, _, _) => delayed.Task;
+            var pendingRefresh = view.RefreshAsync();
+            await Task.Delay(20);
+            view.SetAccessAvailable(false);
+            delayed.SetResult(
+                new AdminAccessGrantPage(
+                    client.AccessGrants,
+                    NextCursor: null,
+                    TotalCount: 1,
+                    new AdminAccessGrantStatusCounts(1, 0, 1, 0)));
+            await pendingRefresh;
+            Assert.Null(Find<DataGrid>(view, "GrantsGrid").ItemsSource);
+            Assert.Equal(
+                "总数 0",
+                Find<TextBlock>(view, "TotalCountText").Text);
+        });
+    }
 
     [Fact]
     public async Task WindowUnlocksLoadsCatalogAndClearsAfterLock()

@@ -19,6 +19,116 @@ namespace CipherVault.Host.Tests;
 public sealed class StrictAdminVaultRpcProviderTests
 {
     [Fact]
+    public async Task GrantManagementRejectsBridgeAdminSession()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var sessions = fixture.App.Services.GetRequiredService<
+            HostSessionCoordinator>();
+        var paths = CipherVaultServicePaths.Create(
+            Path.Combine(fixture.Root, "ProgramFiles"),
+            Path.Combine(fixture.Root, "ProgramData"),
+            Path.Combine(fixture.Root, "LocalAppData"));
+        var provider = new StrictAdminVaultRpcProvider(
+            fixture.App.Services.GetRequiredService<HostVaultGateway>(),
+            sessions,
+            new ApprovalStore(),
+            new TestApprovalPrompt(new ApprovalStore()),
+            new TransferCoordinator(paths),
+            new TestTransferPrompt());
+        var admin = CreateAdminSession();
+        var bridge = admin with
+        {
+            Client = admin.Client with
+            {
+                Kind = VerifiedProcessKind.McpBridge
+            }
+        };
+
+        var error = await Assert.ThrowsAsync<AdminPipeRpcException>(() =>
+            provider.HandleAsync(
+                bridge,
+                "admin.grants.list",
+                JsonSerializer.SerializeToElement(
+                    new AdminAccessGrantListRequest(
+                        null,
+                        null,
+                        null,
+                        50),
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                CancellationToken.None));
+        Assert.Equal("access_denied", error.Code);
+    }
+
+    [Fact]
+    public async Task AdminGrantListAndRevokeUsePersistentStore()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var sessions = fixture.App.Services.GetRequiredService<
+            HostSessionCoordinator>();
+        var grants = fixture.App.Services.GetRequiredService<
+            AccessGrantService>();
+        var unlocked = await sessions.UnlockAsync(
+            HostCredentialPreference.Password);
+        var paths = CipherVaultServicePaths.Create(
+            Path.Combine(fixture.Root, "ProgramFiles"),
+            Path.Combine(fixture.Root, "ProgramData"),
+            Path.Combine(fixture.Root, "LocalAppData"));
+        var provider = new StrictAdminVaultRpcProvider(
+            fixture.App.Services.GetRequiredService<HostVaultGateway>(),
+            sessions,
+            new ApprovalStore(),
+            new TestApprovalPrompt(new ApprovalStore()),
+            new TransferCoordinator(paths),
+            new TestTransferPrompt(),
+            accessGrants: grants);
+        var now = DateTimeOffset.UtcNow;
+        var issued = await grants.RequestAsync(
+            "mcp",
+            Guid.NewGuid(),
+            McpAccessMode.ReadOnly,
+            AccessGrantScope.Read,
+            new AccessGrantVaultGeneration(
+                Assert.IsType<Guid>(unlocked.SessionId),
+                now.AddHours(1)),
+            (_, _) => Task.FromResult(
+                new AccessGrantApprovalResult(
+                    true,
+                    AccessGrantScope.Read)),
+            Guid.NewGuid());
+        Assert.Equal(AccessGrantRequestStatus.Approved, issued.Status);
+        var session = CreateAdminSession();
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+
+        var list = await provider.HandleAsync(
+            session,
+            "admin.grants.list",
+            JsonSerializer.SerializeToElement(
+                new AdminAccessGrantListRequest(
+                    "active",
+                    "mcp",
+                    null,
+                    50),
+                options),
+            CancellationToken.None);
+        var page = Assert.IsType<AdminAccessGrantPage>(list);
+        var item = Assert.Single(page.Items);
+        Assert.Equal("active", item.State);
+
+        var revoked = await provider.HandleAsync(
+            session,
+            "admin.grants.revoke",
+            JsonSerializer.SerializeToElement(
+                new AdminAccessGrantRevokeRequest(item.GrantId),
+                options),
+            CancellationToken.None);
+        Assert.Equal(
+            "revoked",
+            Assert.IsType<AdminAccessGrantRevokeResult>(revoked).Outcome);
+        var detail = await grants.GetStoredAsync(item.GrantId);
+        Assert.Equal("revoked", detail.State);
+    }
+
+    [Fact]
     public async Task StopLocksVault()
     {
         await using var fixture = await HostTestFixture.CreateAsync();

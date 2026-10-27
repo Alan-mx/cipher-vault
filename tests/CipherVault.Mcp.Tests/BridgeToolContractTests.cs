@@ -555,7 +555,6 @@ public sealed class BridgeToolContractTests
 
     [Theory]
     [InlineData("access_grant_required")]
-    [InlineData("access_grant_revoked")]
     [InlineData("access_grant_expired")]
     public async Task GrantFailureTriggersOneReauthorizationAndRetry(
         string errorCode)
@@ -574,6 +573,31 @@ public sealed class BridgeToolContractTests
         Assert.Equal(2, bridge.Calls.Count);
         Assert.Equal("read_note", bridge.Calls[0].ToolName);
         Assert.Equal("read_note", bridge.Calls[1].ToolName);
+    }
+
+    [Fact]
+    public async Task RevokedGrantDoesNotTriggerReauthorization()
+    {
+        var bridge = new RecoveringMcpBridgeClient(
+            "access_grant_revoked");
+        var tools = new BridgeVaultTools(bridge);
+
+        var result = await tools.ReadNote(
+            "d80c2e83-636f-47a8-a3f2-e473beec9922",
+            0,
+            100,
+            CancellationToken.None);
+
+        using var document = JsonDocument.Parse(result);
+        Assert.False(document.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal(
+            "access_grant_revoked",
+            document.RootElement
+                .GetProperty("error")
+                .GetProperty("code")
+                .GetString());
+        Assert.Equal(0, bridge.GrantRequests);
+        Assert.Single(bridge.Calls);
     }
 
     [Fact]

@@ -17,6 +17,7 @@ public enum VaultErrorCode
     FrontMatterInvalid,
     LinkIndexTooLarge,
     InvalidCursor,
+    ClockRollback,
     StorageError
 }
 

@@ -469,6 +469,112 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
             cancellationToken);
     }
 
+    public async Task<AdminAccessGrantPage> ListAccessGrantsAsync(
+        string? state,
+        string? search,
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        var connection = await GetConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        try
+        {
+            return await connection.ListAccessGrantsAsync(
+                state,
+                search,
+                cursor,
+                limit,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (
+            AdminPipeClientConnection.IsConnectionLost(exception))
+        {
+            await InvalidateConnectionAsync(connection).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    public async Task<AdminAccessGrantDetail> GetAccessGrantAsync(
+        Guid grantId,
+        CancellationToken cancellationToken = default)
+    {
+        var connection = await GetConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        try
+        {
+            return await connection.GetAccessGrantAsync(
+                grantId,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (
+            AdminPipeClientConnection.IsConnectionLost(exception))
+        {
+            await InvalidateConnectionAsync(connection).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    public async Task<AdminAccessGrantRevokeResult> RevokeAccessGrantAsync(
+        Guid grantId,
+        CancellationToken cancellationToken = default)
+    {
+        var connection = await GetConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        try
+        {
+            return await connection.RevokeAccessGrantAsync(
+                grantId,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (
+            AdminPipeClientConnection.IsConnectionLost(exception))
+        {
+            await InvalidateConnectionAsync(connection).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    public async Task<AdminAccessGrantRevokeAllPreview>
+        PreviewRevokeAllAccessGrantsAsync(
+            CancellationToken cancellationToken = default)
+    {
+        var connection = await GetConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        try
+        {
+            return await connection.PreviewRevokeAllAccessGrantsAsync(
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (
+            AdminPipeClientConnection.IsConnectionLost(exception))
+        {
+            await InvalidateConnectionAsync(connection).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    public async Task<AdminAccessGrantRevokeAllResult>
+        RevokeAllAccessGrantsAsync(
+            string previewToken,
+            CancellationToken cancellationToken = default)
+    {
+        var connection = await GetConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        try
+        {
+            return await connection.RevokeAllAccessGrantsAsync(
+                previewToken,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (
+            AdminPipeClientConnection.IsConnectionLost(exception))
+        {
+            await InvalidateConnectionAsync(connection).ConfigureAwait(false);
+            throw;
+        }
+    }
+
     public async Task ChangePasswordAsync(
         string vaultPath,
         string currentPassword,
@@ -614,7 +720,8 @@ public sealed class NamedPipeHostVaultClient : IHostVaultClient
             status.HardExpiresAt,
             status.LockReason,
             status.RecoveryVerified,
-            brokerAvailable);
+            brokerAvailable,
+            status.LockCleanupWarning);
     }
 
     private static string ToCredentialPreference(VaultCredentialType credentialType)

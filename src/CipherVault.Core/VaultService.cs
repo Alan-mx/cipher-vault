@@ -3,6 +3,7 @@ using CipherVault.Core.Backup;
 using CipherVault.Core.Crypto;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
+using CipherVault.Core.Grants;
 using CipherVault.Core.ImportExport;
 using CipherVault.Core.Security;
 using CipherVault.Core.Session;
@@ -12,6 +13,8 @@ namespace CipherVault.Core;
 
 public interface IVaultService : IAsyncDisposable
 {
+    void SetSessionClosingHandler(IVaultSessionClosingHandler? handler);
+
     Task<VaultInitializeResult> InitializeAsync(
         string vaultPath,
         string password,
@@ -298,7 +301,7 @@ public interface IVaultService : IAsyncDisposable
         CancellationToken cancellationToken = default);
 }
 
-public sealed class VaultService : IVaultService
+public sealed partial class VaultService : IVaultService, IAccessGrantStore
 {
     private const string PendingKeyFileName = "vault.keys.pending";
     private readonly ISystemActivityProvider _activityProvider;
@@ -306,6 +309,9 @@ public sealed class VaultService : IVaultService
     private readonly VaultSessionOptions _sessionOptions;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private VaultSession? _session;
+    private IVaultSessionClosingHandler? _sessionClosingHandler;
+    private string? _lockCleanupWarning;
+    private readonly AsyncLocal<bool> _sessionClosing = new();
     private CancellationTokenSource? _monitorCts;
     private Task? _monitorTask;
     private bool _disposed;
@@ -320,6 +326,12 @@ public sealed class VaultService : IVaultService
         _sessionOptions = sessionOptions ?? VaultSessionOptions.Default;
         _sessionOptions.Validate();
         SqlCipherVaultStore.InitializeRuntime();
+    }
+
+    public void SetSessionClosingHandler(
+        IVaultSessionClosingHandler? handler)
+    {
+        _sessionClosingHandler = handler;
     }
 
     public async Task<VaultInitializeResult> InitializeAsync(
@@ -499,6 +511,7 @@ public sealed class VaultService : IVaultService
                     };
                     integrityKey = Array.Empty<byte>();
                     _session = session;
+                    _lockCleanupWarning = null;
                     StartMonitor();
                     return CreateStatus(session, null);
                 }
@@ -1888,6 +1901,36 @@ public sealed class VaultService : IVaultService
         CancellationToken cancellationToken)
     {
         var session = _session;
+        if (session is not null && _sessionClosingHandler is not null)
+        {
+            _sessionClosing.Value = true;
+            try
+            {
+                await _sessionClosingHandler.HandleClosingAsync(
+                    new VaultSessionClosingContext(
+                        session.SessionId,
+                        reason,
+                        _timeProvider.GetUtcNow()),
+                    this,
+                    cancellationToken).ConfigureAwait(false);
+                _lockCleanupWarning = null;
+            }
+            catch (OperationCanceledException) when (
+                cancellationToken.IsCancellationRequested)
+            {
+                _lockCleanupWarning =
+                    "Vault lock completed while session cleanup was cancelled.";
+            }
+            catch (Exception exception)
+            {
+                _lockCleanupWarning =
+                    $"Vault lock cleanup failed: {exception.GetType().Name}";
+            }
+            finally
+            {
+                _sessionClosing.Value = false;
+            }
+        }
         _session = null;
         _monitorCts?.Cancel();
         _monitorCts?.Dispose();
@@ -1948,6 +1991,10 @@ public sealed class VaultService : IVaultService
         {
             throw new VaultException(VaultErrorCode.SessionLocked, "Vault session is locked.");
         }
+        if (_sessionClosing.Value)
+        {
+            return _session;
+        }
 
         RefreshActivity(_session);
         if (IsExpired(_session))
@@ -2000,7 +2047,7 @@ public sealed class VaultService : IVaultService
             session.RecoveryVerified);
     }
 
-    private static VaultSessionStatus GetLockedStatus(string? reason)
+    private VaultSessionStatus GetLockedStatus(string? reason)
     {
         return new VaultSessionStatus(
             VaultSessionState.Locked,
@@ -2010,7 +2057,9 @@ public sealed class VaultService : IVaultService
             null,
             null,
             reason,
-            false);
+            false,
+            BrokerAvailable: false,
+            _lockCleanupWarning);
     }
 
     private static string NormalizeVaultPath(string vaultPath)

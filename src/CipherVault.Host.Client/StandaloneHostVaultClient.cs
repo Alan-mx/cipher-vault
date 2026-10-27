@@ -365,6 +365,62 @@ public sealed class StandaloneHostVaultClient : IHostVaultClient
         return _vault.GetAuditPageAsync(query, cancellationToken);
     }
 
+    public Task<AdminAccessGrantPage> ListAccessGrantsAsync(
+        string? state,
+        string? search,
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        _ = state;
+        _ = search;
+        _ = cursor;
+        _ = limit;
+        _ = cancellationToken;
+        throw new NotSupportedException(
+            "Access Grant management requires the CipherVault Host service.");
+    }
+
+    public Task<AdminAccessGrantDetail> GetAccessGrantAsync(
+        Guid grantId,
+        CancellationToken cancellationToken = default)
+    {
+        _ = grantId;
+        _ = cancellationToken;
+        throw new NotSupportedException(
+            "Access Grant management requires the CipherVault Host service.");
+    }
+
+    public Task<AdminAccessGrantRevokeResult> RevokeAccessGrantAsync(
+        Guid grantId,
+        CancellationToken cancellationToken = default)
+    {
+        _ = grantId;
+        _ = cancellationToken;
+        throw new NotSupportedException(
+            "Access Grant management requires the CipherVault Host service.");
+    }
+
+    public Task<AdminAccessGrantRevokeAllPreview>
+        PreviewRevokeAllAccessGrantsAsync(
+            CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+        throw new NotSupportedException(
+            "Access Grant management requires the CipherVault Host service.");
+    }
+
+    public Task<AdminAccessGrantRevokeAllResult>
+        RevokeAllAccessGrantsAsync(
+            string previewToken,
+            CancellationToken cancellationToken = default)
+    {
+        _ = previewToken;
+        _ = cancellationToken;
+        throw new NotSupportedException(
+            "Access Grant management requires the CipherVault Host service.");
+    }
+
     public Task ChangePasswordAsync(
         string vaultPath,
         string currentPassword,
