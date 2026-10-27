@@ -115,12 +115,15 @@ cd "$env:ProgramFiles\CipherVault"
 安装器会创建 Windows Service、解析 `NT SERVICE\CipherVaultHost` SID、设置
 ProgramData ACL，并生成只读的 `install-public.json`。
 
-升级时先停止服务，将新签名 EXE 覆盖到 `%ProgramFiles%\CipherVault`，再执行一次
-`service install`。只要 `%ProgramData%\CipherVault` 的 Owner、服务账户和固定目录
-布局保持一致，安装器会生成新的 install ID，同时保留 Vault 数据：
+升级前关闭 WPF、MCP 和 Broker。停止服务并覆盖新签名 EXE 后，先执行
+`service uninstall` 移除旧服务注册，再安装新版本。`service uninstall` 默认保留
+ProgramData；升级时不要添加 `--remove-data`。只要
+`%ProgramData%\CipherVault` 的 Owner、服务账户和固定目录布局保持一致，
+安装器会生成新的 install ID，同时保留 Vault 数据：
 
 ```powershell
 .\CipherVault.Cli.exe service stop
+.\CipherVault.Cli.exe service uninstall
 .\CipherVault.Cli.exe service install --signer-thumbprint <64位SHA-256签名者指纹>
 .\CipherVault.Cli.exe service start
 ```
@@ -166,7 +169,8 @@ ProgramData ACL，并生成只读的 `install-public.json`。
 ## 桌面端与命令行
 
 WPF 提供日常读写、回收站、版本、备份、导出、导入和审计页面。CLI 提供相同能力的
-命令行版本：
+命令行版本。WPF 可以保持打开，同时使用 CLI；Host 当前支持最多 4 个并发 Admin
+连接：
 
 ```powershell
 .\CipherVault.Cli.exe status
