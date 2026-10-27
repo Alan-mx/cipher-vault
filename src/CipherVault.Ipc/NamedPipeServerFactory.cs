@@ -16,7 +16,8 @@ public static class NamedPipeServerFactory
     public static NamedPipeServerStream Create(
         string pipeName,
         PipeSecurity security,
-        int maxInstances = 1)
+        int maxInstances = 1,
+        bool isFirstInstance = true)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pipeName);
         ArgumentNullException.ThrowIfNull(security);
@@ -40,7 +41,7 @@ public static class NamedPipeServerFactory
             var handle = NativeMethods.CreateNamedPipe(
                 @"\\.\pipe\" + normalizedName,
                 PipeAccessDuplex |
-                FileFlagFirstPipeInstance |
+                (isFirstInstance ? FileFlagFirstPipeInstance : 0) |
                 FileFlagOverlapped,
                 PipeRejectRemoteClients,
                 (uint)maxInstances,

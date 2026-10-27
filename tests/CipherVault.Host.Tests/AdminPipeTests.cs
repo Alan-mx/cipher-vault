@@ -424,6 +424,140 @@ public sealed class AdminPipeTests
         await loopTask.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    [Fact]
+    public async Task ConcurrentClientsRemainIndependentWhenOneDisconnects()
+    {
+        var pipeName = "CipherVault.Admin.ConcurrentTest." +
+            Guid.NewGuid().ToString("N");
+        var currentUser = WindowsIdentity.GetCurrent().User!;
+        var currentSession = (uint)Process.GetCurrentProcess().SessionId;
+        var imagePath = Environment.ProcessPath!;
+        var imageHash = WindowsProcessIdentityVerifier.ComputeFileSha256(imagePath);
+        var servicePolicy = Policy(
+            VerifiedProcessKind.HostService,
+            currentUser.Value,
+            currentSession,
+            imagePath,
+            imageHash);
+        var clientPolicy = Policy(
+            VerifiedProcessKind.AdminUi,
+            currentUser.Value,
+            currentSession,
+            imagePath,
+            imageHash);
+        var serviceIdentity = VerifyIdentity(
+            (uint)Environment.ProcessId,
+            servicePolicy);
+        var adminSessions = new AdminSessionStore(
+            idleLifetime: TimeSpan.FromMinutes(15),
+            hardLifetime: TimeSpan.FromHours(4));
+        var connectedClients = 0;
+        var status = new HostSessionStatusData(
+            "locked",
+            SessionId: null,
+            StartedAt: null,
+            LastUserActivityAt: null,
+            IdleExpiresAt: null,
+            HardExpiresAt: null,
+            LockReason: "startup",
+            ActiveLeases: 0,
+            ConnectedClients: 2,
+            RecoveryVerified: false);
+        var options = new AdminPipeServerOptions(
+            pipeName,
+            PipeSecurityFactory.Create(
+                [currentUser],
+                includeAdministrators: false,
+                includeSystem: false),
+            Guid.NewGuid().ToString("D"),
+            "strict",
+            "1.0.0-test",
+            serviceIdentity,
+            [clientPolicy],
+            currentUser.Value,
+            currentUser.Value,
+            TimeSpan.FromMinutes(15),
+            TimeSpan.FromHours(4),
+            StatusProvider: (_, _) => Task.FromResult(
+                new AdminPipeStatusData(
+                    "1.0.0-test",
+                    PipeProtocol.Version,
+                    "strict",
+                    BrokerAvailable: false,
+                    status)),
+            AdminSessions: adminSessions,
+            ConnectedClientLease: () =>
+            {
+                Interlocked.Increment(ref connectedClients);
+                return new ActionDisposable(
+                    () => Interlocked.Decrement(ref connectedClients));
+            });
+        using var stopping = new CancellationTokenSource(
+            TimeSpan.FromSeconds(15));
+        await using var firstServer = new AdminPipeServer(
+            options,
+            maxInstances: 2,
+            isFirstInstance: true);
+        await using var secondServer = new AdminPipeServer(
+            options,
+            maxInstances: 2,
+            isFirstInstance: false);
+        var firstAccept = firstServer.AcceptOnceAsync(stopping.Token);
+        var secondAccept = secondServer.AcceptOnceAsync(stopping.Token);
+        var clientOptions = new AdminPipeClientOptions(
+            pipeName,
+            clientPolicy,
+            servicePolicy);
+
+        await using var firstClient =
+            await AdminPipeClientConnection.ConnectAsync(clientOptions);
+        await using var secondClient =
+            await AdminPipeClientConnection.ConnectAsync(clientOptions);
+        var firstStatus = await firstClient.GetStatusAsync();
+        var secondStatus = await secondClient.GetStatusAsync();
+
+        Assert.Equal("locked", firstStatus.Session.State);
+        Assert.Equal("locked", secondStatus.Session.State);
+        Assert.Equal(2, adminSessions.List().Count);
+        Assert.Equal(2, Volatile.Read(ref connectedClients));
+        await secondClient.DisposeAsync();
+        await WaitUntilAsync(
+            () =>
+                adminSessions.List()
+                    .Single(session =>
+                        session.SessionId == secondClient.AdminSessionId)
+                    .State == AdminSessionState.Revoked &&
+                Volatile.Read(ref connectedClients) == 1,
+            TimeSpan.FromSeconds(5));
+        var completedAccept = await Task.WhenAny(
+            firstAccept,
+            secondAccept);
+        await completedAccept;
+        var completedServer = ReferenceEquals(completedAccept, firstAccept)
+            ? firstServer
+            : secondServer;
+        await completedServer.DisposeAsync();
+
+        var firstStatusAfterDisconnect =
+            await firstClient.GetStatusAsync();
+        Assert.Equal(
+            "locked",
+            firstStatusAfterDisconnect.Session.State);
+        Assert.True(adminSessions.TryGetActive(
+            firstClient.AdminSessionId,
+            out _));
+        Assert.Equal(1, Volatile.Read(ref connectedClients));
+
+        await firstClient.DisposeAsync();
+        var remainingAccept = ReferenceEquals(
+            completedAccept,
+            firstAccept)
+            ? secondAccept
+            : firstAccept;
+        await remainingAccept.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(0, Volatile.Read(ref connectedClients));
+    }
+
     private static async Task WriteInvalidHandshakeAsync(string pipeName)
     {
         await using var raw = new NamedPipeClientStream(
@@ -490,5 +624,15 @@ public sealed class AdminPipeTests
         using var evidence = Assert.IsType<VerifiedProcessEvidence>(
             result.Evidence);
         return evidence.Identity;
+    }
+
+    private sealed class ActionDisposable(Action dispose) : IDisposable
+    {
+        private Action? _dispose = dispose;
+
+        public void Dispose()
+        {
+            Interlocked.Exchange(ref _dispose, null)?.Invoke();
+        }
     }
 }

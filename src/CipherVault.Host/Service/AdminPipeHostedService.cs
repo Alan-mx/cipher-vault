@@ -106,6 +106,10 @@ public sealed class AdminPipeHostedService(
     HostSessionCoordinator sessions,
     IHostApplicationLifetime applicationLifetime) : BackgroundService
 {
+    private const int MaxConcurrentAdminConnections = 4;
+    private static readonly TimeSpan AcceptFailureBackoff =
+        TimeSpan.FromMilliseconds(100);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (!options.EnableAdminPipe)
@@ -184,17 +188,81 @@ public sealed class AdminPipeHostedService(
                 applicationLifetime.StopApplication();
                 return Task.CompletedTask;
             },
-            OwnerSessions: ownerSessions);
+            OwnerSessions: ownerSessions,
+            ConnectedClientLease: sessions.EnterClient);
 
-        await StrictPipeAcceptLoop.RunAsync(
-            async token =>
+        using var instanceGate = new SemaphoreSlim(1, 1);
+        var activeInstances = 0;
+        async Task<AdminPipeServer> CreateServerAsync(
+            CancellationToken cancellationToken)
+        {
+            await instanceGate.WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
+            try
             {
-                await using var server = new AdminPipeServer(serverOptions);
-                using var clientConnection = sessions.EnterClient();
-                _ = await server.AcceptOnceAsync(token).ConfigureAwait(false);
-            },
-            TimeSpan.FromMilliseconds(100),
-            stoppingToken).ConfigureAwait(false);
+                var server = new AdminPipeServer(
+                    serverOptions,
+                    MaxConcurrentAdminConnections,
+                    isFirstInstance: Volatile.Read(ref activeInstances) == 0);
+                Interlocked.Increment(ref activeInstances);
+                return server;
+            }
+            finally
+            {
+                instanceGate.Release();
+            }
+        }
+
+        async Task DisposeServerAsync(AdminPipeServer server)
+        {
+            await instanceGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                try
+                {
+                    await server.DisposeAsync().ConfigureAwait(false);
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref activeInstances);
+                }
+            }
+            finally
+            {
+                instanceGate.Release();
+            }
+        }
+
+        try
+        {
+            var workers = Enumerable
+                .Range(0, MaxConcurrentAdminConnections)
+                .Select(_ =>
+                    StrictPipeAcceptLoop.RunAsync(
+                        async token =>
+                        {
+                            var server = await CreateServerAsync(token)
+                                .ConfigureAwait(false);
+                            try
+                            {
+                                await server.AcceptOnceAsync(token)
+                                    .ConfigureAwait(false);
+                            }
+                            finally
+                            {
+                                await DisposeServerAsync(server)
+                                    .ConfigureAwait(false);
+                            }
+                        },
+                        AcceptFailureBackoff,
+                        stoppingToken))
+                .ToArray();
+            await Task.WhenAll(workers).ConfigureAwait(false);
+        }
+        finally
+        {
+            adminSessions.RevokeAll("service-stopped");
+        }
     }
 
     public static ProcessVerificationPolicy CreateServicePolicy(

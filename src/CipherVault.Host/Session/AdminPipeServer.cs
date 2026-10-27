@@ -20,7 +20,10 @@ public sealed class AdminPipeServer : IAsyncDisposable
     private int _accepted;
     private bool _disposed;
 
-    public AdminPipeServer(AdminPipeServerOptions options)
+    public AdminPipeServer(
+        AdminPipeServerOptions options,
+        int maxInstances = 1,
+        bool isFirstInstance = true)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         ArgumentException.ThrowIfNullOrWhiteSpace(options.PipeName);
@@ -47,7 +50,11 @@ public sealed class AdminPipeServer : IAsyncDisposable
             new AdminSessionStore(
                 idleLifetime: options.SessionIdleLifetime,
                 hardLifetime: options.SessionHardLifetime);
-        _server = NamedPipeServerFactory.Create(options.PipeName, options.Security);
+        _server = NamedPipeServerFactory.Create(
+            options.PipeName,
+            options.Security,
+            maxInstances,
+            isFirstInstance);
     }
 
     public AdminSessionStore Sessions => _sessions;
@@ -63,6 +70,8 @@ public sealed class AdminPipeServer : IAsyncDisposable
         }
 
         await _server.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
+        using var connectedClientLease =
+            _options.ConnectedClientLease?.Invoke();
         await using var connection = new PipeJsonConnection(_server);
         using var clientEvidence = VerifyClientProcess();
         var clientIdentity = clientEvidence.Identity;
@@ -157,7 +166,6 @@ public sealed class AdminPipeServer : IAsyncDisposable
             return;
         }
         _disposed = true;
-        _sessions.RevokeAll("service-disposed");
         await _server.DisposeAsync().ConfigureAwait(false);
     }
 

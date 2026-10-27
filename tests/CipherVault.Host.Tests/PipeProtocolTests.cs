@@ -62,6 +62,46 @@ public sealed class PipeProtocolTests
     }
 
     [Fact]
+    public async Task AdditionalNonFirstInstanceAcceptsConcurrentClient()
+    {
+        var pipeName = "CipherVault.Test." + Guid.NewGuid().ToString("N");
+        var security = PipeSecurityFactory.Create(
+            [WindowsIdentity.GetCurrent().User!],
+            includeAdministrators: false,
+            includeSystem: false);
+        using var first = NamedPipeServerFactory.Create(
+            pipeName,
+            security,
+            maxInstances: 2);
+        using var second = NamedPipeServerFactory.Create(
+            pipeName,
+            security,
+            maxInstances: 2,
+            isFirstInstance: false);
+        await using var firstClient = new NamedPipeClientStream(
+            ".",
+            pipeName,
+            PipeDirection.InOut,
+            PipeOptions.Asynchronous);
+        await using var secondClient = new NamedPipeClientStream(
+            ".",
+            pipeName,
+            PipeDirection.InOut,
+            PipeOptions.Asynchronous);
+
+        var firstConnect = firstClient.ConnectAsync(5_000);
+        var secondConnect = secondClient.ConnectAsync(5_000);
+        await Task.WhenAll(
+            first.WaitForConnectionAsync(),
+            second.WaitForConnectionAsync(),
+            firstConnect,
+            secondConnect);
+
+        Assert.True(first.IsConnected);
+        Assert.True(second.IsConnected);
+    }
+
+    [Fact]
     public async Task OversizedFrameIsRejectedBeforeAllocation()
     {
         await using var stream = new MemoryStream();

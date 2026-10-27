@@ -40,4 +40,5 @@ public sealed record AdminPipeServerOptions(
         Task<object>>? MethodProvider = null,
     AdminSessionStore? AdminSessions = null,
     Func<Task>? StopHostCallback = null,
-    OwnerSessionRegistry? OwnerSessions = null);
+    OwnerSessionRegistry? OwnerSessions = null,
+    Func<IDisposable>? ConnectedClientLease = null);
