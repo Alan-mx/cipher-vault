@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using CipherVault.Core.Configuration;
 using CipherVault.Core.Errors;
 using CipherVault.Host.Client;
@@ -627,9 +628,20 @@ public sealed class BridgeVaultTools
 
     [McpServerTool(Name = "vault_status")]
     [Description("Return the Vault lock state and session deadlines. This tool never returns document content.")]
-    public Task<string> VaultStatus(CancellationToken cancellationToken)
+    public async Task<string> VaultStatus(CancellationToken cancellationToken)
     {
-        return CallAsync("vault_status", Empty(), cancellationToken);
+        var result = await CallAsync(
+            "vault_status",
+            Empty(),
+            cancellationToken).ConfigureAwait(false);
+        var grantedScopes = _bridge.GrantedScopes;
+        var effectiveScopes = grantedScopes.Count > 0
+            ? grantedScopes
+            : _bridge.RequestedScopes;
+        return ApplyEffectiveAccessMode(
+            result,
+            effectiveScopes,
+            grantedScopes.Count > 0 ? "granted" : "requested");
     }
 
     [McpServerTool(Name = "list_catalog")]
@@ -1000,6 +1012,38 @@ public sealed class BridgeVaultTools
             IdempotentHint = readOnly,
             OpenWorldHint = false
         };
+    }
+
+    private static string ApplyEffectiveAccessMode(
+        string result,
+        IReadOnlySet<string> scopes,
+        string scopeState)
+    {
+        JsonNode? node;
+        try
+        {
+            node = JsonNode.Parse(result);
+        }
+        catch (JsonException)
+        {
+            return result;
+        }
+        if (node is not JsonObject root ||
+            root["vault"] is not JsonObject vault)
+        {
+            return result;
+        }
+        var readOnly = scopes.Count > 0 &&
+            scopes.All(scope =>
+                scope == "read" ||
+                scope.StartsWith("read:", StringComparison.Ordinal));
+        vault["accessMode"] = scopes.Count == 0
+            ? "none"
+            : readOnly
+                ? "readOnly"
+                : "readWrite";
+        vault["scopeState"] = scopeState;
+        return root.ToJsonString();
     }
 
     private static string AccessDenied(string name)

@@ -330,6 +330,11 @@ scope 也可以限制到虚拟文件夹：
 --scopes read:Projects,write:Inbox,delete:Trash
 ```
 
+`vault_status.vault.accessMode` 表示当前 MCP 有效权限，`scopeState` 为
+`requested` 时表示尚未完成 Access Grant 授权，为 `granted` 时表示按实际授予范围
+计算。只有读取 scope 时显示 `readOnly`，包含写入或删除 scope 时显示
+`readWrite`。
+
 路径按文件夹边界匹配，不匹配相似前缀；不可见文档统一返回 `not_found`。`read` 被
 路径限制时，`tag_list` 暂时拒绝，避免聚合计数泄露范围外标签；在根目录创建文档需要
 全局 write。

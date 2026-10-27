@@ -152,6 +152,52 @@ public sealed class BridgeToolContractTests
         }
     }
 
+    [Theory]
+    [InlineData(false, "requested")]
+    [InlineData(true, "granted")]
+    public async Task VaultStatusReportsEffectiveMCPAccessMode(
+        bool grantIssued,
+        string expectedScopeState)
+    {
+        var bridge = new RecordingMcpBridgeClient
+        {
+            RequestedScopes = ReadOnlyScopes,
+            GrantedScopes = grantIssued
+                ? ReadOnlyScopes
+                : ScopeSet(),
+            Result =
+                """
+                {
+                  "ok": true,
+                  "vault": {
+                    "configured": true,
+                    "clientId": "mcp",
+                    "accessMode": "readWrite"
+                  },
+                  "session": {
+                    "state": "unlocked"
+                  }
+                }
+                """
+        };
+        var tools = new BridgeVaultTools(bridge);
+
+        var result = await tools.VaultStatus(CancellationToken.None);
+
+        using var document = JsonDocument.Parse(result);
+        var vault = document.RootElement.GetProperty("vault");
+        Assert.Equal("readOnly", vault.GetProperty("accessMode").GetString());
+        Assert.Equal(
+            expectedScopeState,
+            vault.GetProperty("scopeState").GetString());
+        Assert.Equal(
+            "unlocked",
+            document.RootElement
+                .GetProperty("session")
+                .GetProperty("state")
+                .GetString());
+    }
+
     [Fact]
     public void UpdateNoteMapperForwardsBacklinkRewriteOption()
     {
@@ -635,6 +681,7 @@ public sealed class BridgeToolContractTests
             ReadWriteDeleteScopes;
         public IReadOnlySet<string> GrantedScopes { get; init; } =
             ReadWriteDeleteScopes;
+        public string Result { get; init; } = PassThroughResult;
 
         public Task<string> CallToolAsync(
             string name,
@@ -642,7 +689,7 @@ public sealed class BridgeToolContractTests
             CancellationToken cancellationToken)
         {
             Calls.Add((name, arguments));
-            return Task.FromResult(PassThroughResult);
+            return Task.FromResult(Result);
         }
 
         public Task RequestGrantAsync(
