@@ -144,6 +144,7 @@ ProgramData；升级时不要添加 `--remove-data`。只要
 - 验收代码：`615d221a94985b9d517e37ff1574b2ab8ad4563c`
 - 测试包版本：`1.0.0.0`，开发签名 ZIP 包
 - CI：2026-10-29 最新提交通过
+  （[run 40886608266](https://github.com/Alan-mx/cipher-vault/actions/runs/40886608266)，7m 8s）
 
 已通过的项目：
 
