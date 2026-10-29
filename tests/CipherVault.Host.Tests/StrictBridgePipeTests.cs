@@ -416,6 +416,173 @@ public sealed class StrictBridgePipeTests
     }
 
     [Fact]
+    public async Task StrictToolDeliveryHoldsGrantMutationUntilLeaseDisposed()
+    {
+        var timeout = TimeSpan.FromSeconds(10);
+        await using var environment = await CreateRealBridgeEnvironmentAsync();
+        var gateway = environment.Fixture.App.Services
+            .GetRequiredService<HostVaultGateway>();
+        var sessions = environment.Fixture.App.Services
+            .GetRequiredService<HostSessionCoordinator>();
+        var snapshot = await sessions.GetSnapshotAsync().WaitAsync(timeout);
+        var created = await gateway.ExecuteAsync(
+            (vault, token) => vault.CreateNoteAsync(
+                "Delivery Lease",
+                "notes",
+                "md",
+                "# Delivery Lease",
+                null,
+                VaultActorKind.System,
+                token)).WaitAsync(timeout);
+        var processSessionId = Guid.NewGuid();
+        var requested = await environment.Grants.RequestAsync(
+            "mcp",
+            Guid.NewGuid(),
+            McpAccessMode.ReadWrite,
+            AccessGrantScope.Read,
+            new AccessGrantVaultGeneration(
+                snapshot.SessionId!.Value,
+                snapshot.HardExpiresAt!.Value),
+            (_, _) => Task.FromResult(new AccessGrantApprovalResult(
+                true,
+                AccessGrantScope.Read)),
+            processSessionId).WaitAsync(timeout);
+        var record = requested.IssuedGrant!.Record;
+        var bridgeSession = CreateBridgeProcessSession(environment, record);
+        var grant = new AccessGrantContext(
+            record.GrantId,
+            record.ClientId,
+            record.ClientInstanceId,
+            record.Scopes,
+            record.VaultSessionId!.Value,
+            record.VerifiedProcessSessionId,
+            record.PathPolicy);
+        var delivery = await environment.Handler.CallToolWithDeliveryAsync(
+            bridgeSession,
+            grant,
+            ToolCall("read_note", new { documentId = created.DocumentId }),
+            CancellationToken.None).WaitAsync(timeout);
+        using (var payload = JsonDocument.Parse(delivery.Payload))
+        {
+            Assert.True(payload.RootElement.GetProperty("ok").GetBoolean());
+        }
+
+        var revokeTask = sessions.ExecuteGrantMutationAsync(
+            token => environment.Grants.RevokeStoredAsync(
+                record.GrantId,
+                new VaultAuditContext(
+                    VaultActorKind.UserUi,
+                    "CipherVault.Ui"),
+                token),
+            CancellationToken.None);
+        await Task.Delay(150);
+        Assert.False(revokeTask.IsCompleted);
+
+        await delivery.DisposeAsync();
+        var revoked = await revokeTask.WaitAsync(timeout);
+        Assert.Equal("revoked", revoked.Outcome);
+
+        var rejected = await environment.Handler.CallToolWithDeliveryAsync(
+            bridgeSession,
+            grant,
+            ToolCall("read_note", new { documentId = created.DocumentId }),
+            CancellationToken.None).WaitAsync(timeout);
+        await using (rejected)
+        {
+            using var payload = JsonDocument.Parse(rejected.Payload);
+            AssertGrantError(payload, "access_grant_revoked");
+        }
+    }
+
+    [Fact]
+    public async Task BridgePipeUsesDeliveryAwareToolResult()
+    {
+        var handler = new DeliveryAwareBridgeHandler();
+        var pipeName = "CipherVault.Bridge.Test." + Guid.NewGuid().ToString("N");
+        var (server, options) = CreateServer(pipeName, handler);
+        await using var serverInstance = server;
+        var acceptTask = server.AcceptOnceAsync();
+        await using var client = await BridgePipeClientConnection.ConnectAsync(
+            new BridgePipeClientOptions(
+                pipeName,
+                options.ClientId,
+                options.AccessMode,
+                new HashSet<string>(StringComparer.Ordinal) { "read" },
+                options.AllowedClientPolicy,
+                CurrentProcessServicePolicy(options.OwnerSid)));
+        _ = await client.RequestGrantAsync();
+
+        using var result = await CallToolAsync(
+            client,
+            "read_note",
+            [("documentId", Guid.NewGuid())]);
+
+        Assert.True(result.RootElement.GetProperty("ok").GetBoolean());
+        Assert.True(handler.DeliveryCalled);
+        await handler.DeliveryDisposed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        _ = await client.CloseSessionAsync();
+        _ = await acceptTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task ClockRollbackStillBlocksProtectedToolCall()
+    {
+        var timeout = TimeSpan.FromSeconds(10);
+        await using var environment = await CreateRealBridgeEnvironmentAsync();
+        var gateway = environment.Fixture.App.Services
+            .GetRequiredService<HostVaultGateway>();
+        var sessions = environment.Fixture.App.Services
+            .GetRequiredService<HostSessionCoordinator>();
+        var snapshot = await sessions.GetSnapshotAsync().WaitAsync(timeout);
+        var created = await gateway.ExecuteAsync(
+            (vault, token) => vault.CreateNoteAsync(
+                "Clock Rollback",
+                "notes",
+                "md",
+                "# Clock Rollback",
+                null,
+                VaultActorKind.System,
+                token)).WaitAsync(timeout);
+        var requested = await environment.Grants.RequestAsync(
+            "mcp",
+            Guid.NewGuid(),
+            McpAccessMode.ReadOnly,
+            AccessGrantScope.Read,
+            new AccessGrantVaultGeneration(
+                snapshot.SessionId!.Value,
+                snapshot.HardExpiresAt!.Value),
+            (_, _) => Task.FromResult(new AccessGrantApprovalResult(
+                true,
+                AccessGrantScope.Read)),
+            Guid.NewGuid()).WaitAsync(timeout);
+        var record = requested.IssuedGrant!.Record;
+        var store = environment.Fixture.App.Services
+            .GetRequiredService<IAccessGrantStore>();
+        await store.EnsureClockAsync(
+            DateTimeOffset.UtcNow.AddMinutes(10)).WaitAsync(timeout);
+        var bridgeSession = CreateBridgeProcessSession(environment, record);
+        var grant = new AccessGrantContext(
+            record.GrantId,
+            record.ClientId,
+            record.ClientInstanceId,
+            record.Scopes,
+            record.VaultSessionId!.Value,
+            record.VerifiedProcessSessionId,
+            record.PathPolicy);
+
+        var result = await environment.Handler.CallToolWithDeliveryAsync(
+            bridgeSession,
+            grant,
+            ToolCall("read_note", new { documentId = created.DocumentId }),
+            CancellationToken.None).WaitAsync(timeout);
+        await using (result)
+        {
+            using var payload = JsonDocument.Parse(result.Payload);
+            AssertGrantError(payload, "clock_rollback");
+        }
+    }
+
+    [Fact]
     public async Task VaultStatusWorksWithoutGrantWhileLocked()
     {
         await using var environment = await CreateRealBridgeEnvironmentAsync();
@@ -1100,6 +1267,83 @@ public sealed class StrictBridgePipeTests
         using var evidence = Assert.IsType<VerifiedProcessEvidence>(
             result.Evidence);
         return evidence.Identity;
+    }
+
+    private sealed class DeliveryAwareBridgeHandler : IBridgeSessionHandler
+    {
+        public bool DeliveryCalled { get; private set; }
+        public TaskCompletionSource DeliveryDisposed { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<BridgeIssuedGrant> RequestGrantAsync(
+            BridgeProcessSession session,
+            BridgeGrantRequest request,
+            CancellationToken cancellationToken)
+        {
+            var grantId = Guid.NewGuid();
+            return Task.FromResult(new BridgeIssuedGrant(
+                new BridgeGrantData(
+                    grantId,
+                    session.ClientId,
+                    "readOnly",
+                    ["read"],
+                    DateTimeOffset.UtcNow.AddHours(1)),
+                new AccessGrantContext(
+                    grantId,
+                    session.ClientId,
+                    session.BridgeInstanceId,
+                    AccessGrantScope.Read,
+                    Guid.NewGuid(),
+                    session.ProcessSessionId)));
+        }
+
+        public Task<string> CallToolAsync(
+            BridgeProcessSession session,
+            AccessGrantContext? grant,
+            BridgeToolCallRequest request,
+            CancellationToken cancellationToken)
+        {
+            throw new InvalidOperationException(
+                "The Bridge must use the delivery-aware tool method.");
+        }
+
+        public Task<BridgeToolCallResult> CallToolWithDeliveryAsync(
+            BridgeProcessSession session,
+            AccessGrantContext? grant,
+            BridgeToolCallRequest request,
+            CancellationToken cancellationToken)
+        {
+            DeliveryCalled = true;
+            return Task.FromResult(BridgeToolCallResult.WithLease(
+                """{"ok":true}""",
+                new TrackingAsyncDisposable(DeliveryDisposed)));
+        }
+
+        public Task<BridgeStatusData> GetStatusAsync(
+            BridgeProcessSession session,
+            AccessGrantContext? grant,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(CreateStatus(session, grant));
+        }
+
+        public Task CloseSessionAsync(
+            Guid processSessionId,
+            string reasonCode,
+            CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class TrackingAsyncDisposable(
+        TaskCompletionSource disposed) : IAsyncDisposable
+    {
+        public ValueTask DisposeAsync()
+        {
+            disposed.TrySetResult();
+            return ValueTask.CompletedTask;
+        }
     }
 
     private sealed class RecordingBridgeHandler : IBridgeSessionHandler

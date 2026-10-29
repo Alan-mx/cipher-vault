@@ -329,6 +329,56 @@ public sealed class HostSessionCoordinatorTests
         await using var after = await coordinator.AcquireLeaseAsync();
     }
 
+    [Fact]
+    public async Task GrantMutationFailsClosedWhenLeaseDoesNotDrain()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var coordinator = fixture.App.Services.GetRequiredService<
+            HostSessionCoordinator>();
+        await coordinator.UnlockAsync(HostCredentialPreference.Password);
+        var lease = await coordinator.AcquireLeaseAsync();
+        var entered = false;
+        var mutation = coordinator.ExecuteGrantMutationAsync(_ =>
+        {
+            entered = true;
+            return Task.FromResult(42);
+        });
+
+        var exception = await Assert.ThrowsAsync<HostException>(async () =>
+            await mutation.WaitAsync(TimeSpan.FromSeconds(8)));
+
+        Assert.Equal(HostErrorCode.Conflict, exception.Code);
+        Assert.False(entered);
+        await lease.DisposeAsync();
+        await using var after = await coordinator.AcquireLeaseAsync();
+    }
+
+    [Fact]
+    public async Task GrantMutationCancellationDoesNotRunOperation()
+    {
+        await using var fixture = await HostTestFixture.CreateAsync();
+        var coordinator = fixture.App.Services.GetRequiredService<
+            HostSessionCoordinator>();
+        await coordinator.UnlockAsync(HostCredentialPreference.Password);
+        await using var lease = await coordinator.AcquireLeaseAsync();
+        using var cancellation = new CancellationTokenSource();
+        var entered = false;
+        var mutation = coordinator.ExecuteGrantMutationAsync(
+            _ =>
+            {
+                entered = true;
+                return Task.FromResult(42);
+            },
+            cancellation.Token);
+
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => mutation);
+        Assert.False(entered);
+        await lease.DisposeAsync();
+        await using var after = await coordinator.AcquireLeaseAsync();
+    }
+
     [Theory]
     [InlineData("read")]
     [InlineData("write")]

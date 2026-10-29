@@ -207,6 +207,31 @@ public sealed partial class VaultService
         return grant;
     }
 
+    public async Task<StoredAccessGrant?> GetForRevocationAsync(
+        Guid grantId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken = default)
+    {
+        await using var sessionLease = await AcquireGrantSessionAsync(
+            cancellationToken).ConfigureAwait(false);
+        var session = sessionLease.Session;
+        await using var transaction = await session.Connection
+            .BeginTransactionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        await ExpireActiveAsync(
+            session.Connection,
+            (SqliteTransaction)transaction,
+            now,
+            cancellationToken).ConfigureAwait(false);
+        var grant = await ReadGrantAsync(
+            session.Connection,
+            (SqliteTransaction)transaction,
+            grantId,
+            cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return grant;
+    }
+
     public async Task<IReadOnlyList<StoredAccessGrant>> GetActiveGrantsAsync(
         DateTimeOffset now,
         CancellationToken cancellationToken = default)
@@ -222,6 +247,30 @@ public sealed partial class VaultService
             (SqliteTransaction)transaction,
             now,
             cancellationToken).ConfigureAwait(false);
+        await ExpireActiveAsync(
+            session.Connection,
+            (SqliteTransaction)transaction,
+            now,
+            cancellationToken).ConfigureAwait(false);
+        var active = await ReadActiveGrantsAsync(
+            session.Connection,
+            (SqliteTransaction)transaction,
+            cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return active;
+    }
+
+    public async Task<IReadOnlyList<StoredAccessGrant>>
+        GetActiveForRevocationAsync(
+            DateTimeOffset now,
+            CancellationToken cancellationToken = default)
+    {
+        await using var sessionLease = await AcquireGrantSessionAsync(
+            cancellationToken).ConfigureAwait(false);
+        var session = sessionLease.Session;
+        await using var transaction = await session.Connection
+            .BeginTransactionAsync(cancellationToken)
+            .ConfigureAwait(false);
         await ExpireActiveAsync(
             session.Connection,
             (SqliteTransaction)transaction,

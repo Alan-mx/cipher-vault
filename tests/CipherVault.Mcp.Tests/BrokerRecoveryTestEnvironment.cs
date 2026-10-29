@@ -1,7 +1,10 @@
 using System.Diagnostics;
+using System.ComponentModel;
+using System.IO.Pipes;
 using System.Security.Principal;
 using System.Text.Json;
 using CipherVault.Core.Configuration;
+using CipherVault.Core.Errors;
 using CipherVault.Host.Client;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Mcp;
@@ -26,9 +29,15 @@ internal sealed class BrokerRecoveryTestEnvironment : IAsyncDisposable
     private readonly AccessGrantService _grants;
     private readonly BridgePipeServer _bridgeServer;
     private readonly BridgePipeClientConnection _bridgeConnection;
+    private readonly PipeSecurity _pipeSecurity;
+    private readonly VerifiedProcessIdentity _serviceIdentity;
+    private readonly ProcessVerificationPolicy _hostPolicy;
+    private readonly ProcessVerificationPolicy _bridgePolicy;
+    private readonly string _ownerSid;
     private readonly Task _brokerLoopTask;
     private readonly Task _bridgeAcceptTask;
     private readonly BrokerGrantHandler _handler;
+    private readonly SemaphoreSlim _replacementBrokerGate = new(1, 1);
     private int _brokerStarts;
     private Process? _initialBroker;
     private Process? _replacementBroker;
@@ -42,6 +51,11 @@ internal sealed class BrokerRecoveryTestEnvironment : IAsyncDisposable
         AccessGrantService grants,
         BridgePipeServer bridgeServer,
         BridgePipeClientConnection bridgeConnection,
+        PipeSecurity pipeSecurity,
+        VerifiedProcessIdentity serviceIdentity,
+        ProcessVerificationPolicy hostPolicy,
+        ProcessVerificationPolicy bridgePolicy,
+        string ownerSid,
         Task brokerLoopTask,
         Task bridgeAcceptTask,
         BrokerGrantHandler handler)
@@ -53,6 +67,11 @@ internal sealed class BrokerRecoveryTestEnvironment : IAsyncDisposable
         _grants = grants;
         _bridgeServer = bridgeServer;
         _bridgeConnection = bridgeConnection;
+        _pipeSecurity = pipeSecurity;
+        _serviceIdentity = serviceIdentity;
+        _hostPolicy = hostPolicy;
+        _bridgePolicy = bridgePolicy;
+        _ownerSid = ownerSid;
         _brokerLoopTask = brokerLoopTask;
         _bridgeAcceptTask = bridgeAcceptTask;
         _handler = handler;
@@ -197,6 +216,11 @@ internal sealed class BrokerRecoveryTestEnvironment : IAsyncDisposable
             grants,
             bridgeServer,
             bridgeConnection,
+            security,
+            serviceIdentity,
+            hostPolicy,
+            bridgePolicy,
+            currentUser.Value,
             brokerLoopTask,
             bridgeAcceptTask,
             handler);
@@ -205,18 +229,87 @@ internal sealed class BrokerRecoveryTestEnvironment : IAsyncDisposable
             bridgeConnection,
             _ => Task.FromResult<IBridgePipeClientConnection>(
                 bridgeConnection),
-            _ =>
-            {
-                if (environment._replacementBroker is null)
-                {
-                    Interlocked.Increment(
-                        ref environment._brokerStarts);
-                    environment._replacementBroker =
-                        StartTestBroker(clientOptionsPath);
-                }
-                return Task.FromResult(true);
-            });
+            environment.EnsureReplacementBrokerStartedAsync);
         return environment;
+    }
+
+    public async Task<BrokerRecoveryMcpClient>
+        CreateAdditionalMcpClientAsync()
+    {
+        var pipeName = "CipherVault.Mcp.BridgeRecoveryTest." +
+            Guid.NewGuid().ToString("N");
+        var options = new BridgePipeServerOptions
+        {
+            PipeName = pipeName,
+            Security = _pipeSecurity,
+            ServiceInstanceId = Guid.NewGuid().ToString("D"),
+            ServiceVersion = "1.0.0-test",
+            ServiceIdentity = _serviceIdentity,
+            AllowedClientPolicy = _bridgePolicy,
+            OwnerSid = _ownerSid,
+            ServiceSid = _ownerSid,
+            ClientId = "mcp",
+            AccessMode = McpAccessMode.ReadOnly,
+            BridgeSessionLifetime = TimeSpan.FromMinutes(1),
+            Handler = _handler
+        };
+        var server = new BridgePipeServer(options);
+        var acceptTask = server.AcceptOnceAsync(Token);
+        var connection = await BridgePipeClientConnection.ConnectAsync(
+            new BridgePipeClientOptions(
+                pipeName,
+                "mcp",
+                McpAccessMode.ReadOnly,
+                ReadScopes,
+                _bridgePolicy,
+                _hostPolicy),
+            Token);
+        var settings = new StrictBridgeSettings(
+            new CipherVaultInstallPublicManifest(),
+            string.Empty,
+            pipeName,
+            "mcp",
+            McpAccessMode.ReadOnly,
+            ReadScopes);
+        var mcp = new StrictMcpBridgeClient(
+            settings,
+            connection,
+            _ => Task.FromResult<IBridgePipeClientConnection>(connection),
+            EnsureReplacementBrokerStartedAsync);
+        return new BrokerRecoveryMcpClient(
+            mcp,
+            server,
+            acceptTask);
+    }
+
+    private async Task<bool> EnsureReplacementBrokerStartedAsync(
+        CancellationToken cancellationToken)
+    {
+        await _replacementBrokerGate.WaitAsync(cancellationToken)
+            .ConfigureAwait(false);
+        try
+        {
+            if (_replacementBroker is null || _replacementBroker.HasExited)
+            {
+                Interlocked.Increment(ref _brokerStarts);
+                _replacementBroker = StartTestBroker(_clientOptionsPath);
+            }
+            return true;
+        }
+        catch (Exception exception) when (
+            exception is VaultException or
+            Win32Exception or
+            IOException or
+            UnauthorizedAccessException or
+            InvalidOperationException or
+            NotSupportedException)
+        {
+            return false;
+        }
+        finally
+        {
+            _replacementBrokerGate.Release();
+        }
     }
 
     public Process StartInitialBroker(
@@ -510,6 +603,43 @@ internal sealed class BrokerRecoveryTestEnvironment : IAsyncDisposable
         catch (JsonException)
         {
             return null;
+        }
+    }
+}
+
+internal sealed class BrokerRecoveryMcpClient(
+    StrictMcpBridgeClient mcp,
+    BridgePipeServer server,
+    Task acceptTask) : IAsyncDisposable
+{
+    public StrictMcpBridgeClient Mcp { get; } = mcp;
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await Mcp.RevokeGrantAsync();
+        }
+        catch (Exception exception) when (
+            exception is IOException or
+            ObjectDisposedException or
+            OperationCanceledException or
+            TimeoutException or
+            AdminPipeRpcException or
+            PipeRpcException)
+        {
+        }
+        await server.DisposeAsync();
+        try
+        {
+            await acceptTask.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (Exception exception) when (
+            exception is OperationCanceledException or
+            TimeoutException or
+            IOException or
+            ObjectDisposedException)
+        {
         }
     }
 }

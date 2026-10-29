@@ -671,7 +671,7 @@ public sealed class BrokerPipeTests
     }
 
     [Fact]
-    public async Task AcceptLoopRetriesCreationAndRecoversAfterBrokerKill()
+    public async Task AcceptLoopRecoversAcrossRepeatedKillsAndRapidRestart()
     {
         var pipeName = "CipherVault.Broker.ProcessRecoveryTest." +
             Guid.NewGuid().ToString("N");
@@ -725,8 +725,7 @@ public sealed class BrokerPipeTests
         var optionsPath = Path.Combine(
             Path.GetTempPath(),
             $"cipher-vault-test-broker-{Guid.NewGuid():N}.json");
-        Process? first = null;
-        Process? second = null;
+        var brokers = new List<Process>();
 
         try
         {
@@ -745,7 +744,8 @@ public sealed class BrokerPipeTests
                     new JsonSerializerOptions(JsonSerializerDefaults.Web)),
                 timeout.Token);
 
-            first = StartTestBroker(optionsPath);
+            var first = StartTestBroker(optionsPath);
+            brokers.Add(first);
             await WaitUntilAsync(
                 () => RegisteredProcessId(registry) == (uint?)first.Id,
                 TimeSpan.FromSeconds(10));
@@ -756,19 +756,30 @@ public sealed class BrokerPipeTests
                 () => !registry.IsAvailable,
                 TimeSpan.FromSeconds(10));
 
-            second = StartTestBroker(optionsPath);
+            var second = StartTestBroker(optionsPath);
+            brokers.Add(second);
             await WaitUntilAsync(
                 () => RegisteredProcessId(registry) == (uint?)second.Id,
+                TimeSpan.FromSeconds(10));
+
+            second.Kill(entireProcessTree: true);
+            await second.WaitForExitAsync(timeout.Token);
+            var third = StartTestBroker(optionsPath);
+            brokers.Add(third);
+            await WaitUntilAsync(
+                () => RegisteredProcessId(registry) == (uint?)third.Id,
+                TimeSpan.FromSeconds(10));
+
+            third.Kill(entireProcessTree: true);
+            await third.WaitForExitAsync(timeout.Token);
+            await WaitUntilAsync(
+                () => !registry.IsAvailable,
                 TimeSpan.FromSeconds(10));
         }
         finally
         {
-            foreach (var process in new[] { first, second })
+            foreach (var process in brokers)
             {
-                if (process is null)
-                {
-                    continue;
-                }
                 try
                 {
                     if (!process.HasExited)

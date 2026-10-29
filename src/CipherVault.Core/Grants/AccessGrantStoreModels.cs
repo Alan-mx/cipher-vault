@@ -103,7 +103,16 @@ public interface IAccessGrantStore
         DateTimeOffset now,
         CancellationToken cancellationToken = default);
 
+    Task<StoredAccessGrant?> GetForRevocationAsync(
+        Guid grantId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<StoredAccessGrant>> GetActiveGrantsAsync(
+        DateTimeOffset now,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<StoredAccessGrant>> GetActiveForRevocationAsync(
         DateTimeOffset now,
         CancellationToken cancellationToken = default);
 

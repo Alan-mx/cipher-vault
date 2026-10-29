@@ -7,6 +7,7 @@ using CipherVault.Core.Grants;
 using CipherVault.Core.Session;
 using CipherVault.Host.Contracts;
 using CipherVault.Host.Security;
+using System.Text.Json;
 
 namespace CipherVault.Host.Tests;
 
@@ -528,6 +529,53 @@ public sealed class PersistentAccessGrantTests
     }
 
     [Fact]
+    public async Task SingleRevokeStorageFailureKeepsGrantActive()
+    {
+        await using var environment = await GrantTestVault.CreateAsync();
+        var store = new RevokeFailingStore(environment.Vault);
+        var securityLog = new RecordingSecurityLog();
+        using var service = new AccessGrantService(
+            securityLog: securityLog,
+            store: store);
+        var issued = await RequestReadGrantAsync(environment, service);
+        var grant = new AccessGrantContext(
+            issued.GrantId,
+            issued.ClientId,
+            issued.ClientInstanceId,
+            (AccessGrantScope)issued.Scopes,
+            issued.VaultSessionId,
+            issued.ProcessSessionId,
+            JsonSerializer.Deserialize<AccessGrantPathPolicy>(
+                issued.PathPolicyJson)
+                ?? AccessGrantPathPolicy.Unrestricted);
+        store.FailRevoke = true;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.RevokeStoredAsync(
+                issued.GrantId,
+                new VaultAuditContext(
+                    VaultActorKind.UserUi,
+                    "CipherVault.Ui")));
+
+        var active = Assert.Single(service.List());
+        Assert.Equal(AccessGrantState.Active, active.State);
+        Assert.Equal(
+            AccessGrantValidationStatus.Valid,
+            service.UseBridgeGrant(grant).Status);
+        Assert.Contains(
+            securityLog.Events,
+            item => item.EventType == "grant_revoke_failed" &&
+                item.Result == "failed" &&
+                item.ReasonCode == "storage_error");
+        store.FailRevoke = false;
+        await service.RevokeStoredAsync(
+            issued.GrantId,
+            new VaultAuditContext(
+                VaultActorKind.UserUi,
+                "CipherVault.Ui"));
+    }
+
+    [Fact]
     public async Task RevokeAllPreviewRejectsExpiryAndSessionChange()
     {
         await using var environment = await GrantTestVault.CreateAsync();
@@ -642,6 +690,144 @@ public sealed class PersistentAccessGrantTests
         Assert.Equal(1, result.RevokedCount);
         Assert.Equal(1, result.AlreadyRevokedCount);
         Assert.Equal(0, result.AlreadyExpiredCount);
+    }
+
+    [Fact]
+    public async Task AdminAndBulkRevocationRemainAvailableAfterClockRollback()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var clock = new MutableTimeProvider(now);
+        await using var environment = await GrantTestVault.CreateAsync(clock);
+        using var service = new AccessGrantService(
+            timeProvider: clock,
+            store: environment.Vault);
+        var first = await RequestReadGrantAsync(
+            environment,
+            service,
+            clientId: "mcp-a");
+        _ = await RequestReadGrantAsync(
+            environment,
+            service,
+            clientId: "mcp-b");
+        clock.Advance(TimeSpan.FromMinutes(10));
+        await environment.Vault.EnsureClockAsync(clock.GetUtcNow());
+        clock.Set(now.AddMinutes(4));
+        var auditContext = new VaultAuditContext(
+            VaultActorKind.UserUi,
+            "CipherVault.Ui");
+
+        var revoked = await service.RevokeStoredAsync(
+            first.GrantId,
+            auditContext);
+
+        Assert.Equal("revoked", revoked.Outcome);
+        var adminSessionId = Guid.NewGuid();
+        var preview = await service.PreviewRevokeAllStoredAsync(
+            adminSessionId,
+            environment.VaultSessionId);
+        Assert.Equal(1, preview.ActiveCount);
+        var revokeAll = await service.ExecuteRevokeAllStoredAsync(
+            preview.PreviewToken,
+            adminSessionId,
+            environment.VaultSessionId,
+            auditContext);
+        Assert.Equal(1, revokeAll.RevokedCount);
+
+        var rollback = await Assert.ThrowsAsync<VaultException>(() =>
+            service.ListStoredAsync(
+                state: null,
+                search: null,
+                cursor: null,
+                limit: 10));
+        Assert.Equal(VaultErrorCode.ClockRollback, rollback.Code);
+
+        clock.Set(now.AddMinutes(11));
+        var page = await service.ListStoredAsync(
+            state: "revoked",
+            search: null,
+            cursor: null,
+            limit: 10);
+        Assert.Equal(2, page.TotalCount);
+    }
+
+    [Fact]
+    public async Task BridgeDisconnectRevocationRemainsAvailableAfterClockRollback()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var clock = new MutableTimeProvider(now);
+        await using var environment = await GrantTestVault.CreateAsync(clock);
+        using var service = new AccessGrantService(
+            timeProvider: clock,
+            store: environment.Vault);
+        var issued = await RequestReadGrantAsync(environment, service);
+        clock.Advance(TimeSpan.FromMinutes(10));
+        await environment.Vault.EnsureClockAsync(clock.GetUtcNow());
+        clock.Set(now.AddMinutes(4));
+
+        var revoked = await service.RevokeByProcessSessionAsync(
+            issued.ProcessSessionId,
+            "bridge-disconnected");
+
+        Assert.Equal(1, revoked);
+        clock.Set(now.AddMinutes(11));
+        var detail = await environment.Vault.GetAsync(
+            issued.GrantId,
+            clock.GetUtcNow());
+        Assert.NotNull(detail);
+        Assert.Equal(StoredAccessGrantState.Revoked, detail.State);
+        Assert.Equal("bridge-disconnected", detail.RevocationReason);
+    }
+
+    [Fact]
+    public async Task RevokeAllRejectsGrantRequestAcrossExecutionRace()
+    {
+        await using var environment = await GrantTestVault.CreateAsync();
+        var store = new RevokeFailingStore(environment.Vault);
+        using var service = new AccessGrantService(store: store);
+        _ = await RequestReadGrantAsync(environment, service);
+        var adminSessionId = Guid.NewGuid();
+        var auditContext = new VaultAuditContext(
+            VaultActorKind.UserUi,
+            "CipherVault.Ui");
+        var preview = await service.PreviewRevokeAllStoredAsync(
+            adminSessionId,
+            environment.VaultSessionId);
+        store.RevokeAllStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        store.RevokeAllRelease = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var revokeTask = service.ExecuteRevokeAllStoredAsync(
+            preview.PreviewToken,
+            adminSessionId,
+            environment.VaultSessionId,
+            auditContext);
+        await store.RevokeAllStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var request = await service.RequestAsync(
+            "mcp-new",
+            Guid.NewGuid(),
+            McpAccessMode.ReadOnly,
+            AccessGrantScope.Read,
+            new AccessGrantVaultGeneration(
+                environment.VaultSessionId,
+                DateTimeOffset.UtcNow.AddHours(1)),
+            (_, _) => Task.FromResult(new AccessGrantApprovalResult(
+                true,
+                AccessGrantScope.Read)),
+            Guid.NewGuid()).WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(AccessGrantRequestStatus.Denied, request.Status);
+        Assert.Equal("revoke_all_in_progress", request.ReasonCode);
+        store.RevokeAllRelease.TrySetResult();
+        var result = await revokeTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, result.RevokedCount);
+
+        var page = await service.ListStoredAsync(
+            state: "active",
+            search: "mcp-new",
+            cursor: null,
+            limit: 10);
+        Assert.Equal(0, page.TotalCount);
     }
 
     [Fact]
@@ -797,7 +983,10 @@ public sealed class PersistentAccessGrantTests
     private sealed class RevokeFailingStore(IAccessGrantStore inner)
         : IAccessGrantStore
     {
+        public bool FailRevoke { get; set; }
         public bool FailRevokeAll { get; set; }
+        public TaskCompletionSource? RevokeAllStarted { get; set; }
+        public TaskCompletionSource? RevokeAllRelease { get; set; }
 
         public Task CreateAsync(
             StoredAccessGrant grant,
@@ -823,11 +1012,30 @@ public sealed class PersistentAccessGrantTests
             return inner.GetAsync(grantId, now, cancellationToken);
         }
 
+        public Task<StoredAccessGrant?> GetForRevocationAsync(
+            Guid grantId,
+            DateTimeOffset now,
+            CancellationToken cancellationToken = default)
+        {
+            return inner.GetForRevocationAsync(
+                grantId,
+                now,
+                cancellationToken);
+        }
+
         public Task<IReadOnlyList<StoredAccessGrant>> GetActiveGrantsAsync(
             DateTimeOffset now,
             CancellationToken cancellationToken = default)
         {
             return inner.GetActiveGrantsAsync(now, cancellationToken);
+        }
+
+        public Task<IReadOnlyList<StoredAccessGrant>>
+            GetActiveForRevocationAsync(
+                DateTimeOffset now,
+                CancellationToken cancellationToken = default)
+        {
+            return inner.GetActiveForRevocationAsync(now, cancellationToken);
         }
 
         public Task<StoredAccessGrantRevokeOutcome> RevokeAsync(
@@ -837,6 +1045,12 @@ public sealed class PersistentAccessGrantTests
             VaultAuditContext auditContext,
             CancellationToken cancellationToken = default)
         {
+            if (FailRevoke)
+            {
+                return Task.FromException<StoredAccessGrantRevokeOutcome>(
+                    new InvalidOperationException(
+                        "Simulated Access Grant revocation failure."));
+            }
             return inner.RevokeAsync(
                 grantId,
                 reason,
@@ -845,7 +1059,7 @@ public sealed class PersistentAccessGrantTests
                 cancellationToken);
         }
 
-        public Task<StoredAccessGrantRevokeAllOutcome> RevokeAllAsync(
+        public async Task<StoredAccessGrantRevokeAllOutcome> RevokeAllAsync(
             IReadOnlyCollection<Guid> activeGrantIds,
             IReadOnlyCollection<StoredAccessGrantCancellation> pendingCancellations,
             string reason,
@@ -858,7 +1072,12 @@ public sealed class PersistentAccessGrantTests
                 throw new InvalidOperationException(
                     "Simulated Access Grant storage failure.");
             }
-            return inner.RevokeAllAsync(
+            RevokeAllStarted?.TrySetResult();
+            if (RevokeAllRelease is not null)
+            {
+                await RevokeAllRelease.Task.WaitAsync(cancellationToken);
+            }
+            return await inner.RevokeAllAsync(
                 activeGrantIds,
                 pendingCancellations,
                 reason,

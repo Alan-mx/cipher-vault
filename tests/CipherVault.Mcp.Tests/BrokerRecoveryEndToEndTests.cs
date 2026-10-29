@@ -55,6 +55,34 @@ public sealed class BrokerRecoveryEndToEndTests
     }
 
     [Fact]
+    public async Task ConcurrentMcpClientsRecoverWithSingleReplacementBroker()
+    {
+        await using var environment =
+            await BrokerRecoveryTestEnvironment.CreateAsync();
+        var firstBroker = environment.StartInitialBroker();
+        await environment.WaitForRegisteredAsync(firstBroker);
+        await using var firstClient =
+            await environment.CreateAdditionalMcpClientAsync();
+        await using var secondClient =
+            await environment.CreateAdditionalMcpClientAsync();
+
+        firstBroker.Kill(entireProcessTree: true);
+        await firstBroker.WaitForExitAsync(environment.Token);
+        await environment.WaitForUnavailableAsync();
+
+        await Task.WhenAll(
+            firstClient.Mcp.RequestGrantAsync(environment.Token),
+            secondClient.Mcp.RequestGrantAsync(environment.Token));
+
+        Assert.Contains("read", firstClient.Mcp.GrantedScopes);
+        Assert.Contains("read", secondClient.Mcp.GrantedScopes);
+        Assert.Equal(1, environment.BrokerStarts);
+        var replacement = Assert.IsType<Process>(
+            environment.ReplacementBroker);
+        await environment.WaitForRegisteredAsync(replacement);
+    }
+
+    [Fact]
     public async Task McpRecoversGrantWhenBrokerKilledDuringApproval()
     {
         await using var environment =

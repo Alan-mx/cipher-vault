@@ -47,6 +47,7 @@ public sealed class AccessGrantService : IDisposable
     private readonly Timer _expirationSweeper;
     private readonly TimeSpan _sweepInterval;
     private int _sweepInProgress;
+    private bool _revokeAllActive;
 
     public AccessGrantService(
         TimeProvider? timeProvider = null,
@@ -225,6 +226,14 @@ public sealed class AccessGrantService : IDisposable
         var slot = new AccessGrantSlotKey(clientId, clientInstanceId);
         lock (_sync)
         {
+            if (_revokeAllActive)
+            {
+                return new AccessGrantRequestOutcome(
+                    AccessGrantRequestStatus.Denied,
+                    IssuedGrant: null,
+                    RetryAfter: null,
+                    ReasonCode: "revoke_all_in_progress");
+            }
             if (_cooldowns.TryGetValue(clientId, out var cooldown))
             {
                 if (cooldown.BlockedUntil > now)
@@ -823,9 +832,12 @@ public sealed class AccessGrantService : IDisposable
             await _mutationGate.WaitAsync().ConfigureAwait(false);
             try
             {
-                var current = await _store.GetAsync(
+                var now = _timeProvider.GetUtcNow();
+                var current = await _store.GetForRevocationAsync(
                     grantId,
-                    _timeProvider.GetUtcNow()).ConfigureAwait(false);
+                    now,
+                    CancellationToken.None)
+                    .ConfigureAwait(false);
                 if (current is null ||
                     current.State != StoredAccessGrantState.Active)
                 {
@@ -850,13 +862,10 @@ public sealed class AccessGrantService : IDisposable
                 {
                     CryptographicOperations.ZeroMemory(hash);
                 }
-                _approvals?.RevokeByScope(
-                    current.ProcessSessionId,
-                    current.VaultSessionId);
                 var outcome = await _store.RevokeAsync(
                     grantId,
                     "client-requested",
-                    _timeProvider.GetUtcNow(),
+                    now,
                     new VaultAuditContext(
                         VaultActorKind.Mcp,
                         current.ClientId,
@@ -864,6 +873,9 @@ public sealed class AccessGrantService : IDisposable
                         GrantId: current.GrantId,
                         GrantScopes: ScopeNames((AccessGrantScope)current.Scopes)),
                     CancellationToken.None).ConfigureAwait(false);
+                _approvals?.RevokeByScope(
+                    current.ProcessSessionId,
+                    current.VaultSessionId);
                 lock (_sync)
                 {
                     if (_grants.TryGetValue(grantId, out var cached))
@@ -949,9 +961,11 @@ public sealed class AccessGrantService : IDisposable
                         ? AccessGrantRevokeStatus.Revoked
                         : AccessGrantRevokeStatus.AlreadyRemoved;
                 }
-                var current = await _store.GetAsync(
+                var now = _timeProvider.GetUtcNow();
+                var current = await _store.GetForRevocationAsync(
                     grantId,
-                    _timeProvider.GetUtcNow()).ConfigureAwait(false);
+                    now,
+                    CancellationToken.None).ConfigureAwait(false);
                 if (current is null)
                 {
                     return AccessGrantRevokeStatus.AlreadyRemoved;
@@ -1016,7 +1030,9 @@ public sealed class AccessGrantService : IDisposable
             try
             {
                 var now = _timeProvider.GetUtcNow();
-                var active = (await _store.GetActiveGrantsAsync(now)
+                var active = (await _store.GetActiveForRevocationAsync(
+                        now,
+                        CancellationToken.None)
                         .ConfigureAwait(false))
                     .Where(item =>
                         item.ProcessSessionId == verifiedProcessSessionId)
@@ -1208,9 +1224,10 @@ public sealed class AccessGrantService : IDisposable
                     "admin-requested");
             }
 
-            var current = await _store.GetAsync(
+            var revocationNow = _timeProvider.GetUtcNow();
+            var current = await _store.GetForRevocationAsync(
                 grantId,
-                _timeProvider.GetUtcNow(),
+                revocationNow,
                 cancellationToken).ConfigureAwait(false)
                 ?? throw new KeyNotFoundException(
                     "The requested Access Grant was not found.");
@@ -1220,7 +1237,7 @@ public sealed class AccessGrantService : IDisposable
                 outcome = await _store.RevokeAsync(
                     grantId,
                     "admin-requested",
-                    _timeProvider.GetUtcNow(),
+                    revocationNow,
                     auditContext,
                     cancellationToken).ConfigureAwait(false);
             }
@@ -1291,7 +1308,7 @@ public sealed class AccessGrantService : IDisposable
         }
         var now = _timeProvider.GetUtcNow();
         PruneRevokeAllSnapshots(now);
-        var active = await _store.GetActiveGrantsAsync(
+        var active = await _store.GetActiveForRevocationAsync(
             now,
             cancellationToken).ConfigureAwait(false);
         PendingGrantView[] pending;
@@ -1388,6 +1405,7 @@ public sealed class AccessGrantService : IDisposable
         await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            BeginRevokeAll();
             var now = _timeProvider.GetUtcNow();
             var tokenHash = HashPreviewToken(previewToken);
             RevokeAllSnapshot snapshot;
@@ -1417,7 +1435,7 @@ public sealed class AccessGrantService : IDisposable
                     "The revocation preview does not match this session.");
             }
 
-            var active = await _store.GetActiveGrantsAsync(
+            var active = await _store.GetActiveForRevocationAsync(
                 now,
                 cancellationToken).ConfigureAwait(false);
             PendingGrantView[] pending;
@@ -1522,6 +1540,7 @@ public sealed class AccessGrantService : IDisposable
         }
         finally
         {
+            EndRevokeAll();
             _mutationGate.Release();
         }
     }
@@ -1534,7 +1553,9 @@ public sealed class AccessGrantService : IDisposable
             try
             {
                 var now = _timeProvider.GetUtcNow();
-                var active = (await _store.GetActiveGrantsAsync(now)
+                var active = (await _store.GetActiveForRevocationAsync(
+                        now,
+                        CancellationToken.None)
                         .ConfigureAwait(false))
                     .Where(item => string.Equals(
                         item.ClientId,
@@ -1612,8 +1633,11 @@ public sealed class AccessGrantService : IDisposable
             await _mutationGate.WaitAsync().ConfigureAwait(false);
             try
             {
+                BeginRevokeAll();
                 var now = _timeProvider.GetUtcNow();
-                var active = await _store.GetActiveGrantsAsync(now)
+                var active = await _store.GetActiveForRevocationAsync(
+                        now,
+                        CancellationToken.None)
                     .ConfigureAwait(false);
                 PendingGrantView[] pending;
                 lock (_sync)
@@ -1632,36 +1656,45 @@ public sealed class AccessGrantService : IDisposable
             }
             finally
             {
+                EndRevokeAll();
                 _mutationGate.Release();
             }
         }
-        var revoked = new List<AccessGrantRecord>();
-        lock (_sync)
+        BeginRevokeAll();
+        try
         {
-            foreach (var pending in _pendingSlots.Values.ToArray())
+            var revoked = new List<AccessGrantRecord>();
+            lock (_sync)
             {
-                revoked.Add(pending.Record with
+                foreach (var pending in _pendingSlots.Values.ToArray())
                 {
-                    State = AccessGrantState.Revoked
-                });
-                CancelPending(pending, reasonCode);
-            }
+                    revoked.Add(pending.Record with
+                    {
+                        State = AccessGrantState.Revoked
+                    });
+                    CancelPending(pending, reasonCode);
+                }
 
-            foreach (var record in _grants.Values.ToArray())
-            {
-                revoked.Add(record with { State = AccessGrantState.Revoked });
-                RemoveGrant(record, AccessGrantState.Revoked);
+                foreach (var record in _grants.Values.ToArray())
+                {
+                    revoked.Add(record with { State = AccessGrantState.Revoked });
+                    RemoveGrant(record, AccessGrantState.Revoked);
+                }
             }
+            foreach (var record in revoked)
+            {
+                await LogGrantAsync(
+                    "grant_revoked",
+                    record,
+                    "success",
+                    reasonCode).ConfigureAwait(false);
+            }
+            return revoked.Count;
         }
-        foreach (var record in revoked)
+        finally
         {
-            await LogGrantAsync(
-                "grant_revoked",
-                record,
-                "success",
-                reasonCode).ConfigureAwait(false);
+            EndRevokeAll();
         }
-        return revoked.Count;
     }
 
     public async Task InitializeStoredSessionAsync(
@@ -1949,6 +1982,27 @@ public sealed class AccessGrantService : IDisposable
         pending.Completion.TrySetResult(
             DeniedWithoutCooldown(reasonCode));
         pending.Cancellation?.Cancel();
+    }
+
+    private void BeginRevokeAll()
+    {
+        lock (_sync)
+        {
+            if (_revokeAllActive)
+            {
+                throw new InvalidOperationException(
+                    "Access Grant revocation is already in progress.");
+            }
+            _revokeAllActive = true;
+        }
+    }
+
+    private void EndRevokeAll()
+    {
+        lock (_sync)
+        {
+            _revokeAllActive = false;
+        }
     }
 
     private void RemoveGrant(

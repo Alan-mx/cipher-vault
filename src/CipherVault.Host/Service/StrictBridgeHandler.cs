@@ -119,13 +119,28 @@ public sealed class StrictBridgeHandler(
         BridgeToolCallRequest request,
         CancellationToken cancellationToken)
     {
+        await using var result = await CallToolWithDeliveryAsync(
+            session,
+            grant,
+            request,
+            cancellationToken).ConfigureAwait(false);
+        return result.Payload;
+    }
+
+    public async Task<BridgeToolCallResult> CallToolWithDeliveryAsync(
+        BridgeProcessSession session,
+        AccessGrantContext? grant,
+        BridgeToolCallRequest request,
+        CancellationToken cancellationToken)
+    {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(request);
         if (session.ExpiresAt <= DateTimeOffset.UtcNow)
         {
-            return BridgeToolEnvelope.Error(
-                "bridge_session_expired",
-                "The Bridge session has expired.");
+            return BridgeToolCallResult.WithoutLease(
+                BridgeToolEnvelope.Error(
+                    "bridge_session_expired",
+                    "The Bridge session has expired."));
         }
         if (string.Equals(
                 request.ToolName,
@@ -135,14 +150,16 @@ public sealed class StrictBridgeHandler(
             var vaultSnapshot = await sessions.GetSnapshotAsync(
                     cancellationToken)
                 .ConfigureAwait(false);
-            return BridgeToolEnvelope.VaultStatus(
-                session.ClientId,
-                session.AccessMode,
-                vaultSnapshot);
+            return BridgeToolCallResult.WithoutLease(
+                BridgeToolEnvelope.VaultStatus(
+                    session.ClientId,
+                    session.AccessMode,
+                    vaultSnapshot));
         }
-        await using var lease = await sessions.AcquireLeaseAsync(
+        var lease = await sessions.AcquireLeaseAsync(
             cancellationToken).ConfigureAwait(false);
         using var leaseScope = _vaultGateway?.UseLease(lease);
+        var transferLease = false;
         try
         {
             await grants.EnsureClockAsync(cancellationToken)
@@ -151,35 +168,38 @@ public sealed class StrictBridgeHandler(
         catch (VaultException exception) when (
             exception.Code == VaultErrorCode.ClockRollback)
         {
-            return await DeniedAsync(
-                session,
-                grant,
-                request.ToolName,
-                "clock_rollback",
-                exception.Message,
-                cancellationToken).ConfigureAwait(false);
+            return BridgeToolCallResult.WithoutLease(
+                await DeniedAsync(
+                    session,
+                    grant,
+                    request.ToolName,
+                    "clock_rollback",
+                    exception.Message,
+                    cancellationToken).ConfigureAwait(false));
         }
         catch (VaultException exception) when (
             exception.Code is VaultErrorCode.SessionExpired or
                 VaultErrorCode.SessionLocked)
         {
-            return await DeniedAsync(
-                session,
-                grant,
-                request.ToolName,
-                "auth_required",
-                exception.Message,
-                cancellationToken).ConfigureAwait(false);
+            return BridgeToolCallResult.WithoutLease(
+                await DeniedAsync(
+                    session,
+                    grant,
+                    request.ToolName,
+                    "auth_required",
+                    exception.Message,
+                    cancellationToken).ConfigureAwait(false));
         }
         if (grant is null)
         {
-            return await DeniedAsync(
-                session,
-                grant: null,
-                request.ToolName,
-                "access_grant_required",
-                "Request a Bridge Access Grant first.",
-                cancellationToken).ConfigureAwait(false);
+            return BridgeToolCallResult.WithoutLease(
+                await DeniedAsync(
+                    session,
+                    grant: null,
+                    request.ToolName,
+                    "access_grant_required",
+                    "Request a Bridge Access Grant first.",
+                    cancellationToken).ConfigureAwait(false));
         }
 
         var snapshot = await sessions.GetSnapshotAsync(cancellationToken)
@@ -188,58 +208,63 @@ public sealed class StrictBridgeHandler(
                 VaultSessionState.Unlocked or
                 VaultSessionState.Expiring))
         {
-            return await DeniedAsync(
-                session,
-                grant,
-                request.ToolName,
-                "auth_required",
-                "Vault must be unlocked.",
-                cancellationToken).ConfigureAwait(false);
+            return BridgeToolCallResult.WithoutLease(
+                await DeniedAsync(
+                    session,
+                    grant,
+                    request.ToolName,
+                    "auth_required",
+                    "Vault must be unlocked.",
+                    cancellationToken).ConfigureAwait(false));
         }
         if (snapshot.SessionId != grant.VaultSessionId)
         {
-            return await DeniedAsync(
-                session,
-                grant,
-                request.ToolName,
-                "access_grant_revoked",
-                "Vault session changed.",
-                cancellationToken).ConfigureAwait(false);
+            return BridgeToolCallResult.WithoutLease(
+                await DeniedAsync(
+                    session,
+                    grant,
+                    request.ToolName,
+                    "access_grant_revoked",
+                    "Vault session changed.",
+                    cancellationToken).ConfigureAwait(false));
         }
         if (!BridgeToolCatalog.TryGet(
                 request.ToolName,
                 out var definition))
         {
-            return BridgeToolEnvelope.Error(
-                "unsupported_tool",
-                $"Unsupported bridge tool: {request.ToolName}");
+            return BridgeToolCallResult.WithoutLease(
+                BridgeToolEnvelope.Error(
+                    "unsupported_tool",
+                    $"Unsupported bridge tool: {request.ToolName}"));
         }
         if (!AccessGrantScopes.Includes(
                 grant.Scopes,
                 definition.RequiredScope))
         {
-            return await DeniedAsync(
-                session,
-                grant,
-                request.ToolName,
-                "access_denied",
-                "Access Grant does not allow this operation.",
-                cancellationToken).ConfigureAwait(false);
+            return BridgeToolCallResult.WithoutLease(
+                await DeniedAsync(
+                    session,
+                    grant,
+                    request.ToolName,
+                    "access_denied",
+                    "Access Grant does not allow this operation.",
+                    cancellationToken).ConfigureAwait(false));
         }
 
         var used = grants.PeekBridgeGrant(grant);
         if (used.Status != AccessGrantValidationStatus.Valid ||
             used.Grant is null)
         {
-            return await DeniedAsync(
-                session,
-                grant,
-                request.ToolName,
-                used.Status == AccessGrantValidationStatus.Expired
-                    ? "access_grant_expired"
-                    : "access_grant_revoked",
-                "Access Grant is no longer valid.",
-                cancellationToken).ConfigureAwait(false);
+            return BridgeToolCallResult.WithoutLease(
+                await DeniedAsync(
+                    session,
+                    grant,
+                    request.ToolName,
+                    used.Status == AccessGrantValidationStatus.Expired
+                        ? "access_grant_expired"
+                        : "access_grant_revoked",
+                    "Access Grant is no longer valid.",
+                    cancellationToken).ConfigureAwait(false));
         }
         grant = used.Grant;
 
@@ -282,7 +307,7 @@ public sealed class StrictBridgeHandler(
             await grants.RecordSuccessfulUseAsync(
                 grant,
                 cancellationToken).ConfigureAwait(false);
-            return definition.ResultKind switch
+            var payload = definition.ResultKind switch
             {
                 BridgeToolResultKind.Page =>
                     BridgeToolEnvelope.Page(resultElement),
@@ -293,6 +318,9 @@ public sealed class StrictBridgeHandler(
                 _ => throw new InvalidOperationException(
                     "Unsupported bridge tool result kind.")
             };
+            var completed = BridgeToolCallResult.WithLease(payload, lease);
+            transferLease = true;
+            return completed;
         }
         catch (OperationCanceledException)
         {
@@ -310,28 +338,39 @@ public sealed class StrictBridgeHandler(
                     exception.Message,
                     cancellationToken).ConfigureAwait(false);
             }
-            return BridgeToolEnvelope.Error(
-                exception.Code,
-                exception.Message);
+            return BridgeToolCallResult.WithoutLease(
+                BridgeToolEnvelope.Error(
+                    exception.Code,
+                    exception.Message));
         }
         catch (AdminPipeRpcException exception)
         {
-            return BridgeToolEnvelope.Error(
-                exception.Code,
-                exception.Message);
+            return BridgeToolCallResult.WithoutLease(
+                BridgeToolEnvelope.Error(
+                    exception.Code,
+                    exception.Message));
         }
         catch (HostException exception)
         {
-            return BridgeToolEnvelope.Error(
-                BridgeToolErrorMapper.ToCode(exception),
-                exception.Message);
+            return BridgeToolCallResult.WithoutLease(
+                BridgeToolEnvelope.Error(
+                    BridgeToolErrorMapper.ToCode(exception),
+                    exception.Message));
         }
         catch (VaultException exception)
         {
-            return BridgeToolEnvelope.Error(
-                BridgeToolErrorMapper.ToCode(exception),
-                exception.Message,
-                exception.Details);
+            return BridgeToolCallResult.WithoutLease(
+                BridgeToolEnvelope.Error(
+                    BridgeToolErrorMapper.ToCode(exception),
+                    exception.Message,
+                    exception.Details));
+        }
+        finally
+        {
+            if (!transferLease)
+            {
+                await lease.DisposeAsync().ConfigureAwait(false);
+            }
         }
     }
 
@@ -548,6 +587,7 @@ public sealed class StrictBridgeHandler(
                     "approval-cancelled" => "access_denied",
                     "approval-failed" => "access_denied",
                     "cancelled" => "access_denied",
+                    "revoke_all_in_progress" => "revoke_all_in_progress",
                     _ => "access_denied"
                 },
                 outcome.ReasonCode ?? "Bridge Access Grant was denied.")

@@ -59,6 +59,7 @@ internal sealed class BridgePipeSession : IAsyncDisposable
                 }
 
                 PipeRpcResponse response;
+                BridgeToolCallResult? delivery = null;
                 if (string.Equals(
                         request.Method,
                         "bridge.grant.request",
@@ -72,8 +73,10 @@ internal sealed class BridgePipeSession : IAsyncDisposable
                         "bridge.tools.call",
                         StringComparison.Ordinal))
                 {
-                    response = await HandleToolCallAsync(request)
+                    var execution = await HandleToolCallAsync(request)
                         .ConfigureAwait(false);
+                    response = execution.Response;
+                    delivery = execution.Delivery;
                 }
                 else if (string.Equals(
                         request.Method,
@@ -108,8 +111,18 @@ internal sealed class BridgePipeSession : IAsyncDisposable
                         $"Unsupported bridge method: {request.Method}");
                 }
 
-                await _connection.WriteAsync(response, cancellationToken)
-                    .ConfigureAwait(false);
+                try
+                {
+                    await _connection.WriteAsync(response, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                finally
+                {
+                    if (delivery is not null)
+                    {
+                        await delivery.DisposeAsync().ConfigureAwait(false);
+                    }
+                }
                 if (_closeRequested)
                 {
                     _requestWriter.TryComplete();
@@ -185,52 +198,85 @@ internal sealed class BridgePipeSession : IAsyncDisposable
         }
     }
 
-    private async Task<PipeRpcResponse> HandleToolCallAsync(
+    private async Task<ToolCallResponse> HandleToolCallAsync(
         PipeRpcRequest request)
     {
         if (DateTimeOffset.UtcNow >= _session.ExpiresAt)
         {
-            return PipeRpcCodec.Failure(
-                request.RequestId,
+            return Failure(
+                request,
                 "bridge_session_expired",
                 "The Bridge session has expired.");
         }
+        BridgeToolCallResult? execution = null;
         try
         {
             var call = PipeRpcCodec.ReadPayload<BridgeToolCallRequest>(request);
-            var result = await _options.Handler.CallToolAsync(
+            execution = await _options.Handler.CallToolWithDeliveryAsync(
                 _session,
                 _grant,
                 call,
                 HandlerToken).ConfigureAwait(false);
-            if (HasLostGrant(result))
+            if (HasLostGrant(execution.Payload))
             {
                 _grant = null;
             }
-            return PipeRpcCodec.Success(request.RequestId, result);
+            return new ToolCallResponse(
+                PipeRpcCodec.Success(request.RequestId, execution.Payload),
+                execution);
         }
         catch (OperationCanceledException)
         {
+            if (execution is not null)
+            {
+                await execution.DisposeAsync().ConfigureAwait(false);
+            }
+            throw;
+        }
+        catch (IOException)
+        {
+            if (execution is not null)
+            {
+                await execution.DisposeAsync().ConfigureAwait(false);
+            }
             throw;
         }
         catch (Exception exception) when (
             exception is InvalidDataException or System.Text.Json.JsonException)
         {
-            return PipeRpcCodec.Failure(
-                request.RequestId,
+            if (execution is not null)
+            {
+                await execution.DisposeAsync().ConfigureAwait(false);
+            }
+            return Failure(
+                request,
                 "invalid_input",
                 "Bridge tool request payload is invalid.");
         }
         catch (Exception exception) when (
             exception is not IOException)
         {
-            return PipeRpcCodec.Failure(
-                request.RequestId,
+            if (execution is not null)
+            {
+                await execution.DisposeAsync().ConfigureAwait(false);
+            }
+            return Failure(
+                request,
                 exception is AdminPipeRpcException rpcException
                     ? rpcException.Code
                     : "bridge_error",
                 exception.Message);
         }
+    }
+
+    private static ToolCallResponse Failure(
+        PipeRpcRequest request,
+        string code,
+        string message)
+    {
+        return new ToolCallResponse(
+            PipeRpcCodec.Failure(request.RequestId, code, message),
+            Delivery: null);
     }
 
     private static bool HasLostGrant(string result)
@@ -340,5 +386,9 @@ internal sealed class BridgePipeSession : IAsyncDisposable
                 exception.Message);
         }
     }
+
+    private sealed record ToolCallResponse(
+        PipeRpcResponse Response,
+        BridgeToolCallResult? Delivery);
 }
 
