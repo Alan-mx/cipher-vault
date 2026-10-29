@@ -20,7 +20,7 @@ public sealed class AcceptanceFlowTests
         Directory.CreateDirectory(Path.Combine(sourcePath, "工作"));
         await File.WriteAllTextAsync(
             Path.Combine(sourcePath, "健康", "睡眠.md"),
-            "---\ntags: [健康, 睡眠]\n---\n# 睡眠\n最近睡眠质量一般。");
+            "---\ntags: [健康, 睡眠]\n---\n# 睡眠\n[[记录]]\n最近睡眠质量一般。");
         await File.WriteAllTextAsync(
             Path.Combine(sourcePath, "工作", "记录.txt"),
             "工作需要持续记录。");
@@ -134,7 +134,27 @@ public sealed class AcceptanceFlowTests
                 null,
                 null,
                 20);
-            Assert.Single(restoredSearch.Hits);
+            var restoredHit = Assert.Single(restoredSearch.Hits);
+            Assert.Equal(sleep.DocumentId, restoredHit.DocumentId);
+            var restoredRead = await restoredService.ReadNoteAsync(
+                restoredHit.DocumentId,
+                0,
+                10_000);
+            Assert.Contains("持续观察。", restoredRead.Content);
+            var restoredMap = await restoredService.GetDocumentMapAsync(
+                restoredHit.DocumentId);
+            Assert.Contains(
+                restoredMap.FrontMatterFields,
+                field => field.Key == "tags");
+            Assert.Contains(
+                restoredMap.OutgoingLinks,
+                link => link.RawTarget == "记录" &&
+                    link.ResolutionStatus == "resolved");
+            var restoredRevisions = await restoredService.ListRevisionsAsync(
+                restoredHit.DocumentId,
+                null,
+                100);
+            Assert.True(restoredRevisions.Items.Count >= 3);
         }
         finally
         {

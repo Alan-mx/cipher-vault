@@ -583,6 +583,115 @@ public sealed class StrictBridgePipeTests
     }
 
     [Fact]
+    public async Task HostRejectsToolsOutsideGrantedScopes()
+    {
+        var timeout = TimeSpan.FromSeconds(10);
+        await using var environment = await CreateRealBridgeEnvironmentAsync();
+        var gateway = environment.Fixture.App.Services
+            .GetRequiredService<HostVaultGateway>();
+        var sessions = environment.Fixture.App.Services
+            .GetRequiredService<HostSessionCoordinator>();
+        var snapshot = await sessions.GetSnapshotAsync().WaitAsync(timeout);
+        var seeded = await gateway.ExecuteAsync(
+            (vault, token) => vault.CreateNoteAsync(
+                "Scope Guard",
+                "Projects",
+                "md",
+                "# Scope Guard",
+                null,
+                VaultActorKind.System,
+                token)).WaitAsync(timeout);
+        var requested = await environment.Grants.RequestAsync(
+            "mcp",
+            Guid.NewGuid(),
+            McpAccessMode.ReadOnly,
+            AccessGrantScope.Read,
+            new AccessGrantVaultGeneration(
+                snapshot.SessionId!.Value,
+                snapshot.HardExpiresAt!.Value),
+            (_, _) => Task.FromResult(new AccessGrantApprovalResult(
+                true,
+                AccessGrantScope.Read)),
+            Guid.NewGuid()).WaitAsync(timeout);
+        var record = requested.IssuedGrant!.Record;
+        var bridgeSession = CreateBridgeProcessSession(environment, record);
+        var grant = new AccessGrantContext(
+            record.GrantId,
+            record.ClientId,
+            record.ClientInstanceId,
+            record.Scopes,
+            record.VaultSessionId!.Value,
+            record.VerifiedProcessSessionId,
+            record.PathPolicy);
+        var calls = new[]
+        {
+            ToolCall(
+                "create_note",
+                new
+                {
+                    title = "Blocked Create",
+                    folder = "Projects",
+                    content = "must not exist"
+                }),
+            ToolCall(
+                "append_note",
+                new
+                {
+                    documentId = seeded.DocumentId,
+                    expectedRevision = 1,
+                    content = "blocked"
+                }),
+            ToolCall(
+                "update_note",
+                new
+                {
+                    documentId = seeded.DocumentId,
+                    expectedRevision = 1,
+                    title = "Blocked Update"
+                }),
+            ToolCall(
+                "patch_note",
+                new
+                {
+                    documentId = seeded.DocumentId,
+                    expectedRevision = 1,
+                    commands = Array.Empty<object>()
+                }),
+            ToolCall(
+                "delete_note",
+                new
+                {
+                    documentId = seeded.DocumentId,
+                    expectedRevision = 1
+                })
+        };
+
+        foreach (var call in calls)
+        {
+            var result = await environment.Handler.CallToolWithDeliveryAsync(
+                bridgeSession,
+                grant,
+                call,
+                CancellationToken.None).WaitAsync(timeout);
+            await using (result)
+            {
+                using var payload = JsonDocument.Parse(result.Payload);
+                AssertGrantError(payload, "access_denied");
+            }
+        }
+
+        var catalog = await gateway.ExecuteAsync(
+            (vault, token) => vault.ListCatalogAsync(
+                folder: null,
+                cursor: null,
+                limit: 50,
+                VaultReadScope.Unrestricted,
+                token)).WaitAsync(timeout);
+        Assert.Single(catalog.Items);
+        Assert.Equal("Scope Guard", catalog.Items[0].Title);
+    }
+
+    [Fact]
     public async Task VaultStatusWorksWithoutGrantWhileLocked()
     {
         await using var environment = await CreateRealBridgeEnvironmentAsync();

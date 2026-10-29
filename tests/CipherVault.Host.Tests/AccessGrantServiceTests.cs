@@ -471,6 +471,23 @@ public sealed class AccessGrantServiceTests
         Assert.False(paths.AllowsDelete("Inbox/note.md"));
     }
 
+    [Theory]
+    [InlineData("Projects/../Other/secret.md")]
+    [InlineData("../Projects/secret.md")]
+    [InlineData("C:/Vault/Private/secret.md")]
+    [InlineData(@"\\server\share\Private\secret.md")]
+    [InlineData("Projects2/secret.md")]
+    public void ScopedGrantRejectsPathsOutsideAllowedFolder(string virtualPath)
+    {
+        Assert.True(AccessGrantPathPolicy.TryParse(
+            ["read:Projects"],
+            out _,
+            out var paths));
+
+        Assert.True(paths.AllowsRead("PROJECTS/NOTE.MD"));
+        Assert.False(paths.AllowsRead(virtualPath));
+    }
+
     [Fact]
     public void GlobalScopeOverridesScopedPathTokens()
     {

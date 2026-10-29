@@ -5,7 +5,8 @@ param(
     [ValidatePattern("^[0-9A-Fa-f]{40}$")]
     [string]$SignerThumbprint,
     [string]$TimestampUrl = "http://timestamp.digicert.com",
-    [string]$SigntoolPath
+    [string]$SigntoolPath,
+    [switch]$IncludeCertificate
 )
 
 $ErrorActionPreference = "Stop"
@@ -84,6 +85,14 @@ foreach ($executable in $executables) {
     if ($verified.Status -ne "Valid") {
         throw "Signature verification failed: $($executable.FullName): $($verified.StatusMessage)"
     }
+}
+
+if ($IncludeCertificate) {
+    $certificatePath = Join-Path $stage "CipherVault-dev-codesign.cer"
+    Export-Certificate `
+        -Cert $certificate `
+        -FilePath $certificatePath `
+        -Force | Out-Null
 }
 
 if (Test-Path -LiteralPath $fullArchivePath) {

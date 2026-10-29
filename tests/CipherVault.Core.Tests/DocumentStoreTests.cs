@@ -1358,6 +1358,49 @@ public sealed class DocumentStoreTests
     }
 
     [Fact]
+    public async Task WrongCredentialRestoreLeavesOriginalVaultUsable()
+    {
+        await using var fixture = await DocumentFixture.CreateAsync();
+        await fixture.Service.UnlockAsync(
+            fixture.VaultPath,
+            Password,
+            VaultCredentialType.Password);
+        var created = await fixture.Service.CreateNoteAsync(
+            "Restore Credential Guard",
+            "Tests",
+            "md",
+            "# Restore Credential Guard",
+            null,
+            VaultActorKind.UserUi);
+        var backupPath = Path.Combine(
+            fixture.RootPath,
+            "credential-guard.cvbackup");
+        await fixture.Service.CreateBackupAsync(
+            backupPath,
+            VaultActorKind.UserUi);
+        var targetPath = Path.Combine(
+            fixture.RootPath,
+            "wrong-credential-restore");
+
+        var exception = await Assert.ThrowsAsync<VaultException>(() =>
+            fixture.Service.RestoreBackupAsync(
+                backupPath,
+                targetPath,
+                "wrong-restore-password",
+                VaultCredentialType.Password,
+                VaultActorKind.UserUi));
+
+        Assert.Equal(VaultErrorCode.InvalidCredential, exception.Code);
+        Assert.False(Directory.Exists(targetPath));
+        var original = await fixture.Service.ReadNoteAsync(
+            created.DocumentId,
+            0,
+            10_000);
+        Assert.Contains("Restore Credential Guard", original.Content);
+        Assert.True((await fixture.Service.VerifyVaultAsync()).Valid);
+    }
+
+    [Fact]
     public async Task UncommittedTransactionDoesNotBecomeVisibleAfterCrashLikeDispose()
     {
         await using var fixture = await DocumentFixture.CreateAsync();

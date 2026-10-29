@@ -1,7 +1,8 @@
 # CipherVault
 
-Windows 11 本地加密 Markdown/TXT 资料库。当前版本使用 strict Windows Service
-架构；不再维护旧的 per-user Host、兼容 HTTP Admin/MCP 或旧版升级迁移。
+Windows 11 x64 本地加密 Markdown/TXT 资料库。当前版本使用 strict Windows Service
+架构；不再维护旧的 per-user Host、兼容 HTTP Admin/MCP 或旧版升级迁移。Linux 不在
+当前版本交付范围内。
 
 ## 架构
 
@@ -62,13 +63,16 @@ dotnet test .\CipherVault.sln -c Release --no-build --nologo
 
 ```powershell
 .\scripts\publish.ps1
-.\scripts\sign-publish.ps1 -SignerThumbprint 0123456789ABCDEF0123456789ABCDEF01234567
+.\scripts\sign-publish.ps1 `
+  -SignerThumbprint 0123456789ABCDEF0123456789ABCDEF01234567 `
+  -IncludeCertificate
 ```
 
 `sign-publish.ps1` 会签名发布目录中的五个 EXE，验证 Authenticode 签名，然后重新
 创建最终 ZIP。参数是证书在 `CurrentUser\My` 中的 40 位 SHA-1 thumbprint；脚本优先
 使用 `signtool.exe`，未安装 Windows SDK 时回退到 PowerShell Authenticode 签名。
-所有客户端和 Host 必须由同一个代码签名证书签名。
+所有客户端和 Host 必须由同一个代码签名证书签名。开发测试包使用
+`-IncludeCertificate` 把公钥证书一并放入 ZIP；正式发布包不要求包含证书。
 
 当前开发包使用自签名测试证书：
 
@@ -132,10 +136,28 @@ ProgramData；升级时不要添加 `--remove-data`。只要
 .\CipherVault.Cli.exe service start
 ```
 
-## 全新 Windows 11 验收
+## Windows 11 验收状态
 
-建议使用 Hyper-V/VMware 的干净 Windows 11 虚拟机和快照。当前项目尚未在最终用户的
-全新机器上完成首次安装验收，因此不要把主力机上的 Vault 作为唯一副本。
+当前版本已在干净的 Windows 11 x64 环境完成首次安装验收：
+
+- 验收日期：2026-10-29
+- 验收代码：`615d221a94985b9d517e37ff1574b2ab8ad4563c`
+- 测试包版本：`1.0.0.0`，开发签名 ZIP 包
+- CI：2026-10-29 最新提交通过
+
+已通过的项目：
+
+- 全新安装、首次初始化、密码与恢复密钥确认。
+- 重启 Windows 后 Windows Service 自动启动。
+- 非管理员用户无法绕过服务权限读取加密资料。
+- ProgramData Owner/ACL、服务身份和安装文件权限。
+- Broker 强杀、自动注册恢复和新授权流程。
+- 授权撤销后旧 Grant 与旧 MCP 会话失效。
+- 加密备份恢复到独立目录并重新解锁读取。
+- 卸载重装后 install ID 更新，Vault 数据保持可解锁。
+
+正式分发仍需使用受信任 CA 代码签名证书重新验证发布包。每次发布新版本时仍应重新
+执行下面的安装验收，不能仅凭 `1.0.0.0` 版本号推断后续构建已通过。
 
 验收顺序：
 

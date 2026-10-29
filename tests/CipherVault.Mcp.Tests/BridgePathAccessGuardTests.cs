@@ -127,4 +127,38 @@ public sealed class BridgePathAccessGuardTests
         Assert.Empty(graph.GetProperty("edges").EnumerateArray());
         Assert.True(graph.GetProperty("truncated").GetBoolean());
     }
+
+    [Fact]
+    public void BacklinksAreFilteredBySourcePath()
+    {
+        Assert.True(AccessGrantPathPolicy.TryParse(
+            ["read:Projects"],
+            out var scopes,
+            out var paths));
+        var access = new BridgePathAccess(scopes, paths);
+
+        var backlinks = BridgePathAccessGuard.FilterResult(
+            "get_backlinks",
+            JsonSerializer.SerializeToElement(new
+            {
+                items = new[]
+                {
+                    new
+                    {
+                        sourceDocumentId = "visible",
+                        sourceVirtualPath = "Projects/source.md"
+                    },
+                    new
+                    {
+                        sourceDocumentId = "hidden",
+                        sourceVirtualPath = "Private/source.md"
+                    }
+                }
+            }),
+            access);
+
+        var item = Assert.Single(
+            backlinks.GetProperty("items").EnumerateArray());
+        Assert.Equal("visible", item.GetProperty("sourceDocumentId").GetString());
+    }
 }
