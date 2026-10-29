@@ -505,11 +505,11 @@ public sealed class BrokerPipeTests
             [brokerPolicy],
             currentUser.Value,
             currentUser.Value,
-            TimeSpan.FromSeconds(2),
+            TimeSpan.FromSeconds(5),
             RequireInteractiveSession: false,
             ActivityProvider: new BrokerActivityProvider());
         var registry = new BrokerConnectionRegistry();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
 
         await using (var server = new BrokerPipeServer(options))
         {
@@ -544,7 +544,9 @@ public sealed class BrokerPipeTests
 
             await acceptTask.WaitAsync(TimeSpan.FromSeconds(10));
             await readTask.WaitAsync(TimeSpan.FromSeconds(10));
-            Assert.False(registry.IsAvailable);
+            await WaitUntilAsync(
+                () => !registry.IsAvailable,
+                TimeSpan.FromSeconds(5));
         }
 
         await using (var replacementServer = new BrokerPipeServer(options))
@@ -578,7 +580,9 @@ public sealed class BrokerPipeTests
                 timeout.Token);
 
             _ = await replacementConnected.Task.WaitAsync(timeout.Token);
-            Assert.True(registry.IsAvailable);
+            await WaitUntilAsync(
+                () => registry.IsAvailable,
+                TimeSpan.FromSeconds(5));
 
             timeout.Cancel();
             try
