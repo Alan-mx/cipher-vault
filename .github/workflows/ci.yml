@@ -39,9 +39,43 @@ jobs:
             "tests/CipherVault.Host.Tests/CipherVault.Host.Tests.csproj",
             "tests/CipherVault.Core.Tests/CipherVault.Core.Tests.csproj"
           )
+          $failedProjects = @()
+          $resultsDirectory = Join-Path $PWD "TestResults"
+          New-Item -ItemType Directory -Path $resultsDirectory -Force | Out-Null
           foreach ($project in $projects) {
-            dotnet test $project -c Release --no-build
+            $projectName = [IO.Path]::GetFileNameWithoutExtension($project)
+            dotnet test $project `
+              -c Release `
+              --no-build `
+              --logger "console;verbosity=minimal" `
+              --logger "trx;LogFileName=$projectName.trx" `
+              --results-directory $resultsDirectory
             if ($LASTEXITCODE -ne 0) {
-              exit $LASTEXITCODE
+              $failedProjects += $project
             }
           }
+          [xml[]]$trxFiles = Get-ChildItem $resultsDirectory -Filter "*.trx" |
+            ForEach-Object { Get-Content -Raw $_.FullName }
+          foreach ($trx in $trxFiles) {
+            $ns = New-Object System.Xml.XmlNamespaceManager($trx.NameTable)
+            $ns.AddNamespace(
+              "t",
+              "http://microsoft.com/schemas/VisualStudio/TeamTest/2010")
+            foreach ($failure in $trx.SelectNodes(
+                "//t:UnitTestResult[@outcome='Failed']",
+                $ns)) {
+              Write-Output "::error title=Test failed::$($failure.testName)"
+            }
+          }
+          if ($failedProjects.Count -gt 0) {
+            Write-Output "Failed projects: $($failedProjects -join ', ')"
+            exit 1
+          }
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults/*.trx
+          if-no-files-found: ignore
