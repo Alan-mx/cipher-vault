@@ -1,0 +1,32 @@
+FROM mcr.microsoft.com/dotnet/sdk:10.0.402-noble@sha256:747cbade5bfd918a175ac32f8f1d931edec2c7d0d5397a3de72eaef1ac1f66d2
+
+ENV NUGET_PACKAGES=/nuget/packages
+
+WORKDIR /src
+
+COPY CipherVault.Sqlite3McPoc/Directory.Build.props CipherVault.Sqlite3McPoc/
+COPY CipherVault.Sqlite3McPoc/Directory.Packages.props CipherVault.Sqlite3McPoc/
+COPY CipherVault.Sqlite3McPoc/CipherVault.Sqlite3McPoc.csproj CipherVault.Sqlite3McPoc/
+COPY CipherVault.Sqlite3McPoc/packages.lock.json CipherVault.Sqlite3McPoc/
+COPY CipherVault.PlainSqliteProbe/Directory.Build.props CipherVault.PlainSqliteProbe/
+COPY CipherVault.PlainSqliteProbe/Directory.Packages.props CipherVault.PlainSqliteProbe/
+COPY CipherVault.PlainSqliteProbe/CipherVault.PlainSqliteProbe.csproj CipherVault.PlainSqliteProbe/
+COPY CipherVault.PlainSqliteProbe/packages.lock.json CipherVault.PlainSqliteProbe/
+
+RUN dotnet restore CipherVault.Sqlite3McPoc/CipherVault.Sqlite3McPoc.csproj --locked-mode \
+    && dotnet restore CipherVault.PlainSqliteProbe/CipherVault.PlainSqliteProbe.csproj --locked-mode \
+    && chmod -R a+rX /nuget
+
+COPY CipherVault.Sqlite3McPoc/ CipherVault.Sqlite3McPoc/
+COPY CipherVault.PlainSqliteProbe/ CipherVault.PlainSqliteProbe/
+
+RUN dotnet build CipherVault.Sqlite3McPoc/CipherVault.Sqlite3McPoc.csproj -c Release --no-restore \
+    && dotnet build CipherVault.PlainSqliteProbe/CipherVault.PlainSqliteProbe.csproj -c Release --no-restore \
+    && useradd --uid 10001 --create-home --shell /usr/sbin/nologin phase0 \
+    && chown -R 10001:10001 /src
+
+ENV CV_PHASE0_IMAGE_DIGEST=sha256:747cbade5bfd918a175ac32f8f1d931edec2c7d0d5397a3de72eaef1ac1f66d2
+
+USER 10001:10001
+
+ENTRYPOINT ["dotnet", "CipherVault.Sqlite3McPoc/bin/Release/net10.0/CipherVault.Sqlite3McPoc.dll"]
