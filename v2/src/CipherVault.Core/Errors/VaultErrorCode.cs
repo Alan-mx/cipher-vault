@@ -8,5 +8,10 @@ public enum VaultErrorCode
     UnsupportedVersion,
     UnsupportedPlatform,
     StorageError,
-    DatabaseError
+    DatabaseError,
+    VaultNotInitialized,
+    VaultAlreadyInitialized,
+    VaultLocked,
+    VaultBusy,
+    VaultLockFailed
 }
