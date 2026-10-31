@@ -181,6 +181,11 @@ internal static class DocumentPatchEngine
                 JsonValueKind.False,
             _ => false
         };
+        if (string.Equals(field.Key, "tags", StringComparison.Ordinal)
+            && IsScalarArray(value))
+        {
+            valid = true;
+        }
         if (!valid)
         {
             throw new VaultException(

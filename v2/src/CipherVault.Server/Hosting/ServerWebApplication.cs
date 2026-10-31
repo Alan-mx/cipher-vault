@@ -7,6 +7,7 @@ using CipherVault.Application.Search;
 using CipherVault.Server.Api;
 using CipherVault.Server.Api.Endpoints;
 using CipherVault.Server.Middleware;
+using CipherVault.Server.Mcp;
 using CipherVault.Server.Security;
 using Microsoft.Extensions.Logging;
 
@@ -17,12 +18,14 @@ public static class ServerWebApplication
     public static async Task<WebApplication> BuildAsync(
         ServerOptions options,
         VaultSessionManager sessionManager,
+        McpTokenStore tokenStore,
         TimeProvider timeProvider,
         Action<ILoggingBuilder>? configureLogging = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(sessionManager);
+        ArgumentNullException.ThrowIfNull(tokenStore);
         ArgumentNullException.ThrowIfNull(timeProvider);
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -49,8 +52,10 @@ public static class ServerWebApplication
         builder.Services.AddSingleton(options.Paths);
         builder.Services.AddSingleton(timeProvider);
         builder.Services.AddSingleton(sessionManager);
+        builder.Services.AddSingleton(tokenStore);
         builder.Services.AddSingleton<VaultLifecycleService>();
         builder.Services.AddSingleton<DocumentService>();
+        builder.Services.AddSingleton<DocumentAuthoringService>();
         builder.Services.AddSingleton<DocumentRevisionService>();
         builder.Services.AddSingleton<TrashService>();
         builder.Services.AddSingleton<SearchService>();
@@ -61,6 +66,7 @@ public static class ServerWebApplication
         builder.Services.AddCipherVaultDataProtection(options.Paths);
         builder.Services.AddVaultCookieAuthentication();
         builder.Services.AddVaultAntiforgery();
+        builder.Services.AddCipherVaultMcp();
         builder.Services.AddHostedService<VaultIdleLockService>();
         var app = builder.Build();
         app.UseMiddleware<RequestCorrelationMiddleware>();
@@ -68,6 +74,7 @@ public static class ServerWebApplication
         app.UseMiddleware<ApiExceptionMiddleware>();
         app.UseMiddleware<ApiStatusCodeMiddleware>();
         app.UseMiddleware<HostOriginValidationMiddleware>();
+        app.UseMiddleware<McpBearerGateMiddleware>();
         app.UseAuthentication();
         app.UseAuthorization();
         app.UseMiddleware<RequestBodyLimitMiddleware>();
@@ -80,6 +87,8 @@ public static class ServerWebApplication
         app.MapKnowledgeEndpoints();
         app.MapImportEndpoints();
         app.MapAuditEndpoints();
+        app.MapMcpTokenEndpoints();
+        app.MapCipherVaultMcp();
         await app.StartAsync(cancellationToken);
         return app;
     }

@@ -1,0 +1,19 @@
+services:
+  cipher-vault-phase5:
+    image: cipher-vault-phase5
+    build:
+      context: ../../../..
+      dockerfile: v2/tests/CipherVault.Server.Tests/Containers/Dockerfile.phase5
+    ports:
+      - "127.0.0.1:${PHASE5_PORT:-43127}:43127"
+    environment:
+      ASPNETCORE_URLS: "http://0.0.0.0:43127"
+      CIPHERVAULT_CONTAINER_MODE: "true"
+      CIPHERVAULT_ALLOWED_HOSTS: "127.0.0.1,localhost"
+      CIPHERVAULT_DATA_DIR: "/data/vault"
+      CIPHERVAULT_CONFIG_DIR: "/data/config"
+    volumes:
+      - phase5-data:/data
+
+volumes:
+  phase5-data:

@@ -26,6 +26,8 @@ public static class ApiErrorCodes
     public const string VaultLocked = "vault_locked";
     public const string VaultNotInitialized = "vault_not_initialized";
     public const string UnlockRateLimited = "unlock_rate_limited";
+    public const string InvalidToken = "invalid_token";
+    public const string McpTokenNotConfigured = "mcp_token_not_configured";
     public const string VaultLockFailed = "vault_lock_failed";
     public const string StorageError = "storage_error";
     public const string DatabaseError = "database_error";

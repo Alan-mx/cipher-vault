@@ -115,7 +115,7 @@ public sealed class ServerSecurityBoundaryTests
     }
 
     [Fact]
-    public async Task BackupAndMcpRoutesAreNotMapped()
+    public async Task BackupRouteIsNotMapped()
     {
         await using var server = await ServerTestApplication.CreateAsync(
             initializeVault: true,
@@ -125,10 +125,6 @@ public sealed class ServerSecurityBoundaryTests
 
         using var backup = await server.Client.GetAsync("/api/backups");
         Assert.Equal(HttpStatusCode.NotFound, backup.StatusCode);
-        using var mcpGet = await server.Client.GetAsync("/mcp");
-        Assert.Equal(HttpStatusCode.NotFound, mcpGet.StatusCode);
-        using var mcp = await server.Client.PostAsync("/mcp", content: null);
-        Assert.Equal(HttpStatusCode.NotFound, mcp.StatusCode);
     }
 
     [Fact]

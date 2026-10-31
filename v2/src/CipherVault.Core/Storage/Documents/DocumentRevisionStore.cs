@@ -120,6 +120,7 @@ public static class DocumentRevisionStore
             actor,
             now,
             "revision_restore",
+            DocumentContentLimitMode.StandardWrite,
             cancellationToken);
     }
 

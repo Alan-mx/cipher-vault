@@ -8,13 +8,37 @@ public sealed record ServerListenAddress(string Host, int Port)
     public string Url => $"http://{Host}:{Port}";
 }
 
-public sealed record ServerOptions(
-    ApplicationPaths Paths,
-    IReadOnlyList<ServerListenAddress> ListenAddresses,
-    TimeSpan IdleTimeout,
-    long MaxRequestBodyBytes)
+public sealed record ServerOptions
 {
     public const long DefaultMaxRequestBodyBytes = 4L * 1024 * 1024;
+
+    public ServerOptions(
+        ApplicationPaths paths,
+        IReadOnlyList<ServerListenAddress> listenAddresses,
+        TimeSpan idleTimeout,
+        long maxRequestBodyBytes,
+        bool containerMode = false,
+        IReadOnlyList<string>? allowedHosts = null)
+    {
+        Paths = paths;
+        ListenAddresses = listenAddresses;
+        IdleTimeout = idleTimeout;
+        MaxRequestBodyBytes = maxRequestBodyBytes;
+        ContainerMode = containerMode;
+        AllowedHosts = allowedHosts ?? ["127.0.0.1", "localhost"];
+    }
+
+    public ApplicationPaths Paths { get; }
+
+    public IReadOnlyList<ServerListenAddress> ListenAddresses { get; }
+
+    public TimeSpan IdleTimeout { get; }
+
+    public long MaxRequestBodyBytes { get; }
+
+    public bool ContainerMode { get; }
+
+    public IReadOnlyList<string> AllowedHosts { get; }
 
     public static ServerOptions Load(IConfiguration configuration)
     {
@@ -28,13 +52,20 @@ public sealed record ServerOptions(
 
         var idleTimeout = ParseIdleTimeout(
             configuration["CIPHERVAULT_IDLE_TIMEOUT_MINUTES"]);
+        var containerMode = ParseContainerMode(
+            configuration["CIPHERVAULT_CONTAINER_MODE"]);
+        var allowedHosts = ParseAllowedHosts(
+            configuration["CIPHERVAULT_ALLOWED_HOSTS"]);
         var addresses = ParseListenAddresses(
-            configuration["ASPNETCORE_URLS"]);
+            configuration["ASPNETCORE_URLS"],
+            containerMode);
         return new ServerOptions(
             paths,
             addresses,
             idleTimeout,
-            DefaultMaxRequestBodyBytes);
+            DefaultMaxRequestBodyBytes,
+            containerMode,
+            allowedHosts);
     }
 
     private static (string Data, string Config) GetDefaultDirectories()
@@ -99,8 +130,39 @@ public sealed record ServerOptions(
         return TimeSpan.FromMinutes(minutes);
     }
 
+    private static bool ParseContainerMode(string? value) =>
+        value switch
+        {
+            null or "" => false,
+            "true" => true,
+            "false" => false,
+            _ => throw InvalidConfiguration(
+                "CIPHERVAULT_CONTAINER_MODE must be true or false.")
+        };
+
+    private static IReadOnlyList<string> ParseAllowedHosts(string? value)
+    {
+        var values = string.IsNullOrWhiteSpace(value)
+            ? ["127.0.0.1", "localhost"]
+            : value.Split(
+                ',',
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var result = new List<string>();
+        foreach (var host in values.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (host is not ("127.0.0.1" or "localhost"))
+            {
+                throw InvalidConfiguration(
+                    "Phase 5 allows only loopback host names.");
+            }
+            result.Add(host);
+        }
+        return result;
+    }
+
     private static IReadOnlyList<ServerListenAddress> ParseListenAddresses(
-        string? value)
+        string? value,
+        bool containerMode)
     {
         var values = string.IsNullOrWhiteSpace(value)
             ? ["http://127.0.0.1:43127"]
@@ -121,7 +183,8 @@ public sealed record ServerOptions(
                 || !string.IsNullOrEmpty(uri.Query)
                 || !string.IsNullOrEmpty(uri.Fragment)
                 || (uri.Host != "127.0.0.1"
-                    && !string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase)))
+                    && !string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase)
+                    && !(containerMode && uri.Host == "0.0.0.0")))
             {
                 throw InvalidConfiguration(
                     "ASPNETCORE_URLS may contain only HTTP loopback listen addresses.");

@@ -1,5 +1,6 @@
 using CipherVault.Application.Vault;
 using CipherVault.Server.Hosting;
+using CipherVault.Server.Mcp;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -30,6 +31,9 @@ public static class Program
             await using var instanceLock = ServerInstanceLock.Acquire(
                 options.Paths.ServerLockPath);
             var timeProvider = TimeProvider.System;
+            var tokenStore = await McpTokenStore.LoadAsync(
+                options.Paths.McpTokenPath,
+                timeProvider);
             var manager = await VaultSessionManager.CreateAsync(
                 options.Paths.VaultDirectory,
                 new VaultSessionOptions(options.IdleTimeout),
@@ -39,6 +43,7 @@ public static class Program
                 await using var app = await ServerWebApplication.BuildAsync(
                     options,
                     manager,
+                    tokenStore,
                     timeProvider);
                 await app.WaitForShutdownAsync();
             }

@@ -141,6 +141,26 @@ public static class DocumentMutationWriter
             actor,
             now,
             "update",
+            DocumentContentLimitMode.StandardWrite,
+            cancellationToken);
+
+    public static Task<DocumentWriteResult> UpdateAuthoringAsync(
+        VaultOperationContext context,
+        Guid documentId,
+        int expectedRevision,
+        UpdateDocumentRequest request,
+        VaultActorContext actor,
+        DateTimeOffset now,
+        CancellationToken cancellationToken) =>
+        UpdateCoreAsync(
+            context,
+            documentId,
+            expectedRevision,
+            request,
+            actor,
+            now,
+            "update",
+            DocumentContentLimitMode.ExistingDocumentAuthoring,
             cancellationToken);
 
     internal static async Task<DocumentWriteResult> UpdateCoreAsync(
@@ -151,6 +171,7 @@ public static class DocumentMutationWriter
         VaultActorContext actor,
         DateTimeOffset now,
         string auditAction,
+        DocumentContentLimitMode limitMode,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -169,7 +190,8 @@ public static class DocumentMutationWriter
             null,
             VaultDocumentFormatExtensions.ParseDatabaseValue(current.Format),
             request.Content,
-            request.Tags);
+            request.Tags,
+            limitMode);
         if (IsNoOp(current, parsed))
         {
             return new DocumentWriteResult(

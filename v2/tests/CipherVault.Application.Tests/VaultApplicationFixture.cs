@@ -20,6 +20,7 @@ internal sealed class VaultApplicationFixture : IAsyncDisposable
         Manager = manager;
         TimeProvider = timeProvider;
         Documents = new DocumentService(manager, timeProvider);
+        Authoring = new DocumentAuthoringService(manager, timeProvider);
         Trash = new TrashService(manager, timeProvider);
         Revisions = new DocumentRevisionService(manager, timeProvider);
         Search = new SearchService(manager, timeProvider);
@@ -37,6 +38,8 @@ internal sealed class VaultApplicationFixture : IAsyncDisposable
     internal TimeProvider TimeProvider { get; }
 
     internal DocumentService Documents { get; }
+
+    internal DocumentAuthoringService Authoring { get; }
 
     internal TrashService Trash { get; }
 

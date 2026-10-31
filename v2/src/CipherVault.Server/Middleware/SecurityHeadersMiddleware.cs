@@ -19,7 +19,8 @@ public sealed class SecurityHeadersMiddleware
             headers["X-Frame-Options"] = "DENY";
             headers["Content-Security-Policy"] =
                 "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'";
-            if (context.Request.Path.StartsWithSegments("/api"))
+            if (context.Request.Path.StartsWithSegments("/api")
+                || context.Request.Path.StartsWithSegments("/mcp"))
             {
                 headers.CacheControl = "no-store";
                 headers.Pragma = "no-cache";

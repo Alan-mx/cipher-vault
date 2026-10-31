@@ -7,7 +7,8 @@ public sealed record ApplicationPaths(
     string VaultDirectory,
     string ConfigDirectory,
     string DataProtectionDirectory,
-    string ServerLockPath)
+    string ServerLockPath,
+    string McpTokenPath)
 {
     public static ApplicationPaths Create(
         string vaultDirectory,
@@ -35,7 +36,8 @@ public sealed record ApplicationPaths(
             vault,
             config,
             Path.Combine(config, "data-protection"),
-            Path.Combine(config, "server.lock"));
+            Path.Combine(config, "server.lock"),
+            Path.Combine(config, "mcp-token.json"));
     }
 
     public void EnsureCreated()

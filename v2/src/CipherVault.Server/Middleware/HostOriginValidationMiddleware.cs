@@ -47,12 +47,12 @@ public sealed class HostOriginValidationMiddleware
     private bool IsAllowedHost(HostString host)
     {
         var port = host.Port ?? 80;
-        return options.ListenAddresses.Any(address =>
-            address.Port == port
-            && string.Equals(
-                address.Host,
+        var portAllowed = options.ContainerMode
+            || options.ListenAddresses.Any(address => address.Port == port);
+        return portAllowed
+            && options.AllowedHosts.Contains(
                 host.Host,
-                StringComparison.OrdinalIgnoreCase));
+                StringComparer.OrdinalIgnoreCase);
     }
 
     private bool IsAllowedOrigin(string? origin)
@@ -68,11 +68,11 @@ public sealed class HostOriginValidationMiddleware
             return false;
         }
 
-        return options.ListenAddresses.Any(address =>
-            address.Port == uri.Port
-            && string.Equals(
-                address.Host,
+        var portAllowed = options.ContainerMode
+            || options.ListenAddresses.Any(address => address.Port == uri.Port);
+        return portAllowed
+            && options.AllowedHosts.Contains(
                 uri.Host,
-                StringComparison.OrdinalIgnoreCase));
+                StringComparer.OrdinalIgnoreCase);
     }
 }

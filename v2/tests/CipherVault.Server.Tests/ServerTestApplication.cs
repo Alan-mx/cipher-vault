@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using CipherVault.Application.Vault;
 using CipherVault.Server.Hosting;
+using CipherVault.Server.Mcp;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Logging;
 
@@ -19,6 +20,7 @@ internal sealed class ServerTestApplication : IAsyncDisposable
         string parent,
         ManualTimeProvider timeProvider,
         ServerOptions options,
+        McpTokenStore tokenStore,
         ServerInstanceLock instanceLock,
         VaultSessionManager manager,
         WebApplication application,
@@ -27,6 +29,7 @@ internal sealed class ServerTestApplication : IAsyncDisposable
         Parent = parent;
         TimeProvider = timeProvider;
         Options = options;
+        TokenStore = tokenStore;
         this.instanceLock = instanceLock;
         this.manager = manager;
         this.application = application;
@@ -38,6 +41,8 @@ internal sealed class ServerTestApplication : IAsyncDisposable
     internal ManualTimeProvider TimeProvider { get; }
 
     internal ServerOptions Options { get; }
+
+    internal McpTokenStore TokenStore { get; }
 
     internal VaultSessionManager Manager => manager;
 
@@ -61,7 +66,35 @@ internal sealed class ServerTestApplication : IAsyncDisposable
         bool initializeVault = false,
         bool unlockVault = false,
         TimeSpan? idleTimeout = null,
-        Action<ILoggingBuilder>? configureLogging = null)
+        Action<ILoggingBuilder>? configureLogging = null,
+        VaultSessionTimingOptions? timingOptions = null)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await CreateCoreAsync(
+                    initializeVault,
+                    unlockVault,
+                    idleTimeout,
+                    configureLogging,
+                    timingOptions);
+            }
+            catch (Exception exception) when (
+                attempt < 3 && IsAddressInUse(exception))
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(
+                    20 * (attempt + 1)));
+            }
+        }
+    }
+
+    private static async Task<ServerTestApplication> CreateCoreAsync(
+        bool initializeVault,
+        bool unlockVault,
+        TimeSpan? idleTimeout,
+        Action<ILoggingBuilder>? configureLogging,
+        VaultSessionTimingOptions? timingOptions)
     {
         var parent = Path.Combine(
             Path.GetTempPath(),
@@ -83,9 +116,19 @@ internal sealed class ServerTestApplication : IAsyncDisposable
         HttpClient? client = null;
         try
         {
-            manager = await VaultSessionManager.CreateAsync(
-                paths.VaultDirectory,
-                new VaultSessionOptions(options.IdleTimeout),
+            var sessionOptions = new VaultSessionOptions(options.IdleTimeout);
+            manager = timingOptions is null
+                ? await VaultSessionManager.CreateAsync(
+                    paths.VaultDirectory,
+                    sessionOptions,
+                    timeProvider)
+                : await VaultSessionManager.CreateForTestAsync(
+                    paths.VaultDirectory,
+                    sessionOptions,
+                    timingOptions,
+                    timeProvider);
+            var tokenStore = await McpTokenStore.LoadAsync(
+                paths.McpTokenPath,
                 timeProvider);
             if (initializeVault)
             {
@@ -99,6 +142,7 @@ internal sealed class ServerTestApplication : IAsyncDisposable
             application = await ServerWebApplication.BuildAsync(
                 options,
                 manager,
+                tokenStore,
                 timeProvider,
                 configureLogging);
             var handler = new HttpClientHandler
@@ -114,6 +158,7 @@ internal sealed class ServerTestApplication : IAsyncDisposable
                 parent,
                 timeProvider,
                 options,
+                tokenStore,
                 instanceLock,
                 manager,
                 application,
@@ -141,8 +186,29 @@ internal sealed class ServerTestApplication : IAsyncDisposable
         Client.Dispose();
         await application.StopAsync();
         await application.DisposeAsync();
+        await manager.DisposeAsync();
         await instanceLock.DisposeAsync();
-        await DeleteBestEffortAsync(Parent);
+        await DeleteBestEffortAsync(
+            Parent,
+            allowResidualVaultLock:
+                manager.State == VaultSessionState.LockFailed);
+    }
+
+    private static bool IsAddressInUse(Exception exception)
+    {
+        for (Exception? current = exception;
+             current is not null;
+             current = current.InnerException)
+        {
+            if (current is SocketException
+                {
+                    SocketErrorCode: SocketError.AddressAlreadyInUse
+                })
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static int FindFreePort()
@@ -159,7 +225,9 @@ internal sealed class ServerTestApplication : IAsyncDisposable
         }
     }
 
-    private static async Task DeleteBestEffortAsync(string path)
+    private static async Task DeleteBestEffortAsync(
+        string path,
+        bool allowResidualVaultLock = false)
     {
         for (var attempt = 0; attempt < 10; attempt++)
         {
@@ -174,6 +242,12 @@ internal sealed class ServerTestApplication : IAsyncDisposable
             catch (IOException) when (attempt < 9)
             {
                 await Task.Delay(50);
+            }
+            catch (IOException) when (allowResidualVaultLock)
+            {
+                // LockFailed is a restart boundary; the OS releases native
+                // database handles when the test host exits.
+                return;
             }
             catch (UnauthorizedAccessException) when (attempt < 9)
             {

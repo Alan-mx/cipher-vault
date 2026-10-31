@@ -15,6 +15,12 @@ internal sealed record ParsedDocumentInput(
     IReadOnlyList<NormalizedTag> Tags,
     IReadOnlyList<ParsedWikiLink> WikiLinks);
 
+internal enum DocumentContentLimitMode
+{
+    StandardWrite,
+    ExistingDocumentAuthoring
+}
+
 internal static class DocumentContentParser
 {
     internal const int MaxContentBytes = 256 * 1024;
@@ -26,7 +32,8 @@ internal static class DocumentContentParser
         string? folder,
         VaultDocumentFormat format,
         string content,
-        IReadOnlyList<string>? explicitTags)
+        IReadOnlyList<string>? explicitTags,
+        DocumentContentLimitMode limitMode = DocumentContentLimitMode.StandardWrite)
     {
         if (virtualPath is not null && folder is not null)
         {
@@ -40,7 +47,9 @@ internal static class DocumentContentParser
             ? VirtualPath.Build(normalizedTitle, folder, format)
             : VirtualPath.Normalize(virtualPath, format);
         var contentBytes = Encoding.UTF8.GetByteCount(content);
-        if (contentBytes > MaxContentBytes)
+        if ((limitMode == DocumentContentLimitMode.StandardWrite
+                && contentBytes > MaxContentBytes)
+            || contentBytes > MaxDocumentBytes)
         {
             throw new VaultException(
                 VaultErrorCode.DocumentTooLarge,

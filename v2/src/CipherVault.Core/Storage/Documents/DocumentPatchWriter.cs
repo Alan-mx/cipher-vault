@@ -76,6 +76,7 @@ public static class DocumentPatchWriter
             actor,
             now,
             "patch",
+            DocumentContentLimitMode.StandardWrite,
             cancellationToken);
         return new PatchResult(
             documentId,

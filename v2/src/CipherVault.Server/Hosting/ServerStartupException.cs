@@ -6,7 +6,8 @@ public enum ServerStartupCode
     UnsupportedPlatform,
     InstanceConflict,
     StorageFailure,
-    DataProtectionFailure
+    DataProtectionFailure,
+    McpTokenFailure
 }
 
 public sealed class ServerStartupException : Exception
