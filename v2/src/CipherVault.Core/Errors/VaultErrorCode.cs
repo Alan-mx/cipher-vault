@@ -13,5 +13,18 @@ public enum VaultErrorCode
     VaultAlreadyInitialized,
     VaultLocked,
     VaultBusy,
-    VaultLockFailed
+    VaultLockFailed,
+    DocumentNotFound,
+    DocumentPathConflict,
+    RevisionConflict,
+    FrontMatterInvalid,
+    PatchTargetNotFound,
+    PatchTargetAmbiguous,
+    DocumentTooLarge,
+    TagLimitExceeded,
+    ImportPreviewInvalid,
+    ImportSourceInvalid,
+    InvalidCursor,
+    Forbidden,
+    PurgeNotEligible
 }

@@ -18,7 +18,7 @@ public sealed class DatabaseSchemaTests
         var verified = await SqliteMcVaultStore.VerifyAsync(fixture.Root, fixture.Material);
 
         Assert.Equal(fixture.Material.VaultId, initialized.VaultId);
-        Assert.Equal(1, initialized.SchemaVersion);
+        Assert.Equal(2, initialized.SchemaVersion);
         Assert.Equal(initialized, verified);
     }
 
@@ -36,8 +36,8 @@ public sealed class DatabaseSchemaTests
             create: false);
         using var command = connection.Connection.CreateCommand();
         command.CommandText = "SELECT count(*) FROM schema_migrations;";
-        Assert.Equal(1, Convert.ToInt32(await command.ExecuteScalarAsync()));
-        Assert.Equal(1, second.SchemaVersion);
+        Assert.Equal(2, Convert.ToInt32(await command.ExecuteScalarAsync()));
+        Assert.Equal(2, second.SchemaVersion);
     }
 
     [Fact]
@@ -143,12 +143,8 @@ public sealed class DatabaseSchemaTests
             RandomNumberGenerator.GetBytes(32),
             RandomNumberGenerator.GetBytes(32));
 
-        var initial = DatabaseMigrationCatalog.Load();
-        var second = new DatabaseMigration(
-            2,
-            "add_probe",
-            "CREATE TABLE migration_probe(id INTEGER PRIMARY KEY);",
-            new string('b', 64));
+        var migrations = DatabaseMigrationCatalog.Load();
+        var initial = migrations.Take(1).ToArray();
 
         try
         {
@@ -167,11 +163,26 @@ public sealed class DatabaseSchemaTests
                 session.Connection,
                 material.VaultId,
                 DateTimeOffset.UtcNow,
-                [.. initial, second],
+                migrations,
                 CancellationToken.None);
 
             Assert.Equal(2, upgraded.SchemaVersion);
             using var command = session.Connection.CreateCommand();
+            command.CommandText =
+                """
+                SELECT count(*)
+                FROM sqlite_master
+                WHERE name IN (
+                    'documents',
+                    'document_revisions',
+                    'tags',
+                    'document_tags',
+                    'document_links',
+                    'document_fts',
+                    'audit_events'
+                );
+                """;
+            Assert.Equal(7, Convert.ToInt32(await command.ExecuteScalarAsync()));
             command.CommandText = "SELECT count(*) FROM schema_migrations;";
             Assert.Equal(2, Convert.ToInt32(await command.ExecuteScalarAsync()));
         }
