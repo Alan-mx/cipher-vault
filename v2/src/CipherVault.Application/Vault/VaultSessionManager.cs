@@ -340,6 +340,40 @@ public sealed class VaultSessionManager : IAsyncDisposable
         CancellationToken cancellationToken = default) =>
         LockCoreAsync(VaultLockReason.UserRequested, cancellationToken);
 
+    internal async Task<VaultSessionStatus> ChangePasswordAndLockAsync(
+        string oldPassword,
+        string newPassword,
+        CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+        await operationGate.WaitAsync(cancellationToken);
+        try
+        {
+            lock (transitionSync)
+            {
+                if ((VaultSessionState)state != VaultSessionState.Unlocked)
+                {
+                    throw CreateBusinessStateException((VaultSessionState)state);
+                }
+            }
+
+            var changed = await VaultKeyService.ChangePasswordAsync(
+                paths.KeyPath,
+                oldPassword,
+                newPassword,
+                cancellationToken);
+            changed.KeyMaterial.Dispose();
+        }
+        finally
+        {
+            operationGate.Release();
+        }
+
+        return await LockCoreAsync(
+            VaultLockReason.UserRequested,
+            cancellationToken);
+    }
+
     public async ValueTask TouchActivityAsync(
         CancellationToken cancellationToken = default)
     {
