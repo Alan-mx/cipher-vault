@@ -176,7 +176,9 @@ public sealed record CatalogPage(
 public sealed record CatalogQuery(
     string? Folder,
     VaultDocumentFormat? Format,
-    CursorPageRequest Page);
+    CursorPageRequest Page,
+    IReadOnlyList<string>? Tags = null,
+    bool OrphanOnly = false);
 
 public sealed record RevisionItem(
     Guid RevisionId,
@@ -184,6 +186,18 @@ public sealed record RevisionItem(
     int Revision,
     string Title,
     string VirtualPath,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset RetainUntil);
+
+public sealed record RevisionContent(
+    Guid DocumentId,
+    Guid RevisionId,
+    int Revision,
+    string Title,
+    string VirtualPath,
+    VaultDocumentFormat Format,
+    IReadOnlyList<string> Tags,
+    string Content,
     DateTimeOffset CreatedAt,
     DateTimeOffset RetainUntil);
 

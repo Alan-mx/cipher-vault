@@ -8,6 +8,71 @@ permissions:
   contents: read
 
 jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: v2/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: v2/frontend
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck frontend
+        working-directory: v2/frontend
+        run: npm run typecheck
+
+      - name: Check frontend formatting
+        working-directory: v2/frontend
+        run: npm run format:check
+
+      - name: Lint frontend
+        working-directory: v2/frontend
+        run: npm run lint
+
+      - name: Test frontend
+        working-directory: v2/frontend
+        run: npm test
+
+      - name: Build frontend
+        working-directory: v2/frontend
+        run: npm run build
+
+      - name: Build Server for browser verification
+        run: dotnet build v2/src/CipherVault.Server/CipherVault.Server.csproj -c Release -warnaserror
+
+      - name: Install Chromium
+        working-directory: v2/frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser and accessibility tests
+        working-directory: v2/frontend
+        run: npm run test:e2e
+
+      - name: Upload frontend evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase6-frontend-evidence
+          path: |
+            v2/artifacts/e2e
+            v2/frontend/playwright-report
+          if-no-files-found: ignore
+
   windows:
     runs-on: windows-latest
     timeout-minutes: 20

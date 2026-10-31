@@ -18,7 +18,16 @@ public sealed class SecurityHeadersMiddleware
             headers["Referrer-Policy"] = "no-referrer";
             headers["X-Frame-Options"] = "DENY";
             headers["Content-Security-Policy"] =
-                "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'";
+                "default-src 'self'; " +
+                "script-src 'self'; " +
+                "style-src 'self' 'unsafe-inline'; " +
+                "img-src 'self' data:; " +
+                "font-src 'self'; " +
+                "connect-src 'self'; " +
+                "object-src 'none'; " +
+                "base-uri 'none'; " +
+                "frame-ancestors 'none'; " +
+                "form-action 'self'";
             if (context.Request.Path.StartsWithSegments("/api")
                 || context.Request.Path.StartsWithSegments("/mcp"))
             {

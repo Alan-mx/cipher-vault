@@ -21,6 +21,8 @@ public sealed class VaultStatusTests
         Assert.False(root.GetProperty("isUnlocked").GetBoolean());
         Assert.False(root.TryGetProperty("sessionId", out _));
         Assert.False(root.TryGetProperty("vaultId", out _));
+        Assert.Equal(10, root.GetProperty("idleTimeoutMinutes").GetInt32());
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("idleRemainingSeconds").ValueKind);
     }
 
     [Fact]
@@ -37,5 +39,38 @@ public sealed class VaultStatusTests
         Assert.Equal("locked", root.GetProperty("state").GetString());
         Assert.True(root.GetProperty("isInitialized").GetBoolean());
         Assert.False(root.GetProperty("isUnlocked").GetBoolean());
+        Assert.Equal(10, root.GetProperty("idleTimeoutMinutes").GetInt32());
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("idleRemainingSeconds").ValueKind);
+    }
+
+    [Fact]
+    public async Task UnlockedStatusExposesServerMonotonicIdleRemaining()
+    {
+        await using var server = await ServerTestApplication.CreateAsync(
+            initializeVault: true,
+            unlockVault: true);
+
+        using var immediate = await server.Client.GetAsync("/api/vault/status");
+        using var immediateJson = JsonDocument.Parse(
+            await immediate.Content.ReadAsStringAsync());
+        Assert.Equal(
+            600,
+            immediateJson.RootElement.GetProperty("idleRemainingSeconds").GetInt32());
+
+        server.TimeProvider.Advance(TimeSpan.FromMinutes(5));
+        using var halfway = await server.Client.GetAsync("/api/vault/status");
+        using var halfwayJson = JsonDocument.Parse(
+            await halfway.Content.ReadAsStringAsync());
+        Assert.Equal(
+            300,
+            halfwayJson.RootElement.GetProperty("idleRemainingSeconds").GetInt32());
+
+        _ = await server.Manager.LockAsync();
+        using var locked = await server.Client.GetAsync("/api/vault/status");
+        using var lockedJson = JsonDocument.Parse(
+            await locked.Content.ReadAsStringAsync());
+        Assert.Equal(
+            JsonValueKind.Null,
+            lockedJson.RootElement.GetProperty("idleRemainingSeconds").ValueKind);
     }
 }

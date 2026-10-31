@@ -1,0 +1,99 @@
+:root {
+  color-scheme: light dark;
+  font-family:
+    "Segoe UI Variable", "Segoe UI", "Noto Sans SC", system-ui, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --cv-bg: #f4f5f2;
+  --cv-surface: #ffffff;
+  --cv-text: #202521;
+  --cv-muted: #68716b;
+  --cv-border: #d8ddd8;
+  --cv-accent: #2f6f62;
+  --cv-warning: #a96118;
+  --cv-danger: #ad3e3e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --cv-bg: #171a18;
+    --cv-surface: #202420;
+    --cv-text: #eef1ed;
+    --cv-muted: #a3aca6;
+    --cv-border: #343b36;
+    --cv-accent: #68b6a4;
+    --cv-warning: #e0a556;
+    --cv-danger: #e07171;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  min-width: 320px;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-height: 100vh;
+  background: var(--cv-bg);
+  color: var(--cv-text);
+}
+
+.n-message__content {
+  color: var(--cv-text) !important;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.boot-screen {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+}
+
+.boot-panel {
+  width: min(100%, 420px);
+}
+
+.boot-mark {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 1px solid var(--cv-border);
+  border-radius: 8px;
+  background: var(--cv-surface);
+  color: var(--cv-accent);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.boot-kicker {
+  margin: 24px 0 6px;
+  color: var(--cv-muted);
+  font-size: 13px;
+}
+
+.boot-panel h1 {
+  margin: 0;
+  font-size: clamp(2rem, 8vw, 3.4rem);
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.boot-panel p:last-child {
+  margin-top: 16px;
+  color: var(--cv-muted);
+}

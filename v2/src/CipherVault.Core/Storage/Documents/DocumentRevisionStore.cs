@@ -124,6 +124,54 @@ public static class DocumentRevisionStore
             cancellationToken);
     }
 
+    public static async Task<RevisionContent> GetContentAsync(
+        VaultOperationContext context,
+        Guid documentId,
+        Guid revisionId,
+        CancellationToken cancellationToken)
+    {
+        _ = await DocumentQueryStore.GetMetadataAsync(
+            context,
+            documentId,
+            cancellationToken);
+        using var read = context.CreateCommand();
+        read.Command.CommandText =
+            """
+            SELECT revision_id, revision, title, path, format, tags_json,
+                   content, created_at, retain_until
+            FROM document_revisions
+            WHERE document_id = $documentId AND revision_id = $revisionId;
+            """;
+        read.Command.Parameters.AddWithValue(
+            "$documentId",
+            documentId.ToString("D"));
+        read.Command.Parameters.AddWithValue(
+            "$revisionId",
+            revisionId.ToString("D"));
+        await using var reader = await read.Command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            throw new VaultException(
+                VaultErrorCode.DocumentNotFound,
+                "Document revision was not found.");
+        }
+
+        var tags = JsonSerializer.Deserialize<string[]>(
+            reader.GetString(5)) ?? [];
+        return new RevisionContent(
+            documentId,
+            Guid.Parse(reader.GetString(0)),
+            reader.GetInt32(1),
+            reader.GetString(2),
+            reader.GetString(3),
+            VaultDocumentFormatExtensions.ParseDatabaseValue(
+                reader.GetString(4)),
+            tags,
+            reader.GetString(6),
+            ParseTimestamp(reader.GetString(7)),
+            ParseTimestamp(reader.GetString(8)));
+    }
+
     public static async Task<RevisionCleanupResult> CleanupExpiredAsync(
         VaultOperationContext context,
         VaultActorContext actor,

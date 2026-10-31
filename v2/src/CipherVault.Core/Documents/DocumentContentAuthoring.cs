@@ -61,13 +61,18 @@ public static class DocumentContentAuthoring
     public static IReadOnlyList<string> ResolveEffectiveTags(
         VaultDocumentFormat format,
         string content,
-        IReadOnlyList<string>? fallbackTags) =>
-        DocumentContentParser.ResolveTags(
+        IReadOnlyList<string>? fallbackTags)
+    {
+        var hasAuthoritativeMarkdownTags =
+            format == VaultDocumentFormat.Markdown
+            && FrontMatterTags.TryExtract(content, out _);
+        return DocumentContentParser.ResolveTags(
                 format,
                 content,
-                fallbackTags)
+                hasAuthoritativeMarkdownTags ? null : fallbackTags)
             .Select(tag => tag.Name)
             .ToArray();
+    }
 
     private static string PrependFrontMatter(
         string content,

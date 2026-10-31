@@ -118,4 +118,80 @@ public sealed class ServerOptionsTests
             () => ServerOptions.Load(configuration));
         Assert.Equal(ServerStartupCode.InvalidConfiguration, exception.Code);
     }
+
+    [Fact]
+    public void DevelopmentOriginsRequireDevelopmentAndExactLoopbackPort()
+    {
+        var parent = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-dev-origin-{Guid.NewGuid():N}");
+        var validConfiguration = CreateConfiguration(
+            parent,
+            new Dictionary<string, string?>
+            {
+                ["ASPNETCORE_ENVIRONMENT"] = "Development",
+                ["CIPHERVAULT_DEVELOPMENT_ORIGINS"] =
+                    "http://127.0.0.1:5173,http://localhost:5173"
+            });
+
+        var options = ServerOptions.Load(validConfiguration);
+        Assert.Equal(
+            ["http://127.0.0.1:5173", "http://localhost:5173"],
+            options.DevelopmentOrigins
+                .Select(origin => origin.GetLeftPart(UriPartial.Authority)));
+
+        var production = CreateConfiguration(
+            parent,
+            new Dictionary<string, string?>
+            {
+                ["CIPHERVAULT_DEVELOPMENT_ORIGINS"] =
+                    "http://127.0.0.1:5173"
+            });
+        var exception = Assert.Throws<ServerStartupException>(
+            () => ServerOptions.Load(production));
+        Assert.Equal(ServerStartupCode.InvalidConfiguration, exception.Code);
+    }
+
+    [Theory]
+    [InlineData("http://0.0.0.0:5173")]
+    [InlineData("https://127.0.0.1:5173")]
+    [InlineData("http://example.com:5173")]
+    [InlineData("http://127.0.0.1")]
+    [InlineData("http://127.0.0.1:5173/path")]
+    [InlineData("http://127.0.0.1:5173,http://127.0.0.1:5174/x")]
+    public void InvalidDevelopmentOriginsFailClosed(string origins)
+    {
+        var parent = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-dev-origin-invalid-{Guid.NewGuid():N}");
+        var configuration = CreateConfiguration(
+            parent,
+            new Dictionary<string, string?>
+            {
+                ["ASPNETCORE_ENVIRONMENT"] = "Development",
+                ["CIPHERVAULT_DEVELOPMENT_ORIGINS"] = origins
+            });
+
+        var exception = Assert.Throws<ServerStartupException>(
+            () => ServerOptions.Load(configuration));
+        Assert.Equal(ServerStartupCode.InvalidConfiguration, exception.Code);
+    }
+
+    private static IConfiguration CreateConfiguration(
+        string parent,
+        IReadOnlyDictionary<string, string?> values)
+    {
+        var settings = new Dictionary<string, string?>
+        {
+            ["CIPHERVAULT_DATA_DIR"] = Path.Combine(parent, "data"),
+            ["CIPHERVAULT_CONFIG_DIR"] = Path.Combine(parent, "config")
+        };
+        foreach (var pair in values)
+        {
+            settings[pair.Key] = pair.Value;
+        }
+        return new ConfigurationBuilder()
+            .AddInMemoryCollection(settings)
+            .Build();
+    }
 }

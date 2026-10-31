@@ -104,7 +104,14 @@ public static class DocumentQueryStore
         var pageSize = NormalizePageSize(query.Page?.PageSize, defaultValue: 20, max: 100);
         var folder = NormalizeFolder(query.Folder);
         var format = query.Format?.ToDatabaseValue();
-        var fingerprint = CursorCodec.Fingerprint(folder, format);
+        var requestedTags = NormalizeCatalogTags(query.Tags);
+        var fingerprint = CursorCodec.Fingerprint(
+            folder,
+            format,
+            query.OrphanOnly ? "orphan" : "all",
+            string.Join(
+                '\u001F',
+                requestedTags.Select(tag => tag.NormalizedKey)));
         var hasCursor = CursorCodec.TryDecode(
             query.Page?.Cursor,
             "catalog",
@@ -136,6 +143,38 @@ public static class DocumentQueryStore
             {
                 sql.Append(" AND format = $format");
             }
+            for (var index = 0; index < requestedTags.Count; index++)
+            {
+                sql.Append(
+                    $"""
+
+                     AND EXISTS (
+                         SELECT 1
+                         FROM document_tags AS dt{index}
+                         JOIN tags AS t{index}
+                           ON t{index}.tag_id = dt{index}.tag_id
+                         WHERE dt{index}.document_id = documents.document_id
+                           AND t{index}.normalized_key = $tag{index}
+                     )
+                    """);
+            }
+            if (query.OrphanOnly)
+            {
+                sql.Append(
+                    """
+
+                     AND NOT EXISTS (
+                         SELECT 1
+                         FROM document_links AS l
+                         JOIN documents AS src
+                           ON src.document_id = l.source_document_id
+                         WHERE l.target_document_id = documents.document_id
+                           AND l.resolution_status = 'resolved'
+                           AND src.deleted_at IS NULL
+                           AND src.document_id <> documents.document_id
+                     )
+                    """);
+            }
             if (cursor is not null)
             {
                 sql.Append(
@@ -161,6 +200,12 @@ public static class DocumentQueryStore
             if (format is not null)
             {
                 read.Command.Parameters.AddWithValue("$format", format);
+            }
+            for (var index = 0; index < requestedTags.Count; index++)
+            {
+                read.Command.Parameters.AddWithValue(
+                    $"$tag{index}",
+                    requestedTags[index].NormalizedKey);
             }
             if (cursor is not null)
             {
@@ -202,7 +247,7 @@ public static class DocumentQueryStore
                 row.VirtualPath,
                 row.Format,
                 row.Revision,
-                tags.GetValueOrDefault(row.DocumentId, []),
+                tags[row.DocumentId],
                 row.UpdatedAt))
             .ToArray();
         var nextCursor = hasMore && rows.Count > 0
@@ -656,7 +701,9 @@ public static class DocumentQueryStore
         CancellationToken cancellationToken)
     {
         var ids = documentIds.Distinct().ToArray();
-        var result = new Dictionary<Guid, List<string>>();
+        var result = ids.ToDictionary(
+            id => id,
+            _ => new List<string>());
         if (ids.Length == 0)
         {
             return new Dictionary<Guid, IReadOnlyList<string>>();
@@ -695,7 +742,9 @@ public static class DocumentQueryStore
 
         return result.ToDictionary(
             pair => pair.Key,
-            pair => (IReadOnlyList<string>)pair.Value.ToArray());
+            pair => pair.Value.Count == 0
+                ? (IReadOnlyList<string>)new List<string>()
+                : pair.Value.ToArray());
     }
 
     private static IReadOnlyList<FrontMatterFieldView> ReadFrontMatterFields(
@@ -843,6 +892,38 @@ public static class DocumentQueryStore
                 $"Page size must be between 1 and {max}.");
         }
         return pageSize;
+    }
+
+    private static IReadOnlyList<NormalizedTag> NormalizeCatalogTags(
+        IReadOnlyList<string>? values)
+    {
+        if (values is null || values.Count == 0)
+        {
+            return [];
+        }
+        if (values.Count > TagNormalizer.MaxTags)
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                $"At most {TagNormalizer.MaxTags} catalog tags may be requested.");
+        }
+
+        var result = new List<NormalizedTag>();
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var value in values)
+        {
+            var normalized = TagNormalizer.Normalize(value);
+            if (!keys.Add(normalized.NormalizedKey))
+            {
+                throw new VaultException(
+                    VaultErrorCode.InvalidInput,
+                    "Catalog tags must not contain duplicate normalized values.");
+            }
+            result.Add(normalized);
+        }
+        return result
+            .OrderBy(tag => tag.NormalizedKey, StringComparer.Ordinal)
+            .ToArray();
     }
 
     private static string NormalizeFolder(string? folder)

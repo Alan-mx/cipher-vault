@@ -18,7 +18,8 @@ public sealed record ServerOptions
         TimeSpan idleTimeout,
         long maxRequestBodyBytes,
         bool containerMode = false,
-        IReadOnlyList<string>? allowedHosts = null)
+        IReadOnlyList<string>? allowedHosts = null,
+        IReadOnlyList<Uri>? developmentOrigins = null)
     {
         Paths = paths;
         ListenAddresses = listenAddresses;
@@ -26,6 +27,7 @@ public sealed record ServerOptions
         MaxRequestBodyBytes = maxRequestBodyBytes;
         ContainerMode = containerMode;
         AllowedHosts = allowedHosts ?? ["127.0.0.1", "localhost"];
+        DevelopmentOrigins = developmentOrigins ?? [];
     }
 
     public ApplicationPaths Paths { get; }
@@ -39,6 +41,8 @@ public sealed record ServerOptions
     public bool ContainerMode { get; }
 
     public IReadOnlyList<string> AllowedHosts { get; }
+
+    public IReadOnlyList<Uri> DevelopmentOrigins { get; }
 
     public static ServerOptions Load(IConfiguration configuration)
     {
@@ -56,6 +60,9 @@ public sealed record ServerOptions
             configuration["CIPHERVAULT_CONTAINER_MODE"]);
         var allowedHosts = ParseAllowedHosts(
             configuration["CIPHERVAULT_ALLOWED_HOSTS"]);
+        var developmentOrigins = ParseDevelopmentOrigins(
+            configuration["CIPHERVAULT_DEVELOPMENT_ORIGINS"],
+            configuration["ASPNETCORE_ENVIRONMENT"]);
         var addresses = ParseListenAddresses(
             configuration["ASPNETCORE_URLS"],
             containerMode);
@@ -65,7 +72,8 @@ public sealed record ServerOptions
             idleTimeout,
             DefaultMaxRequestBodyBytes,
             containerMode,
-            allowedHosts);
+            allowedHosts,
+            developmentOrigins);
     }
 
     private static (string Data, string Config) GetDefaultDirectories()
@@ -158,6 +166,78 @@ public sealed record ServerOptions
             result.Add(host);
         }
         return result;
+    }
+
+    private static IReadOnlyList<Uri> ParseDevelopmentOrigins(
+        string? value,
+        string? environment)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return [];
+        }
+        if (!string.Equals(
+                environment,
+                "Development",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw InvalidConfiguration(
+                "CIPHERVAULT_DEVELOPMENT_ORIGINS is allowed only in Development.");
+        }
+
+        var values = value.Split(
+            ',',
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (values.Length is < 1 or > 4)
+        {
+            throw InvalidConfiguration(
+                "CIPHERVAULT_DEVELOPMENT_ORIGINS must contain 1 to 4 origins.");
+        }
+
+        var result = new List<Uri>();
+        foreach (var candidate in values)
+        {
+            if (!Uri.TryCreate(candidate, UriKind.Absolute, out var uri)
+                || !string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+                || !string.IsNullOrEmpty(uri.UserInfo)
+                || uri.AbsolutePath != "/"
+                || !string.IsNullOrEmpty(uri.Query)
+                || !string.IsNullOrEmpty(uri.Fragment)
+                || uri.Port is < 1 or > 65_535
+                || (uri.Host != "127.0.0.1"
+                    && !string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase))
+                || !HasExplicitPort(candidate))
+            {
+                throw InvalidConfiguration(
+                    "Development Origins must be exact HTTP loopback origins with a port.");
+            }
+
+            var canonical = uri.GetLeftPart(UriPartial.Authority);
+            if (result.All(existing =>
+                    !string.Equals(
+                        existing.GetLeftPart(UriPartial.Authority),
+                        canonical,
+                        StringComparison.OrdinalIgnoreCase)))
+            {
+                result.Add(new Uri(canonical, UriKind.Absolute));
+            }
+        }
+        return result;
+    }
+
+    private static bool HasExplicitPort(string value)
+    {
+        var schemeSeparator = value.IndexOf("://", StringComparison.Ordinal);
+        if (schemeSeparator < 0)
+        {
+            return false;
+        }
+        var authorityStart = schemeSeparator + 3;
+        var authorityEnd = value.IndexOfAny(['/', '?', '#'], authorityStart);
+        var authority = authorityEnd < 0
+            ? value[authorityStart..]
+            : value[authorityStart..authorityEnd];
+        return authority.Contains(':', StringComparison.Ordinal);
     }
 
     private static IReadOnlyList<ServerListenAddress> ParseListenAddresses(

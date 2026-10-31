@@ -68,6 +68,15 @@ public sealed class HostOriginValidationMiddleware
             return false;
         }
 
+        if (options.DevelopmentOrigins.Any(configured =>
+                string.Equals(
+                    configured.GetLeftPart(UriPartial.Authority),
+                    uri.GetLeftPart(UriPartial.Authority),
+                    StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
         var portAllowed = options.ContainerMode
             || options.ListenAddresses.Any(address => address.Port == uri.Port);
         return portAllowed

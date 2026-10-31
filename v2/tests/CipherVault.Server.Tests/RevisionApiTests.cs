@@ -44,6 +44,29 @@ public sealed class RevisionApiTests
             .GetProperty("revisionId")
             .GetGuid();
 
+        using var revisionContent = await server.Client.GetAsync(
+            $"{path}/revisions/{versionOneId:D}/content");
+        Assert.Equal(HttpStatusCode.OK, revisionContent.StatusCode);
+        Assert.Equal(
+            "no-store",
+            revisionContent.Headers.CacheControl?.ToString());
+        using var revisionContentJson = JsonDocument.Parse(
+            await revisionContent.Content.ReadAsStringAsync());
+        Assert.Equal(
+            "version one",
+            revisionContentJson.RootElement.GetProperty("content").GetString());
+        Assert.Equal(
+            documentId,
+            revisionContentJson.RootElement.GetProperty("documentId").GetGuid());
+
+        var otherDocumentId = await CreateAsync(
+            server.Client,
+            token,
+            "Other Revision API");
+        using var crossDocument = await server.Client.GetAsync(
+            $"/api/documents/{otherDocumentId:D}/revisions/{versionOneId:D}/content");
+        Assert.Equal(HttpStatusCode.NotFound, crossDocument.StatusCode);
+
         using var restored = await server.Client.SendWithRevisionAsync<object>(
             HttpMethod.Post,
             $"{path}/revisions/{versionOneId:D}/restore",
@@ -63,13 +86,14 @@ public sealed class RevisionApiTests
 
     private static async Task<Guid> CreateAsync(
         HttpClient client,
-        string token)
+        string token,
+        string title = "Revision API")
     {
         using var response = await client.PostJsonWithAntiforgeryAsync(
             "/api/documents",
             token,
             new CreateDocumentRequest(
-                "Revision API",
+                title,
                 null,
                 null,
                 VaultDocumentFormat.Text,

@@ -14,6 +14,17 @@ public sealed class ServerHostSmokeTests
             await home.Content.ReadAsStringAsync(),
             StringComparison.Ordinal);
 
+        using var deepLink = await server.Client.GetAsync("/documents/example");
+        Assert.Equal(System.Net.HttpStatusCode.OK, deepLink.StatusCode);
+        Assert.Contains(
+            "CipherVault",
+            await deepLink.Content.ReadAsStringAsync(),
+            StringComparison.Ordinal);
+
+        using var missingAsset = await server.Client.GetAsync(
+            "/assets/missing.js");
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, missingAsset.StatusCode);
+
         using var missing = await server.Client.GetAsync("/api/missing");
         Assert.Equal(System.Net.HttpStatusCode.NotFound, missing.StatusCode);
         Assert.Equal("application/json", missing.Content.Headers.ContentType?.MediaType);

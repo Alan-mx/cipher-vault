@@ -3,6 +3,7 @@
 **/TestResults/
 artifacts/
 v2/artifacts/
+v2/frontend/
 docs/
 poc/artifacts/
 poc/codex-home/

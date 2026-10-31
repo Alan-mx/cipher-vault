@@ -183,6 +183,38 @@ public sealed class DocumentAuthoringServiceTests
     }
 
     [Fact]
+    public async Task ContentOnlyMarkdownUpdateDerivesFrontMatterTags()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var actor = new VaultActorContext(VaultActorKind.Mcp);
+        var created = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Content Only",
+                null,
+                null,
+                VaultDocumentFormat.Markdown,
+                "---\ntags: [Old]\n---\nbody",
+                null),
+            actor);
+
+        var updated = await fixture.Authoring.UpdatePartialAsync(
+            created.DocumentId,
+            1,
+            new DocumentPartialUpdate(
+                OptionalField<string>.Of("Content Only"),
+                OptionalField<string>.Missing,
+                OptionalField<string>.Of("---\ntags: [New]\n---\nupdated"),
+                OptionalField<IReadOnlyList<string>>.Missing,
+                OptionalField<bool>.Of(false)),
+            actor);
+
+        Assert.Equal(2, updated.Revision);
+        Assert.Equal(
+            ["New"],
+            (await fixture.Documents.GetAsync(created.DocumentId)).Tags);
+    }
+
+    [Fact]
     public async Task PartialUpdateRejectsMismatchedTagsWithoutChangingRevision()
     {
         await using var fixture = await VaultApplicationFixture.CreateAsync();

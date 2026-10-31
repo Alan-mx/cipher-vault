@@ -40,6 +40,13 @@ public sealed class ServerSecurityBoundaryTests
         Assert.Equal("nosniff", safe.Headers.GetValues("X-Content-Type-Options").Single());
         Assert.Equal("DENY", safe.Headers.GetValues("X-Frame-Options").Single());
         Assert.Equal("no-store", safe.Headers.CacheControl?.ToString());
+        var csp = safe.Headers.GetValues("Content-Security-Policy").Single();
+        Assert.Contains("script-src 'self'", csp, StringComparison.Ordinal);
+        Assert.Contains(
+            "style-src 'self' 'unsafe-inline'",
+            csp,
+            StringComparison.Ordinal);
+        Assert.Contains("img-src 'self' data:", csp, StringComparison.Ordinal);
     }
 
     [Fact]

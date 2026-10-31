@@ -174,8 +174,35 @@ public static class VaultEndpoints
                 "/activity",
                 async (
                     VaultLifecycleService lifecycle,
+                    ActivityTouchLimiter limiter,
+                    HttpContext context,
                     CancellationToken cancellationToken) =>
                 {
+                    var claim = context.User.FindFirst(
+                        VaultCookieAuthentication.SessionIdClaim)?.Value;
+                    if (!Guid.TryParse(claim, out var sessionId))
+                    {
+                        throw new ApiRequestException(
+                            StatusCodes.Status401Unauthorized,
+                            ApiErrorCodes.AuthenticationRequired,
+                            "Authentication is required.");
+                    }
+
+                    var touch = limiter.TryAcquire(sessionId);
+                    if (!touch.Allowed)
+                    {
+                        throw new ApiRequestException(
+                            StatusCodes.Status429TooManyRequests,
+                            ApiErrorCodes.ActivityRateLimited,
+                            "Vault activity was refreshed too recently.",
+                            new Dictionary<string, object?>
+                            {
+                                ["retryAfterSeconds"] =
+                                    touch.RetryAfterSeconds
+                            },
+                            touch.RetryAfterSeconds);
+                    }
+
                     await lifecycle.TouchActivityAsync(cancellationToken);
                     return Results.NoContent();
                 })

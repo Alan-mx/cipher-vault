@@ -63,6 +63,7 @@ public static class ServerWebApplication
         builder.Services.AddSingleton<ImportService>();
         builder.Services.AddSingleton<AuditQueryService>();
         builder.Services.AddSingleton<UnlockAttemptLimiter>();
+        builder.Services.AddSingleton<ActivityTouchLimiter>();
         builder.Services.AddCipherVaultDataProtection(options.Paths);
         builder.Services.AddVaultCookieAuthentication();
         builder.Services.AddVaultAntiforgery();
@@ -80,6 +81,7 @@ public static class ServerWebApplication
         app.UseMiddleware<RequestBodyLimitMiddleware>();
         app.UseDefaultFiles();
         app.UseStaticFiles();
+        app.UseSpaFallback(webRoot);
         app.MapVaultEndpoints();
         app.MapDocumentEndpoints();
         app.MapTrashEndpoints();
@@ -91,5 +93,33 @@ public static class ServerWebApplication
         app.MapCipherVaultMcp();
         await app.StartAsync(cancellationToken);
         return app;
+    }
+
+    private static void UseSpaFallback(
+        this WebApplication app,
+        string webRoot)
+    {
+        var indexPath = Path.Combine(webRoot, "index.html");
+        app.Use(async (context, next) =>
+        {
+            await next();
+            if (context.Response.HasStarted
+                || context.Response.StatusCode != StatusCodes.Status404NotFound
+                || context.Request.Path.StartsWithSegments("/api")
+                || context.Request.Path.StartsWithSegments("/mcp")
+                || (!HttpMethods.IsGet(context.Request.Method)
+                    && !HttpMethods.IsHead(context.Request.Method))
+                || Path.HasExtension(context.Request.Path.Value)
+                || !File.Exists(indexPath))
+            {
+                return;
+            }
+
+            context.Response.StatusCode = StatusCodes.Status200OK;
+            context.Response.ContentType = "text/html; charset=utf-8";
+            await context.Response.SendFileAsync(
+                indexPath,
+                context.RequestAborted);
+        });
     }
 }

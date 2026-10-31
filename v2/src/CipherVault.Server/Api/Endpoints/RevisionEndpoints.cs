@@ -25,6 +25,20 @@ public static class RevisionEndpoints
             .RequireAuthorization()
             .WithName("ListDocumentRevisions");
 
+        group.MapGet(
+                "/{revisionId}/content",
+                async (
+                    string id,
+                    string revisionId,
+                    DocumentRevisionService revisions,
+                    CancellationToken cancellationToken) =>
+                    Results.Ok(await revisions.GetContentAsync(
+                        ApiQueryBinding.ParseGuid(id, "id"),
+                        ApiQueryBinding.ParseGuid(revisionId, "revisionId"),
+                        cancellationToken)))
+            .RequireAuthorization()
+            .WithName("GetDocumentRevisionContent");
+
         group.MapPost(
                 "/{revisionId}/restore",
                 async (

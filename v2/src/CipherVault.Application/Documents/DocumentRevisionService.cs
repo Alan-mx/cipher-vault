@@ -58,6 +58,19 @@ public sealed class DocumentRevisionService
             cancellationToken).AsTask();
     }
 
+    public Task<RevisionContent> GetContentAsync(
+        Guid documentId,
+        Guid revisionId,
+        CancellationToken cancellationToken = default) =>
+        sessionManager.ExecuteAsync(
+            (context, token) => new ValueTask<RevisionContent>(
+                DocumentRevisionStore.GetContentAsync(
+                    context,
+                    documentId,
+                    revisionId,
+                    token)),
+            cancellationToken).AsTask();
+
     public Task<RevisionCleanupResult> CleanupExpiredAsync(
         VaultActorContext actor,
         CancellationToken cancellationToken = default)

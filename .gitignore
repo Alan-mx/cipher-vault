@@ -1,5 +1,10 @@
 **/bin/
 **/obj/
+v2/frontend/node_modules/
+v2/frontend/coverage/
+v2/frontend/playwright-report/
+v2/frontend/test-results/
+v2/src/CipherVault.Server/wwwroot/
 artifacts/
 poc/artifacts/
 poc/codex-home/

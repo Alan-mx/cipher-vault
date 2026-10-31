@@ -16,6 +16,8 @@ public static class DocumentEndpoints
                 async (
                     string? folder,
                     string? format,
+                    string[]? tags,
+                    bool? orphanOnly,
                     int? pageSize,
                     string? cursor,
                     DocumentService documents,
@@ -24,7 +26,9 @@ public static class DocumentEndpoints
                     var query = new CatalogQuery(
                         folder,
                         ApiQueryBinding.ParseFormat(format),
-                        new CursorPageRequest(pageSize, cursor));
+                        new CursorPageRequest(pageSize, cursor),
+                        tags,
+                        orphanOnly ?? false);
                     return Results.Ok(await documents.ListAsync(
                         query,
                         cancellationToken));
@@ -117,16 +121,20 @@ public static class DocumentEndpoints
                 "/{id}",
                 async (
                     string id,
-                    UpdateDocumentApiRequest request,
-                    DocumentService documents,
+                    HttpRequest request,
+                    DocumentAuthoringService authoring,
                     HttpContext context,
                     CancellationToken cancellationToken) =>
                 {
                     var documentId = ApiQueryBinding.ParseGuid(id, "id");
-                    var result = await documents.UpdateAsync(
+                    var body = await ApiRequestBinding.ReadRequiredJsonElementAsync(
+                        request,
+                        cancellationToken);
+                    var update = UpdateDocumentApiRequest.Parse(body);
+                    var result = await authoring.UpdatePartialAsync(
                         documentId,
                         context.GetExpectedRevision(),
-                        request.ToApplicationRequest(),
+                        update.ToApplicationUpdate(),
                         context.CreateUserActor(),
                         cancellationToken);
                     context.Response.SetRevisionETag(result.Revision);

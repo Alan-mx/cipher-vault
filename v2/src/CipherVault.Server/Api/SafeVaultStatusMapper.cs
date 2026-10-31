@@ -13,6 +13,8 @@ public static class SafeVaultStatusMapper
             status.StartedAtUtc,
             status.LastActivityAtUtc,
             status.IdleExpiresAtUtc,
+            status.IdleTimeoutMinutes,
+            status.IdleRemainingSeconds,
             Wire(status.LockReason));
 
     private static bool IsInitialized(VaultSessionState state) =>

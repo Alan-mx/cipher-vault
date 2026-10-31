@@ -1048,16 +1048,22 @@ public sealed class VaultSessionManager : IAsyncDisposable
                 null,
                 null,
                 null,
+                (int)options.IdleTimeout.TotalMinutes,
+                null,
                 lockReason);
         }
 
         var activity = session.Activity.Snapshot();
+        var remaining = options.IdleTimeout
+            - timeProvider.GetElapsedTime(activity.MonotonicTimestamp);
         return new VaultSessionStatus(
             currentState,
             session.SessionId,
             session.StartedAtUtc,
             activity.LastActivityAtUtc,
             activity.LastActivityAtUtc + options.IdleTimeout,
+            (int)options.IdleTimeout.TotalMinutes,
+            Math.Max(0, (int)Math.Ceiling(remaining.TotalSeconds)),
             lockReason);
     }
 

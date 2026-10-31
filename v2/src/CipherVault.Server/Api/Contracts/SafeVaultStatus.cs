@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace CipherVault.Server.Api.Contracts;
 
 public sealed record SafeVaultStatus(
@@ -7,6 +9,9 @@ public sealed record SafeVaultStatus(
     DateTimeOffset? StartedAtUtc,
     DateTimeOffset? LastActivityAtUtc,
     DateTimeOffset? IdleExpiresAtUtc,
+    int IdleTimeoutMinutes,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+    int? IdleRemainingSeconds,
     string LockReason);
 
 public sealed record AntiforgeryTokenResponse(string Token);
