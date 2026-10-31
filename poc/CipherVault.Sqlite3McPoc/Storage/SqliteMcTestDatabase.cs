@@ -495,8 +495,14 @@ public static class SqliteMcTestDatabase
         }
 
         var rid = System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier;
-        var candidates = Directory.EnumerateFiles(AppContext.BaseDirectory, "sqlite3mc.*", SearchOption.AllDirectories)
-            .Where(path => !Path.GetFileName(path).Contains("pclraw", StringComparison.OrdinalIgnoreCase))
+        var candidates = Directory.EnumerateFiles(AppContext.BaseDirectory, "*", SearchOption.AllDirectories)
+            .Where(path =>
+            {
+                var name = Path.GetFileName(path);
+                return (name.StartsWith("sqlite3mc.", StringComparison.OrdinalIgnoreCase)
+                        || name.StartsWith("libsqlite3mc.", StringComparison.OrdinalIgnoreCase))
+                    && !name.Contains("pclraw", StringComparison.OrdinalIgnoreCase);
+            })
             .OrderBy(path => path, StringComparer.Ordinal)
             .ToArray();
         return candidates.FirstOrDefault(path =>
