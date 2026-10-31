@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="src/CipherVault.Core/CipherVault.Core.csproj" />
+  <Project Path="tests/CipherVault.Core.Tests/CipherVault.Core.Tests.csproj" />
+  <Project Path="tests/CipherVault.Phase1.ProcessProbe/CipherVault.Phase1.ProcessProbe.csproj" />
+  <Project Path="tests/CipherVault.PlainSqliteProbe/CipherVault.PlainSqliteProbe.csproj" />
+</Solution>
