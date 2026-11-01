@@ -16,3 +16,4 @@ export { trashApi } from "./trash";
 export { importApi } from "./imports";
 export { auditApi } from "./audit";
 export { settingsApi } from "./settings";
+export { backupApi } from "./backups";

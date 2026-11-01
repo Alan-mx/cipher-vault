@@ -6,16 +6,19 @@ namespace CipherVault.Server.Hosting;
 public sealed record ApplicationPaths(
     string VaultDirectory,
     string ConfigDirectory,
+    string BackupDirectory,
     string DataProtectionDirectory,
     string ServerLockPath,
-    string McpTokenPath)
+    string McpTokenPath,
+    string BackupLockPath)
 {
     public static ApplicationPaths Create(
         string vaultDirectory,
-        string configDirectory)
+        string configDirectory,
+        string? backupDirectory = null)
     {
-        var vault = Canonicalize(vaultDirectory);
-        var config = Canonicalize(configDirectory);
+        var vault = Canonicalize(vaultDirectory, "Vault directory");
+        var config = Canonicalize(configDirectory, "Config directory");
         if (string.Equals(vault, config, PathComparison))
         {
             throw InvalidPaths("Vault and config directories must be different.");
@@ -32,12 +35,40 @@ public sealed record ApplicationPaths(
             throw InvalidPaths("Config directory cannot be inside the Vault directory.");
         }
 
+        var backup = string.IsNullOrWhiteSpace(backupDirectory)
+            ? Path.Combine(
+                Path.GetDirectoryName(vault)
+                    ?? throw InvalidPaths("Vault directory has no parent directory."),
+                "backups")
+            : Canonicalize(
+                backupDirectory,
+                "Backup directory",
+                requireAbsolute: true);
+        if (PathSafety.GetRelation(backup, vault) is
+        { IsEqual: true } or { IsChildOf: true } or { IsAncestorOf: true })
+        {
+            throw InvalidPaths(
+                "Backup directory cannot overlap the Vault directory.");
+        }
+        if (PathSafety.GetRelation(backup, config) is
+        { IsEqual: true } or { IsChildOf: true } or { IsAncestorOf: true })
+        {
+            throw InvalidPaths(
+                "Backup directory cannot overlap the config directory.");
+        }
+
+        EnsurePathHasNoLinks(vault, "Vault directory");
+        EnsurePathHasNoLinks(config, "Config directory");
+        EnsurePathHasNoLinks(backup, "Backup directory");
+
         return new ApplicationPaths(
             vault,
             config,
+            backup,
             Path.Combine(config, "data-protection"),
             Path.Combine(config, "server.lock"),
-            Path.Combine(config, "mcp-token.json"));
+            Path.Combine(config, "mcp-token.json"),
+            Path.Combine(backup, ".cipher-vault-backup.lock"));
     }
 
     public void EnsureCreated()
@@ -46,9 +77,14 @@ public sealed record ApplicationPaths(
         {
             Directory.CreateDirectory(VaultDirectory);
             Directory.CreateDirectory(ConfigDirectory);
+            Directory.CreateDirectory(BackupDirectory);
             Directory.CreateDirectory(DataProtectionDirectory);
+            EnsurePathHasNoLinks(VaultDirectory, "Vault directory");
+            EnsurePathHasNoLinks(ConfigDirectory, "Config directory");
+            EnsurePathHasNoLinks(BackupDirectory, "Backup directory");
             VaultFilePermissions.ProtectDirectory(VaultDirectory);
             VaultFilePermissions.ProtectDirectory(ConfigDirectory);
+            VaultFilePermissions.ProtectDirectory(BackupDirectory);
             VaultFilePermissions.ProtectDirectory(DataProtectionDirectory);
         }
         catch (ServerStartupException)
@@ -74,23 +110,35 @@ public sealed record ApplicationPaths(
         }
     }
 
-    private static string Canonicalize(string path)
+    private static string Canonicalize(
+        string path,
+        string fieldName,
+        bool requireAbsolute = false)
     {
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            throw InvalidPaths("CipherVault directory is required.");
-        }
-
         try
         {
-            return Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+            return PathSafety.Canonicalize(
+                path,
+                fieldName,
+                requireAbsolute);
         }
-        catch (Exception exception) when (
-            exception is ArgumentException
-                or NotSupportedException
-                or PathTooLongException)
+        catch (VaultException exception)
         {
-            throw InvalidPaths("CipherVault directory is invalid.");
+            throw InvalidPaths(exception.Message);
+        }
+    }
+
+    private static void EnsurePathHasNoLinks(
+        string path,
+        string fieldName)
+    {
+        try
+        {
+            PathSafety.EnsureNoLinkComponents(path);
+        }
+        catch (VaultException exception)
+        {
+            throw InvalidPaths($"{fieldName} contains an unsafe path component: {exception.Message}");
         }
     }
 

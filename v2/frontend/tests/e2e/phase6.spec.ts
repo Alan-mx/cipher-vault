@@ -148,6 +148,13 @@ test("Phase 6 desktop flow, responsive layout and accessibility", async ({
   await expect(
     page.getByText("CIPHERVAULT_IDLE_TIMEOUT_MINUTES"),
   ).toBeVisible();
+  await page.getByRole("button", { name: "创建备份" }).click();
+  await expect(page.locator(".backup-row")).toHaveCount(1);
+  await expect(page.locator(".backup-row")).toContainText("已验证");
+  await expect(page.locator(".backup-download")).toHaveAttribute(
+    "href",
+    /^\/api\/backups\/cipher-vault-[0-9]{8}-[0-9]{6}-[0-9a-f]{8}\.cvbackup\/download$/,
+  );
   await page.getByRole("button", { name: /生成 Token|轮换 Token/ }).click();
   await page.getByRole("button", { name: "确认" }).click();
   await expect(page.getByText("MCP Token 已轮换")).toBeVisible();

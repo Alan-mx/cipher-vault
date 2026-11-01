@@ -1,5 +1,6 @@
 using CipherVault.Application.Vault;
 using CipherVault.Application.Audit;
+using CipherVault.Application.Backup;
 using CipherVault.Application.Documents;
 using CipherVault.Application.Graph;
 using CipherVault.Application.Import;
@@ -50,6 +51,9 @@ public static class ServerWebApplication
             ApiJson.Configure);
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(options.Paths);
+        builder.Services.AddSingleton(new BackupStorageOptions(
+            options.Paths.BackupDirectory,
+            options.Paths.BackupLockPath));
         builder.Services.AddSingleton(timeProvider);
         builder.Services.AddSingleton(sessionManager);
         builder.Services.AddSingleton(tokenStore);
@@ -64,6 +68,7 @@ public static class ServerWebApplication
         builder.Services.AddSingleton<AuditQueryService>();
         builder.Services.AddSingleton<UnlockAttemptLimiter>();
         builder.Services.AddSingleton<ActivityTouchLimiter>();
+        builder.Services.AddSingleton<BackupService>();
         builder.Services.AddCipherVaultDataProtection(options.Paths);
         builder.Services.AddVaultCookieAuthentication();
         builder.Services.AddVaultAntiforgery();
@@ -89,6 +94,7 @@ public static class ServerWebApplication
         app.MapKnowledgeEndpoints();
         app.MapImportEndpoints();
         app.MapAuditEndpoints();
+        app.MapBackupEndpoints();
         app.MapMcpTokenEndpoints();
         app.MapCipherVaultMcp();
         await app.StartAsync(cancellationToken);

@@ -10,6 +10,7 @@ import {
   useMessage,
 } from "naive-ui";
 import McpTokenPanel from "../components/settings/McpTokenPanel.vue";
+import BackupPanel from "../components/settings/BackupPanel.vue";
 import { useSessionStore } from "../stores/session";
 import { useSettingsStore } from "../stores/settings";
 import { describeApiError } from "../utils/api-error";
@@ -126,17 +127,7 @@ const changePassword = async (): Promise<void> => {
 
     <McpTokenPanel />
 
-    <section class="settings-section">
-      <header>
-        <div>
-          <h2>加密备份</h2>
-          <p>备份创建、下载和离线恢复将在 Phase 7 实现。</p>
-        </div>
-      </header>
-      <NAlert type="info" :show-icon="false">
-        当前阶段不提供备份按钮，也不会调用不存在的备份 API。
-      </NAlert>
-    </section>
+    <BackupPanel />
   </section>
 </template>
 

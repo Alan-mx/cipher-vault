@@ -144,3 +144,89 @@ jobs:
           name: test-results
           path: TestResults/*.trx
           if-no-files-found: ignore
+
+  phase7-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore v2/CipherVault.V2.slnx --locked-mode -p:NuGetAudit=false
+
+      - name: Build
+        run: dotnet build v2/CipherVault.V2.slnx -c Release --no-restore -warnaserror
+
+      - name: Test
+        run: |
+          dotnet test v2/tests/CipherVault.Core.Tests/CipherVault.Core.Tests.csproj -c Release --no-build --no-restore
+          dotnet test v2/tests/CipherVault.Application.Tests/CipherVault.Application.Tests.csproj -c Release --no-build --no-restore
+          dotnet test v2/tests/CipherVault.Server.Tests/CipherVault.Server.Tests.csproj -c Release --no-build --no-restore
+
+      - name: Cross-platform backup probe
+        shell: bash
+        run: |
+          root="$RUNNER_TEMP/phase7-linux"
+          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release -- \
+            create "$root/source" "$root/backups" "$root/backup.cvbackup" "phase7 ci password"
+          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release -- \
+            restore "$root/backup.cvbackup" "$root/restored" "phase7 ci password"
+          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release -- \
+            verify "$root/restored" "phase7 ci password"
+
+  phase7-windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore v2/CipherVault.V2.slnx --locked-mode -p:NuGetAudit=false
+
+      - name: Build
+        run: dotnet build v2/CipherVault.V2.slnx -c Release --no-restore -warnaserror
+
+      - name: Test
+        run: |
+          dotnet test v2/tests/CipherVault.Core.Tests/CipherVault.Core.Tests.csproj -c Release --no-build --no-restore
+          dotnet test v2/tests/CipherVault.Application.Tests/CipherVault.Application.Tests.csproj -c Release --no-build --no-restore
+          dotnet test v2/tests/CipherVault.Server.Tests/CipherVault.Server.Tests.csproj -c Release --no-build --no-restore
+
+      - name: Cross-platform backup probe
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "phase7-windows"
+          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release -- create "$root/source" "$root/backups" "$root/backup.cvbackup" "phase7 ci password"
+          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release -- restore "$root/backup.cvbackup" "$root/restored" "phase7 ci password"
+          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release -- verify "$root/restored" "phase7 ci password"
+
+  phase7-docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Verify Docker backup restore
+        shell: bash
+        run: bash v2/scripts/verify-phase7-docker.sh "$GITHUB_WORKSPACE"

@@ -50,9 +50,11 @@ public sealed record ServerOptions
         var (defaultData, defaultConfig) = GetDefaultDirectories();
         var vaultDirectory = configuration["CIPHERVAULT_DATA_DIR"];
         var configDirectory = configuration["CIPHERVAULT_CONFIG_DIR"];
+        var backupDirectory = configuration["CIPHERVAULT_BACKUP_DIR"];
         var paths = ApplicationPaths.Create(
             string.IsNullOrWhiteSpace(vaultDirectory) ? defaultData : vaultDirectory,
-            string.IsNullOrWhiteSpace(configDirectory) ? defaultConfig : configDirectory);
+            string.IsNullOrWhiteSpace(configDirectory) ? defaultConfig : configDirectory,
+            string.IsNullOrWhiteSpace(backupDirectory) ? null : backupDirectory);
 
         var idleTimeout = ParseIdleTimeout(
             configuration["CIPHERVAULT_IDLE_TIMEOUT_MINUTES"]);

@@ -26,5 +26,8 @@ public enum VaultErrorCode
     ImportSourceInvalid,
     InvalidCursor,
     Forbidden,
-    PurgeNotEligible
+    PurgeNotEligible,
+    BackupInProgress,
+    BackupTooLarge,
+    BackupNotFound
 }

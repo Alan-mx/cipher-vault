@@ -5,6 +5,7 @@
   <Project Path="tests/CipherVault.Application.Tests/CipherVault.Application.Tests.csproj" />
   <Project Path="tests/CipherVault.Core.Tests/CipherVault.Core.Tests.csproj" />
   <Project Path="tests/CipherVault.Phase1.ProcessProbe/CipherVault.Phase1.ProcessProbe.csproj" />
+  <Project Path="tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj" />
   <Project Path="tests/CipherVault.PlainSqliteProbe/CipherVault.PlainSqliteProbe.csproj" />
   <Project Path="tests/CipherVault.Server.Tests/CipherVault.Server.Tests.csproj" />
 </Solution>

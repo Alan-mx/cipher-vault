@@ -14,7 +14,8 @@ public sealed record SqliteRuntimeInfo(
 internal sealed record DatabaseOpenRequest(
     string VaultDirectory,
     ReadOnlyMemory<byte> DatabaseKey,
-    bool CreateIfMissing);
+    bool CreateIfMissing,
+    bool ReadOnly = false);
 
 public static class SqliteMcDatabaseFactory
 {
@@ -198,14 +199,23 @@ public static class SqliteMcDatabaseFactory
                 "DatabaseKey must be exactly 32 bytes.");
         }
 
+        if (request.ReadOnly && request.CreateIfMissing)
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "Read-only database requests cannot create a database.");
+        }
+
         var databasePath = Path.Combine(request.VaultDirectory, "vault.db");
         var connection = new SqliteConnection(
             new SqliteConnectionStringBuilder
             {
                 DataSource = databasePath,
-                Mode = request.CreateIfMissing
-                    ? SqliteOpenMode.ReadWriteCreate
-                    : SqliteOpenMode.ReadWrite,
+                Mode = request.ReadOnly
+                    ? SqliteOpenMode.ReadOnly
+                    : request.CreateIfMissing
+                        ? SqliteOpenMode.ReadWriteCreate
+                        : SqliteOpenMode.ReadWrite,
                 Cache = SqliteCacheMode.Private,
                 Pooling = false
             }.ToString());
@@ -229,8 +239,15 @@ public static class SqliteMcDatabaseFactory
                 connection,
                 "SELECT sqlite3mc_version();",
                 cancellationToken);
-            ConfigureConnection(connection);
-            VaultFilePermissions.ProtectFile(databasePath);
+            if (request.ReadOnly)
+            {
+                ConfigureReadOnlyConnection(connection);
+            }
+            else
+            {
+                ConfigureConnection(connection);
+                VaultFilePermissions.ProtectFile(databasePath);
+            }
             success = true;
             return connection;
         }
@@ -265,6 +282,31 @@ public static class SqliteMcDatabaseFactory
             PRAGMA temp_store = MEMORY;
             PRAGMA secure_delete = ON;
             PRAGMA busy_timeout = 5000;
+            """);
+    }
+
+    internal static async Task<SqliteConnection> OpenReadOnlyConnectionAsync(
+        string vaultDirectory,
+        ReadOnlyMemory<byte> databaseKey,
+        CancellationToken cancellationToken = default) =>
+        await OpenConnectionAsync(
+            new DatabaseOpenRequest(
+                vaultDirectory,
+                databaseKey,
+                CreateIfMissing: false,
+                ReadOnly: true),
+            cancellationToken);
+
+    private static void ConfigureReadOnlyConnection(
+        SqliteConnection connection)
+    {
+        ExecuteNonQuery(
+            connection,
+            """
+            PRAGMA foreign_keys = ON;
+            PRAGMA temp_store = MEMORY;
+            PRAGMA busy_timeout = 5000;
+            PRAGMA query_only = ON;
             """);
     }
 

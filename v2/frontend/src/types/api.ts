@@ -360,3 +360,29 @@ export interface AuditQuery {
   pageSize?: number;
   cursor?: string;
 }
+
+export type BackupFileStatus = "manifest_readable" | "invalid" | "verified";
+
+export interface BackupListItem {
+  fileName: string;
+  bytes: number;
+  modifiedAtUtc: UtcTimestamp;
+  createdAtUtc?: UtcTimestamp | null;
+  formatVersion?: number | null;
+  status: BackupFileStatus;
+  errorCode?: string | null;
+}
+
+export interface BackupListResponse {
+  items: BackupListItem[];
+  nextCursor?: string | null;
+}
+
+export interface BackupCreateResponse {
+  backup: BackupListItem;
+}
+
+export interface BackupQuery {
+  pageSize?: number;
+  cursor?: string;
+}

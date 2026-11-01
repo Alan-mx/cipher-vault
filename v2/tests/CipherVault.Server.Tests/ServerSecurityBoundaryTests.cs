@@ -122,7 +122,7 @@ public sealed class ServerSecurityBoundaryTests
     }
 
     [Fact]
-    public async Task BackupRouteIsNotMapped()
+    public async Task BackupRouteRequiresAuthentication()
     {
         await using var server = await ServerTestApplication.CreateAsync(
             initializeVault: true,
@@ -130,8 +130,9 @@ public sealed class ServerSecurityBoundaryTests
         using var unlock = await server.Client.UnlockAsync();
         Assert.Equal(HttpStatusCode.OK, unlock.StatusCode);
 
-        using var backup = await server.Client.GetAsync("/api/backups");
-        Assert.Equal(HttpStatusCode.NotFound, backup.StatusCode);
+        using var anonymous = await server.CreateClient()
+            .GetAsync("/api/backups");
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
     }
 
     [Fact]

@@ -16,6 +16,7 @@ public static class ApiErrorMapper
         "importItemIndex",
         "limit",
         "maximum",
+        "actualBytes",
         "purgeEligibleAt",
         "retryAfterSeconds"
     ];
@@ -114,6 +115,14 @@ public static class ApiErrorMapper
                 StatusCodes.Status409Conflict,
                 ApiErrorCodes.DocumentPathConflict,
                 "Document path is already in use."),
+            VaultErrorCode.BackupInProgress => Failure(
+                StatusCodes.Status409Conflict,
+                ApiErrorCodes.BackupInProgress,
+                "A backup operation is already in progress."),
+            VaultErrorCode.BackupNotFound => Failure(
+                StatusCodes.Status404NotFound,
+                ApiErrorCodes.BackupNotFound,
+                "Backup file was not found."),
             VaultErrorCode.RevisionConflict => Failure(
                 StatusCodes.Status409Conflict,
                 ApiErrorCodes.RevisionConflict,
@@ -138,6 +147,10 @@ public static class ApiErrorMapper
                 StatusCodes.Status413PayloadTooLarge,
                 ApiErrorCodes.DocumentTooLarge,
                 "Document is too large."),
+            VaultErrorCode.BackupTooLarge => Failure(
+                StatusCodes.Status413PayloadTooLarge,
+                ApiErrorCodes.BackupTooLarge,
+                "Backup package is too large."),
             VaultErrorCode.VaultLocked => Failure(
                 StatusCodes.Status423Locked,
                 ApiErrorCodes.VaultLocked,

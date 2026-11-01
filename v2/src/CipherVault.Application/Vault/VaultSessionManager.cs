@@ -1,3 +1,5 @@
+using CipherVault.Application.Backup;
+using CipherVault.Core.Backup;
 using CipherVault.Core.Crypto;
 using CipherVault.Core.Database;
 using CipherVault.Core.Errors;
@@ -94,6 +96,82 @@ public sealed class VaultSessionManager : IAsyncDisposable
     public async Task<VaultSessionStatus> GetStatusAsync(
         CancellationToken cancellationToken = default) =>
         await CheckIdleAndLockAsync(cancellationToken);
+
+    internal async Task<VaultSessionStatus> EnsureUnlockedWithoutActivityAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var status = await GetStatusAsync(cancellationToken);
+        if ((VaultSessionState)state != VaultSessionState.Unlocked)
+        {
+            throw CreateBusinessStateException((VaultSessionState)state);
+        }
+
+        return status;
+    }
+
+    internal async ValueTask<BackupSnapshotCapture>
+        CaptureBackupSnapshotAsync(
+            string workingDirectory,
+            DateTimeOffset capturedAtUtc,
+            CancellationToken cancellationToken = default) =>
+        await ExecuteAsync(
+            async (context, token) =>
+            {
+                var current = session
+                    ?? throw new VaultException(
+                        VaultErrorCode.VaultLocked,
+                        "Vault locked before the backup snapshot could start.");
+                var directory = PathSafety.Canonicalize(
+                    workingDirectory,
+                    "Backup working directory");
+                Directory.CreateDirectory(directory);
+                VaultFilePermissions.ProtectDirectory(directory);
+                PathSafety.EnsureNoLinkComponents(directory);
+                var databasePath = Path.Combine(
+                    directory,
+                    BackupConstants.DatabaseEntryName);
+                var keyPath = Path.Combine(
+                    directory,
+                    BackupConstants.KeyEnvelopeEntryName);
+                if (File.Exists(databasePath) || File.Exists(keyPath))
+                {
+                    throw new VaultException(
+                        VaultErrorCode.StorageError,
+                        "Backup working directory must be empty.");
+                }
+
+                var databaseKey = current.KeyMaterial.DatabaseKey;
+                await BackupDatabaseStore.CreateEncryptedSnapshotAsync(
+                    context,
+                    directory,
+                    databaseKey,
+                    token);
+                await CopyProtectedFileAsync(
+                    paths.KeyPath,
+                    keyPath,
+                    token);
+                var envelope = await VaultKeyEnvelopeSerializer.LoadAsync(
+                    keyPath,
+                    token);
+                if (envelope.VaultId != context.VaultId)
+                {
+                    throw new VaultException(
+                        VaultErrorCode.CorruptVault,
+                        "Vault key does not belong to the backup snapshot.");
+                }
+                var databaseInfo = new FileInfo(databasePath);
+                var keyInfo = new FileInfo(keyPath);
+                return new BackupSnapshotCapture(
+                    context.VaultId,
+                    capturedAtUtc.ToUniversalTime(),
+                    directory,
+                    databasePath,
+                    keyPath,
+                    databaseInfo.Length,
+                    keyInfo.Length,
+                    new SensitiveDatabaseKeyLease(databaseKey.Span));
+            },
+            cancellationToken).AsTask();
 
     public async Task<VaultSessionStatus> InitializeAsync(
         string password,
@@ -1065,6 +1143,48 @@ public sealed class VaultSessionManager : IAsyncDisposable
             (int)options.IdleTimeout.TotalMinutes,
             Math.Max(0, (int)Math.Ceiling(remaining.TotalSeconds)),
             lockReason);
+    }
+
+    private static async Task CopyProtectedFileAsync(
+        string sourcePath,
+        string destinationPath,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var source = new FileStream(
+                sourcePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 16 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            await using var destination = new FileStream(
+                destinationPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                bufferSize: 16 * 1024,
+                FileOptions.Asynchronous | FileOptions.WriteThrough);
+            VaultFilePermissions.ProtectFile(destinationPath);
+            await source.CopyToAsync(destination, cancellationToken);
+            await destination.FlushAsync(cancellationToken);
+            destination.Flush(flushToDisk: true);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is IOException
+                or UnauthorizedAccessException
+                or System.Security.SecurityException)
+        {
+            throw new VaultException(
+                VaultErrorCode.StorageError,
+                "Unable to copy the Vault key envelope for backup.",
+                exception);
+        }
     }
 
     private static VaultException CreateBusinessStateException(

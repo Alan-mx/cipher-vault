@@ -1,3 +1,4 @@
+using CipherVault.Core.Backup;
 using CipherVault.Server.Hosting;
 using Microsoft.Extensions.Configuration;
 
@@ -18,6 +19,94 @@ public sealed class ServerOptionsTests
                     parent,
                     Path.Combine(parent, "config")));
             Assert.Equal(ServerStartupCode.InvalidConfiguration, exception.Code);
+        }
+        finally
+        {
+            if (Directory.Exists(parent))
+            {
+                Directory.Delete(parent, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void BackupDirectoryDefaultsToVaultSibling()
+    {
+        var parent = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-backup-default-{Guid.NewGuid():N}");
+        var configuration = CreateConfiguration(
+            parent,
+            new Dictionary<string, string?>());
+
+        var options = ServerOptions.Load(configuration);
+
+        Assert.Equal(
+            Path.Combine(parent, "backups"),
+            options.Paths.BackupDirectory);
+        Assert.Equal(
+            Path.Combine(parent, "backups", BackupConstants.BackupLockFileName),
+            options.Paths.BackupLockPath);
+    }
+
+    [Fact]
+    public void CustomBackupDirectoryMustBeAbsoluteAndDisjoint()
+    {
+        var parent = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-backup-custom-{Guid.NewGuid():N}");
+        var absolute = Path.Combine(parent, "backups");
+        var options = ServerOptions.Load(
+            CreateConfiguration(
+                parent,
+                new Dictionary<string, string?>
+                {
+                    ["CIPHERVAULT_BACKUP_DIR"] = absolute
+                }));
+        Assert.Equal(absolute, options.Paths.BackupDirectory);
+
+        var relative = Assert.Throws<ServerStartupException>(
+            () => ServerOptions.Load(
+                CreateConfiguration(
+                    parent,
+                    new Dictionary<string, string?>
+                    {
+                        ["CIPHERVAULT_BACKUP_DIR"] = "relative/backups"
+                    })));
+        Assert.Equal(
+            ServerStartupCode.InvalidConfiguration,
+            relative.Code);
+
+        var insideVault = Assert.Throws<ServerStartupException>(
+            () => ServerOptions.Load(
+                CreateConfiguration(
+                    parent,
+                    new Dictionary<string, string?>
+                    {
+                        ["CIPHERVAULT_BACKUP_DIR"] =
+                            Path.Combine(parent, "data", "backups")
+                    })));
+        Assert.Equal(
+            ServerStartupCode.InvalidConfiguration,
+            insideVault.Code);
+    }
+
+    [Fact]
+    public void EnsureCreatedCreatesProtectedBackupDirectory()
+    {
+        var parent = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-backup-create-{Guid.NewGuid():N}");
+        try
+        {
+            var options = ServerOptions.Load(
+                CreateConfiguration(
+                    parent,
+                    new Dictionary<string, string?>()));
+
+            options.Paths.EnsureCreated();
+
+            Assert.True(Directory.Exists(options.Paths.BackupDirectory));
         }
         finally
         {
