@@ -15,13 +15,13 @@ internal static class VaultOperationResultGuard
 
     internal static void ValidateResult(object? result)
     {
-        var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
-        ValidateValue(result, visited, depth: 0);
+        var activePath = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        ValidateValue(result, activePath, depth: 0);
     }
 
     private static void ValidateValue(
         object? value,
-        HashSet<object> visited,
+        HashSet<object> activePath,
         int depth)
     {
         if (value is null)
@@ -45,62 +45,73 @@ internal static class VaultOperationResultGuard
             throw Rejected();
         }
 
-        if (!type.IsValueType && !visited.Add(value))
+        var tracksReference = !type.IsValueType;
+        if (tracksReference && !activePath.Add(value))
         {
             throw Rejected();
         }
 
-        if (value is Array array)
+        try
         {
-            foreach (var item in array)
+            if (value is Array array)
             {
-                ValidateValue(item, visited, depth + 1);
+                foreach (var item in array)
+                {
+                    ValidateValue(item, activePath, depth + 1);
+                }
+
+                return;
             }
 
-            return;
-        }
-
-        var genericType = type.IsGenericType ? type.GetGenericTypeDefinition() : null;
-        if (type == typeof(string)
-            || genericType == typeof(List<>)
-            || genericType == typeof(ReadOnlyCollection<>)
-            || genericType == typeof(ImmutableArray<>)
-            || genericType == typeof(ImmutableList<>))
-        {
-            foreach (var item in (IEnumerable)value)
+            var genericType = type.IsGenericType ? type.GetGenericTypeDefinition() : null;
+            if (type == typeof(string)
+                || genericType == typeof(List<>)
+                || genericType == typeof(ReadOnlyCollection<>)
+                || genericType == typeof(ImmutableArray<>)
+                || genericType == typeof(ImmutableList<>))
             {
-                ValidateValue(item, visited, depth + 1);
+                foreach (var item in (IEnumerable)value)
+                {
+                    ValidateValue(item, activePath, depth + 1);
+                }
+
+                return;
             }
 
-            return;
-        }
-
-        if (genericType == typeof(Dictionary<,>)
-            || genericType == typeof(ImmutableDictionary<,>))
-        {
-            foreach (DictionaryEntry entry in (IDictionary)value)
+            if (genericType == typeof(Dictionary<,>)
+                || genericType == typeof(ImmutableDictionary<,>))
             {
-                ValidateValue(entry.Key, visited, depth + 1);
-                ValidateValue(entry.Value, visited, depth + 1);
+                foreach (DictionaryEntry entry in (IDictionary)value)
+                {
+                    ValidateValue(entry.Key, activePath, depth + 1);
+                    ValidateValue(entry.Value, activePath, depth + 1);
+                }
+
+                return;
             }
 
-            return;
-        }
+            if (value is IEnumerable
+                || ImplementsOpenGeneric(type, typeof(IAsyncEnumerable<>))
+                || value is IQueryable)
+            {
+                throw Rejected();
+            }
 
-        if (value is IEnumerable
-            || ImplementsOpenGeneric(type, typeof(IAsyncEnumerable<>))
-            || value is IQueryable)
+            ValidateObjectGraph(value, type, activePath, depth);
+        }
+        finally
         {
-            throw Rejected();
+            if (tracksReference)
+            {
+                activePath.Remove(value);
+            }
         }
-
-        ValidateObjectGraph(value, type, visited, depth);
     }
 
     private static void ValidateObjectGraph(
         object value,
         Type type,
-        HashSet<object> visited,
+        HashSet<object> activePath,
         int depth)
     {
         try
@@ -113,12 +124,12 @@ internal static class VaultOperationResultGuard
                     continue;
                 }
 
-                ValidateValue(property.GetValue(value), visited, depth + 1);
+                ValidateValue(property.GetValue(value), activePath, depth + 1);
             }
 
             foreach (var field in type.GetFields(BindingFlags.Instance | BindingFlags.Public))
             {
-                ValidateValue(field.GetValue(value), visited, depth + 1);
+                ValidateValue(field.GetValue(value), activePath, depth + 1);
             }
         }
         catch (VaultException)

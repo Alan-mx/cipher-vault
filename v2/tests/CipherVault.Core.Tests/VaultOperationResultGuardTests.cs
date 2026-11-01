@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Security.Cryptography;
 using CipherVault.Core.Crypto;
 using CipherVault.Core.Database;
+using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
 
 namespace CipherVault.Core.Tests;
@@ -45,6 +46,56 @@ public sealed class VaultOperationResultGuardTests
         var node = new CyclicNode();
         node.Next = node;
         AssertRejected(node);
+    }
+
+    [Fact]
+    public void AllowsSharedEmptyCollectionsInSiblingLinks()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var target = new LinkTargetView(
+            Guid.NewGuid(),
+            "Target",
+            "Target.md");
+        var sharedCandidates = Array.Empty<LinkTargetView>();
+        var result = new DocumentMap(
+            new DocumentMetadata(
+                Guid.NewGuid(),
+                "Source",
+                "Source.md",
+                VaultDocumentFormat.Markdown,
+                1,
+                Array.Empty<string>(),
+                now,
+                now),
+            Array.Empty<DocumentHeading>(),
+            Array.Empty<FrontMatterFieldView>(),
+            new[]
+            {
+                new OutgoingLinkView(
+                    "Target",
+                    "Target",
+                    null,
+                    "resolved",
+                    target,
+                    sharedCandidates,
+                    0,
+                    8),
+                new OutgoingLinkView(
+                    "Target",
+                    "Target",
+                    null,
+                    "resolved",
+                    target,
+                    sharedCandidates,
+                    9,
+                    17)
+            },
+            0,
+            false,
+            false,
+            false);
+
+        VaultOperationResultGuard.ValidateResult(result);
     }
 
     private static void AssertRejected(object value)

@@ -162,6 +162,45 @@ public sealed class McpToolsIntegrationTests
     }
 
     [Fact]
+    public async Task DocumentMapReturnsMultipleResolvedOutgoingLinks()
+    {
+        await using var server = await ServerTestApplication.CreateAsync(
+            initializeVault: true);
+        using var unlock = await server.Client.UnlockAsync();
+        Assert.Equal(HttpStatusCode.OK, unlock.StatusCode);
+        var token = await CreateTokenAsync(server.Client);
+        _ = await CallToolAsync(server.Client, token, "create_note", new
+        {
+            title = "First Target",
+            content = "# First Target",
+            format = "md"
+        });
+        _ = await CallToolAsync(server.Client, token, "create_note", new
+        {
+            title = "Second Target",
+            content = "# Second Target",
+            format = "md"
+        });
+        var source = await CallToolAsync(server.Client, token, "create_note", new
+        {
+            title = "Map Source",
+            content = "# Map Source\n\n[[First Target]]\n\n[[Second Target]]",
+            format = "md"
+        });
+
+        var map = await CallToolAsync(server.Client, token, "get_document_map", new
+        {
+            documentId = source.GetProperty("documentId").GetGuid()
+        });
+
+        Assert.Equal(
+            2,
+            map.GetProperty("map")
+                .GetProperty("outgoingLinks")
+                .GetArrayLength());
+    }
+
+    [Fact]
     public async Task ToolErrorsAndPresenceSemanticsAreStable()
     {
         await using var server = await ServerTestApplication.CreateAsync(
