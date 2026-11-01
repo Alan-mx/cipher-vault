@@ -1,0 +1,273 @@
+name: Phase 8 Release Artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v2.0.0-rc.*"
+
+permissions:
+  contents: read
+
+env:
+  CIPHERVAULT_RELEASE_VERSION: 2.0.0-rc.1
+  CIPHERVAULT_ARTIFACT_ROOT: v2/artifacts/release/2.0.0-rc.1
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      commit: ${{ steps.release.outputs.commit }}
+      builtAtUtc: ${{ steps.release.outputs.builtAtUtc }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release worktree
+        shell: bash
+        run: |
+          test -z "$(git status --porcelain --untracked-files=no)"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Resolve release context
+        id: release
+        shell: bash
+        run: |
+          echo "version=$CIPHERVAULT_RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          echo "builtAtUtc=$(date -u +%Y-%m-%dT%H:%M:%S.0000000Z)" >> "$GITHUB_OUTPUT"
+
+  frontend:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: v2/frontend/package-lock.json
+      - name: Build frontend
+        working-directory: v2/frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run format:check
+          npm run typecheck
+          npm run lint
+          npm test
+          npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phase8-frontend
+          path: v2/src/CipherVault.Server/wwwroot
+          retention-days: 14
+
+  windows-package:
+    needs: [prepare, frontend]
+    runs-on: windows-latest
+    env:
+      CIPHERVAULT_BUILD_COMMIT: ${{ needs.prepare.outputs.commit }}
+      CIPHERVAULT_BUILD_TIMESTAMP_UTC: ${{ needs.prepare.outputs.builtAtUtc }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.402
+      - uses: actions/download-artifact@v4
+        with:
+          name: phase8-frontend
+          path: v2/src/CipherVault.Server/wwwroot
+      - name: Restore and test
+        run: |
+          dotnet restore v2/CipherVault.V2.slnx --locked-mode -p:NuGetAudit=false
+          dotnet build v2/CipherVault.V2.slnx -c Release --no-restore -warnaserror
+          dotnet test v2/CipherVault.V2.slnx -c Release --no-build --no-restore
+      - name: Publish Windows
+        run: |
+          $root = Join-Path $env:GITHUB_WORKSPACE $env:CIPHERVAULT_ARTIFACT_ROOT
+          $publish = & .\v2\scripts\publish-phase8.ps1 `
+            -Rid win-x64 `
+            -OutputRoot (Join-Path $root "work/windows") `
+            -SkipFrontendBuild
+          & .\v2\scripts\package-phase8.ps1 `
+            -Platform windows `
+            -PublishRoot $publish `
+            -OutputRoot $root
+      - name: Verify Windows artifact
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:GITHUB_WORKSPACE $env:CIPHERVAULT_ARTIFACT_ROOT
+          .\v2\scripts\verify-phase8.ps1 `
+            -ArtifactRoot $root `
+            -EvidenceRoot (Join-Path $root "evidence")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phase8-windows
+          path: |
+            v2/artifacts/release/2.0.0-rc.1/CipherVault-2.0.0-rc.1-win-x64.zip
+            v2/artifacts/release/2.0.0-rc.1/evidence/windows.json
+          retention-days: 14
+
+  linux-package:
+    needs: [prepare, frontend]
+    runs-on: ubuntu-latest
+    env:
+      CIPHERVAULT_BUILD_COMMIT: ${{ needs.prepare.outputs.commit }}
+      CIPHERVAULT_BUILD_TIMESTAMP_UTC: ${{ needs.prepare.outputs.builtAtUtc }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.402
+      - uses: actions/download-artifact@v4
+        with:
+          name: phase8-frontend
+          path: v2/src/CipherVault.Server/wwwroot
+      - name: Restore and test
+        run: |
+          dotnet restore v2/CipherVault.V2.slnx --locked-mode -p:NuGetAudit=false
+          dotnet build v2/CipherVault.V2.slnx -c Release --no-restore -warnaserror
+          dotnet test v2/CipherVault.V2.slnx -c Release --no-build --no-restore
+      - name: Publish Linux
+        shell: bash
+        run: |
+          root="$GITHUB_WORKSPACE/$CIPHERVAULT_ARTIFACT_ROOT"
+          publish_root="$(bash v2/scripts/publish-phase8.sh \
+            --rid linux-x64 \
+            --output-root "$root/work/linux" \
+            --skip-frontend-build)"
+          bash v2/scripts/package-phase8.sh \
+            --platform linux \
+            --publish-root "$publish_root" \
+            --output-root "$root"
+      - name: Verify Ubuntu 22.04 artifact
+        run: |
+          mkdir -p "$CIPHERVAULT_ARTIFACT_ROOT/evidence"
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/repo" \
+            ubuntu:22.04 \
+            bash -lc '
+              apt-get update &&
+              DEBIAN_FRONTEND=noninteractive apt-get install -y \
+                --no-install-recommends \
+                ca-certificates curl python3 util-linux binutils \
+                libicu-dev libssl3 zlib1g systemd &&
+              bash /repo/v2/scripts/verify-phase8.sh \
+                --artifact-root /repo/v2/artifacts/release/2.0.0-rc.1 \
+                --evidence-root /repo/v2/artifacts/release/2.0.0-rc.1/evidence \
+                --distribution ubuntu \
+                --distribution-version 22.04
+            '
+      - name: Verify Debian 12 artifact
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/repo" \
+            debian:12 \
+            bash -lc '
+              apt-get update &&
+              DEBIAN_FRONTEND=noninteractive apt-get install -y \
+                --no-install-recommends \
+                ca-certificates curl python3 util-linux binutils \
+                libicu-dev libssl3 zlib1g systemd &&
+              bash /repo/v2/scripts/verify-phase8.sh \
+                --artifact-root /repo/v2/artifacts/release/2.0.0-rc.1 \
+                --evidence-root /repo/v2/artifacts/release/2.0.0-rc.1/evidence \
+                --distribution debian \
+                --distribution-version 12
+            '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phase8-linux
+          path: |
+            v2/artifacts/release/2.0.0-rc.1/CipherVault-2.0.0-rc.1-linux-x64.tar.gz
+            v2/artifacts/release/2.0.0-rc.1/evidence/linux-ubuntu-22.04.json
+            v2/artifacts/release/2.0.0-rc.1/evidence/linux-debian-12.json
+          retention-days: 14
+
+  docker-package:
+    needs: [prepare, frontend]
+    runs-on: ubuntu-latest
+    env:
+      CIPHERVAULT_BUILD_COMMIT: ${{ needs.prepare.outputs.commit }}
+      CIPHERVAULT_BUILD_TIMESTAMP_UTC: ${{ needs.prepare.outputs.builtAtUtc }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: phase8-frontend
+          path: v2/src/CipherVault.Server/wwwroot
+      - name: Build formal image
+        shell: bash
+        run: |
+          docker build \
+            --file v2/deploy/Dockerfile \
+            --build-arg RELEASE_VERSION="$CIPHERVAULT_RELEASE_VERSION" \
+            --build-arg BUILD_COMMIT="$CIPHERVAULT_BUILD_COMMIT" \
+            --build-arg BUILD_TIMESTAMP_UTC="$CIPHERVAULT_BUILD_TIMESTAMP_UTC" \
+            --tag "cipher-vault:$CIPHERVAULT_RELEASE_VERSION" \
+            .
+          mkdir -p "$CIPHERVAULT_ARTIFACT_ROOT"
+          docker save "cipher-vault:$CIPHERVAULT_RELEASE_VERSION" \
+            --output "$CIPHERVAULT_ARTIFACT_ROOT/cipher-vault-2.0.0-rc.1-docker-linux-amd64.tar"
+      - name: Verify Docker artifact
+        run: |
+          bash v2/scripts/verify-phase8-docker.sh \
+            --artifact-root "$CIPHERVAULT_ARTIFACT_ROOT" \
+            --evidence-root "$CIPHERVAULT_ARTIFACT_ROOT/evidence"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phase8-docker
+          path: |
+            v2/artifacts/release/2.0.0-rc.1/cipher-vault-2.0.0-rc.1-docker-linux-amd64.tar
+            v2/artifacts/release/2.0.0-rc.1/evidence/docker.json
+          retention-days: 14
+
+  release-aggregate:
+    needs: [prepare, windows-package, linux-package, docker-package]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: phase8-windows
+          path: v2/artifacts/release/2.0.0-rc.1
+      - uses: actions/download-artifact@v4
+        with:
+          name: phase8-linux
+          path: v2/artifacts/release/2.0.0-rc.1
+      - uses: actions/download-artifact@v4
+        with:
+          name: phase8-docker
+          path: v2/artifacts/release/2.0.0-rc.1
+      - name: Verify evidence presence
+        run: |
+          test -s v2/artifacts/release/2.0.0-rc.1/evidence/windows.json
+          test -s v2/artifacts/release/2.0.0-rc.1/evidence/linux-ubuntu-22.04.json
+          test -s v2/artifacts/release/2.0.0-rc.1/evidence/linux-debian-12.json
+          test -s v2/artifacts/release/2.0.0-rc.1/evidence/docker.json
+      - name: Generate manifest and checksums
+        shell: pwsh
+        run: |
+          . .\v2\deploy\versions.ps1
+          .\v2\scripts\release\New-ReleaseManifest.ps1 `
+            -ReleaseRoot ".\v2\artifacts\release\2.0.0-rc.1" `
+            -Version "${{ needs.prepare.outputs.version }}" `
+            -Commit "${{ needs.prepare.outputs.commit }}" `
+            -BuiltAtUtc "${{ needs.prepare.outputs.builtAtUtc }}" `
+            -RuntimeVersion $CipherVaultDotnetRuntimeVersion `
+            -AspNetCoreVersion $CipherVaultAspNetCoreVersion `
+            -SdkVersion $CipherVaultDotnetSdkVersion `
+            -Sqlite3McVersion $CipherVaultSqlite3McVersion `
+            -DockerBaseImage $CipherVaultDockerBaseImage `
+            -DockerBaseImageDigest $CipherVaultDockerBaseDigest
+          .\v2\scripts\release\Scan-ReleaseArtifacts.ps1 `
+            -ReleaseRoot ".\v2\artifacts\release\2.0.0-rc.1" `
+            -EvidencePath ".\v2\artifacts\release\2.0.0-rc.1\evidence\scans.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phase8-release-bundle
+          path: v2/artifacts/release/2.0.0-rc.1
+          retention-days: 14

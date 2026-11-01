@@ -1,5 +1,6 @@
 using CipherVault.Application.Backup;
 using CipherVault.Application.Vault;
+using CipherVault.Core.Database;
 using CipherVault.Server.Hosting;
 using CipherVault.Server.Mcp;
 using Microsoft.Extensions.Configuration;
@@ -35,6 +36,7 @@ public static class Program
             builder.SetMinimumLevel(LogLevel.Warning);
         });
         var logger = loggerFactory.CreateLogger("CipherVault.Server.Startup");
+        await using var resources = new ServerProcessResources();
         try
         {
             var configuration = new ConfigurationBuilder()
@@ -53,24 +55,19 @@ public static class Program
             var tokenStore = await McpTokenStore.LoadAsync(
                 options.Paths.McpTokenPath,
                 timeProvider);
+            _ = await SqliteMcDatabaseFactory.InitializeProcessAsync();
+            resources.MarkSqliteTouched();
             var manager = await VaultSessionManager.CreateAsync(
                 options.Paths.VaultDirectory,
                 new VaultSessionOptions(options.IdleTimeout),
                 timeProvider);
-            try
-            {
-                await using var app = await ServerWebApplication.BuildAsync(
-                    options,
-                    manager,
-                    tokenStore,
-                    timeProvider);
-                await app.WaitForShutdownAsync();
-            }
-            catch
-            {
-                await manager.DisposeAsync();
-                throw;
-            }
+            resources.AttachManager(manager);
+            await using var app = await ServerWebApplication.BuildAsync(
+                options,
+                manager,
+                tokenStore,
+                timeProvider);
+            await app.WaitForShutdownAsync();
             return 0;
         }
         catch (ServerStartupException exception)
@@ -96,6 +93,7 @@ public static class Program
     {
         var terminal = new InteractiveConsoleTerminal();
         using var cancellation = new CancellationTokenSource();
+        await using var resources = new ServerProcessResources();
         ConsoleCancelEventHandler handler = (_, eventArgs) =>
         {
             eventArgs.Cancel = true;
@@ -108,6 +106,9 @@ public static class Program
                 .AddEnvironmentVariables()
                 .Build();
             var options = ServerOptions.Load(configuration);
+            _ = await SqliteMcDatabaseFactory.InitializeProcessAsync(
+                cancellation.Token);
+            resources.MarkSqliteTouched();
             return await new RestoreMaintenanceCommand().RunAsync(
                 options,
                 restoreOptions,

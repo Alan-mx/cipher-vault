@@ -42,29 +42,52 @@ public static class SqliteMcDatabaseFactory
 
     private static async Task<SqliteRuntimeInfo> InitializeCoreAsync()
     {
-        Batteries_V2.Init();
-        await using var connection = new SqliteConnection("Data Source=:memory:;Pooling=false");
-        await connection.OpenAsync(CancellationToken.None);
-        var version = await ExecuteScalarStringAsync(
-            connection,
-            "SELECT sqlite3mc_version();",
-            CancellationToken.None);
-        if (string.IsNullOrWhiteSpace(version))
+        var providerInitialized = false;
+        try
         {
-            throw new VaultException(
-                VaultErrorCode.UnsupportedPlatform,
-                "SQLite3MC runtime is unavailable.");
-        }
+            Batteries_V2.Init();
+            providerInitialized = true;
+            await using var connection = new SqliteConnection(
+                "Data Source=:memory:;Pooling=false");
+            await connection.OpenAsync(CancellationToken.None);
+            var version = await ExecuteScalarStringAsync(
+                connection,
+                "SELECT sqlite3mc_version();",
+                CancellationToken.None);
+            if (string.IsNullOrWhiteSpace(version))
+            {
+                throw new VaultException(
+                    VaultErrorCode.UnsupportedPlatform,
+                    "SQLite3MC runtime is unavailable.");
+            }
 
-        var tempStore = await ReadCompileTempStoreAsync(connection, CancellationToken.None);
-        if (tempStore is not (2 or 3))
+            var tempStore = await ReadCompileTempStoreAsync(
+                connection,
+                CancellationToken.None);
+            if (tempStore is not (2 or 3))
+            {
+                throw new VaultException(
+                    VaultErrorCode.DatabaseError,
+                    "SQLite TEMP_STORE must be compiled as 2 or 3.");
+            }
+
+            return new SqliteRuntimeInfo(version, tempStore);
+        }
+        catch
         {
-            throw new VaultException(
-                VaultErrorCode.DatabaseError,
-                "SQLite TEMP_STORE must be compiled as 2 or 3.");
+            if (providerInitialized)
+            {
+                try
+                {
+                    _ = raw.sqlite3_shutdown();
+                }
+                catch
+                {
+                    // Preserve the startup failure after best-effort cleanup.
+                }
+            }
+            throw;
         }
-
-        return new SqliteRuntimeInfo(version, tempStore);
     }
 
     public static async Task<SqliteMcDatabaseSession> OpenSessionAsync(

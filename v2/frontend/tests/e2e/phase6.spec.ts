@@ -148,6 +148,7 @@ test("Phase 6 desktop flow, responsive layout and accessibility", async ({
   await expect(
     page.getByText("CIPHERVAULT_IDLE_TIMEOUT_MINUTES"),
   ).toBeVisible();
+  await expect(page.getByText("0.0.0-local")).toBeVisible();
   await page.getByRole("button", { name: "创建备份" }).click();
   await expect(page.locator(".backup-row")).toHaveCount(1);
   await expect(page.locator(".backup-row")).toContainText("已验证");

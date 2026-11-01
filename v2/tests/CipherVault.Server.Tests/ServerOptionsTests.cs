@@ -7,6 +7,30 @@ namespace CipherVault.Server.Tests;
 public sealed class ServerOptionsTests
 {
     [Fact]
+    public void ExplicitDirectoriesDoNotRequireUserHome()
+    {
+        var parent = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-explicit-paths-{Guid.NewGuid():N}");
+        var configuration = CreateConfiguration(
+            parent,
+            new Dictionary<string, string?>());
+        var defaultsRequested = false;
+
+        var paths = ServerOptions.ResolvePaths(
+            configuration,
+            () =>
+            {
+                defaultsRequested = true;
+                throw new InvalidOperationException();
+            });
+
+        Assert.False(defaultsRequested);
+        Assert.Equal(Path.Combine(parent, "data"), paths.VaultDirectory);
+        Assert.Equal(Path.Combine(parent, "config"), paths.ConfigDirectory);
+    }
+
+    [Fact]
     public void ConfigDirectoryCannotBeInsideVaultDirectory()
     {
         var parent = Path.Combine(

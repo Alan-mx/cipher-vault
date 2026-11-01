@@ -386,3 +386,11 @@ export interface BackupQuery {
   pageSize?: number;
   cursor?: string;
 }
+
+export interface VersionInfo {
+  productVersion: string;
+  commit: string;
+  rid: string;
+  runtimeVersion: string;
+  aspNetCoreVersion: string;
+}

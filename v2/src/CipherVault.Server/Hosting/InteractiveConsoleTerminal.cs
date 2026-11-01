@@ -1,4 +1,6 @@
 using CipherVault.Core.Backup;
+using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 
 namespace CipherVault.Server.Hosting;
 
@@ -17,8 +19,10 @@ public interface IInteractiveConsole
 internal sealed class InteractiveConsoleTerminal : IInteractiveConsole
 {
     public bool IsInteractive =>
-        !Console.IsInputRedirected
-        && !Console.IsOutputRedirected;
+        OperatingSystem.IsWindows()
+            ? WindowsConsole.HasInputAndOutput()
+            : !Console.IsInputRedirected
+                && !Console.IsOutputRedirected;
 
     public Task<string?> ReadPasswordAsync(
         CancellationToken cancellationToken)
@@ -74,5 +78,33 @@ internal sealed class InteractiveConsoleTerminal : IInteractiveConsole
     {
         Console.Out.WriteLine(
             $"restore_completed formatVersion={result.FormatVersion} schemaVersion={result.SchemaVersion} databaseBytes={result.DatabaseBytes} keyEnvelopeBytes={result.KeyEnvelopeBytes}");
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static class WindowsConsole
+    {
+        private const int StandardInputHandle = -10;
+        private const int StandardOutputHandle = -11;
+
+        public static bool HasInputAndOutput()
+        {
+            var input = GetStdHandle(StandardInputHandle);
+            var output = GetStdHandle(StandardOutputHandle);
+            return input != IntPtr.Zero
+                && input != new IntPtr(-1)
+                && output != IntPtr.Zero
+                && output != new IntPtr(-1)
+                && GetConsoleMode(input, out _)
+                && GetConsoleMode(output, out _);
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GetStdHandle(int standardHandle);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetConsoleMode(
+            IntPtr consoleHandle,
+            out uint mode);
     }
 }

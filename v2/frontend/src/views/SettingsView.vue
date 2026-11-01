@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import {
   NAlert,
@@ -54,6 +54,10 @@ const changePassword = async (): Promise<void> => {
     passwordError.value = describeApiError(error);
   }
 };
+
+onMounted(() => {
+  void settings.loadVersion();
+});
 </script>
 
 <template>
@@ -71,6 +75,22 @@ const changePassword = async (): Promise<void> => {
         </div>
       </header>
       <dl class="config-list">
+        <dt>产品版本</dt>
+        <dd>
+          {{
+            settings.loadingVersion
+              ? "加载中…"
+              : (settings.version?.productVersion ??
+                (settings.versionError ? "版本信息不可用" : "—"))
+          }}
+        </dd>
+        <dt>运行时 RID</dt>
+        <dd>
+          {{
+            settings.version?.rid ??
+            (settings.versionError ? "版本信息不可用" : "—")
+          }}
+        </dd>
         <dt>闲置锁定</dt>
         <dd>{{ session.status?.idleTimeoutMinutes ?? "—" }} 分钟</dd>
         <dt>闲置时间变量</dt>

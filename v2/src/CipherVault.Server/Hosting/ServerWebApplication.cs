@@ -88,6 +88,7 @@ public static class ServerWebApplication
         app.UseStaticFiles();
         app.UseSpaFallback(webRoot);
         app.MapVaultEndpoints();
+        app.MapVersionEndpoints();
         app.MapDocumentEndpoints();
         app.MapTrashEndpoints();
         app.MapRevisionEndpoints();

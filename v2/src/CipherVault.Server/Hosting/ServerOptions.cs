@@ -47,15 +47,7 @@ public sealed record ServerOptions
     public static ServerOptions Load(IConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(configuration);
-        var (defaultData, defaultConfig) = GetDefaultDirectories();
-        var vaultDirectory = configuration["CIPHERVAULT_DATA_DIR"];
-        var configDirectory = configuration["CIPHERVAULT_CONFIG_DIR"];
-        var backupDirectory = configuration["CIPHERVAULT_BACKUP_DIR"];
-        var paths = ApplicationPaths.Create(
-            string.IsNullOrWhiteSpace(vaultDirectory) ? defaultData : vaultDirectory,
-            string.IsNullOrWhiteSpace(configDirectory) ? defaultConfig : configDirectory,
-            string.IsNullOrWhiteSpace(backupDirectory) ? null : backupDirectory);
-
+        var paths = ResolvePaths(configuration, GetDefaultDirectories);
         var idleTimeout = ParseIdleTimeout(
             configuration["CIPHERVAULT_IDLE_TIMEOUT_MINUTES"]);
         var containerMode = ParseContainerMode(
@@ -76,6 +68,26 @@ public sealed record ServerOptions
             containerMode,
             allowedHosts,
             developmentOrigins);
+    }
+
+    internal static ApplicationPaths ResolvePaths(
+        IConfiguration configuration,
+        Func<(string Data, string Config)> getDefaultDirectories)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentNullException.ThrowIfNull(getDefaultDirectories);
+        var vaultDirectory = configuration["CIPHERVAULT_DATA_DIR"];
+        var configDirectory = configuration["CIPHERVAULT_CONFIG_DIR"];
+        var backupDirectory = configuration["CIPHERVAULT_BACKUP_DIR"];
+        var needsDefaultDirectories = string.IsNullOrWhiteSpace(vaultDirectory)
+            || string.IsNullOrWhiteSpace(configDirectory);
+        var (defaultData, defaultConfig) = needsDefaultDirectories
+            ? getDefaultDirectories()
+            : (string.Empty, string.Empty);
+        return ApplicationPaths.Create(
+            string.IsNullOrWhiteSpace(vaultDirectory) ? defaultData : vaultDirectory,
+            string.IsNullOrWhiteSpace(configDirectory) ? defaultConfig : configDirectory,
+            string.IsNullOrWhiteSpace(backupDirectory) ? null : backupDirectory);
     }
 
     private static (string Data, string Config) GetDefaultDirectories()
