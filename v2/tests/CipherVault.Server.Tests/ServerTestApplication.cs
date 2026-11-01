@@ -67,7 +67,8 @@ internal sealed class ServerTestApplication : IAsyncDisposable
         bool unlockVault = false,
         TimeSpan? idleTimeout = null,
         Action<ILoggingBuilder>? configureLogging = null,
-        VaultSessionTimingOptions? timingOptions = null)
+        VaultSessionTimingOptions? timingOptions = null,
+        GitBackupOptions? gitBackup = null)
     {
         for (var attempt = 0; ; attempt++)
         {
@@ -78,7 +79,8 @@ internal sealed class ServerTestApplication : IAsyncDisposable
                     unlockVault,
                     idleTimeout,
                     configureLogging,
-                    timingOptions);
+                    timingOptions,
+                    gitBackup);
             }
             catch (Exception exception) when (
                 attempt < 3 && IsAddressInUse(exception))
@@ -94,7 +96,8 @@ internal sealed class ServerTestApplication : IAsyncDisposable
         bool unlockVault,
         TimeSpan? idleTimeout,
         Action<ILoggingBuilder>? configureLogging,
-        VaultSessionTimingOptions? timingOptions)
+        VaultSessionTimingOptions? timingOptions,
+        GitBackupOptions? gitBackup)
     {
         var parent = Path.Combine(
             Path.GetTempPath(),
@@ -108,7 +111,8 @@ internal sealed class ServerTestApplication : IAsyncDisposable
             paths,
             [new ServerListenAddress("127.0.0.1", FindFreePort())],
             idleTimeout ?? TimeSpan.FromMinutes(10),
-            ServerOptions.DefaultMaxRequestBodyBytes);
+            ServerOptions.DefaultMaxRequestBodyBytes,
+            gitBackup: gitBackup);
         var timeProvider = new ManualTimeProvider();
         var instanceLock = ServerInstanceLock.Acquire(paths.ServerLockPath);
         VaultSessionManager? manager = null;

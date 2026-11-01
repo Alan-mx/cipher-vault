@@ -237,6 +237,57 @@ docker run --rm -it \
 命令会提示 `Backup password:`。恢复后的 Vault 启动状态为 Locked。使用恢复数据目录启动
 Server 后，用原 Vault Password Unlock。
 
+### 自动 Git 加密备份
+
+该功能默认关闭。启用后，文档修改会触发完整 `.cvbackup` 快照，合并 5 分钟内的连续修改，
+并自动 commit、push 到独立私有 Git 仓库中的固定文件 `latest.cvbackup`。
+
+要求：
+
+- 使用独立私有仓库，不要直接使用本源码仓库。
+- 本地仓库目录、remote 和 branch 必须预先存在。
+- Git 凭据必须已由 Git Credential Manager、SSH Agent 或环境配置完成；后台不会弹出交互提示。
+- Git 中保存的是完整加密快照。Git 历史会持续增长，不会自动重写或删除旧版本。
+- 仓库达到 1 GiB 或 12 个月后进入 `rotation_required`，需要配置新的空仓库并重启。
+
+配置示例：
+
+```text
+CIPHERVAULT_GIT_BACKUP_ENABLED = true
+CIPHERVAULT_GIT_BACKUP_REPO = "D:\CipherVaultBackupRepo"
+CIPHERVAULT_GIT_BACKUP_REMOTE = "origin"
+CIPHERVAULT_GIT_BACKUP_BRANCH = "main"
+```
+
+完整配置：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `CIPHERVAULT_GIT_BACKUP_ENABLED` | `false` | 自动 Git 备份开关 |
+| `CIPHERVAULT_GIT_BACKUP_REPO` | 无 | 已存在的独立 Git 工作树绝对路径 |
+| `CIPHERVAULT_GIT_BACKUP_REMOTE` | `origin` | 已配置的 Git remote |
+| `CIPHERVAULT_GIT_BACKUP_BRANCH` | `main` | 已 checkout 的目标分支 |
+| `CIPHERVAULT_GIT_BACKUP_DEBOUNCE_SECONDS` | `300` | 最后一次修改后的等待时间 |
+| `CIPHERVAULT_GIT_BACKUP_MAX_DELAY_SECONDS` | `1800` | 连续修改最长等待时间 |
+| `CIPHERVAULT_GIT_BACKUP_RETRY_SECONDS` | `60` | 失败基础重试间隔 |
+| `CIPHERVAULT_GIT_BACKUP_ROTATE_BYTES` | `1073741824` | Git 对象轮换阈值 |
+| `CIPHERVAULT_GIT_BACKUP_ROTATE_DAYS` | `365` | 仓库最长使用天数 |
+
+Windows 在当前用户环境变量中设置后，需要完整退出并重新启动 Server：
+
+```powershell
+[Environment]::SetEnvironmentVariable(
+  "CIPHERVAULT_GIT_BACKUP_ENABLED", "true", "User")
+[Environment]::SetEnvironmentVariable(
+  "CIPHERVAULT_GIT_BACKUP_REPO", "D:\CipherVaultBackupRepo", "User")
+```
+
+Settings 页面会显示同步状态、最近 commit、错误码和轮换提示，不会显示仓库绝对路径或 remote
+URL。自动同步状态保存在 `%LOCALAPPDATA%\CipherVault\config\git-backup-state.json`。
+
+Docker 镜像已包含 Git 与 OpenSSH client。启用时需把独立备份仓库挂载为可写目录，并提供
+容器用户可用的 Git 凭据；当前 Compose 默认不启用该功能。
+
 ## 升级与卸载
 
 - Windows：停止 Server，替换程序目录，保留 `%LOCALAPPDATA%\CipherVault`。

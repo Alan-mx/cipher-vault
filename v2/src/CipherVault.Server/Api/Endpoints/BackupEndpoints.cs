@@ -1,7 +1,10 @@
 using CipherVault.Application.Backup;
 using CipherVault.Core.Backup;
 using CipherVault.Core.Documents;
+using CipherVault.Core.Errors;
+using CipherVault.Application.Vault;
 using CipherVault.Server.Api.Contracts;
+using CipherVault.Server.Backup;
 using CipherVault.Server.Security;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Logging;
@@ -35,6 +38,32 @@ public static class BackupEndpoints
                 })
             .RequireAuthorization()
             .WithName("ListBackups");
+
+        group.MapGet(
+                "/git/status",
+                async (
+                    HttpContext context,
+                    VaultSessionManager sessions,
+                    GitBackupCoordinator gitBackup,
+                    CancellationToken cancellationToken) =>
+                {
+                    var vaultStatus = await sessions.GetStatusAsync(
+                        cancellationToken);
+                    if (vaultStatus.State != VaultSessionState.Unlocked)
+                    {
+                        throw new VaultException(
+                            VaultErrorCode.VaultLocked,
+                            "Vault is locked.");
+                    }
+
+                    context.Response.Headers.CacheControl = "no-store";
+                    return Results.Ok(
+                        GitBackupStatusApiResponse.FromDomain(
+                            await gitBackup.GetStatusAsync(
+                                cancellationToken)));
+                })
+            .RequireAuthorization()
+            .WithName("GetGitBackupStatus");
 
         group.MapPost(
                 "",

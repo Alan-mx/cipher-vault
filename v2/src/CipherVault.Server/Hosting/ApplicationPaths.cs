@@ -10,6 +10,7 @@ public sealed record ApplicationPaths(
     string DataProtectionDirectory,
     string ServerLockPath,
     string McpTokenPath,
+    string GitBackupStatePath,
     string BackupLockPath)
 {
     public static ApplicationPaths Create(
@@ -68,6 +69,7 @@ public sealed record ApplicationPaths(
             Path.Combine(config, "data-protection"),
             Path.Combine(config, "server.lock"),
             Path.Combine(config, "mcp-token.json"),
+            Path.Combine(config, "git-backup-state.json"),
             Path.Combine(backup, ".cipher-vault-backup.lock"));
     }
 

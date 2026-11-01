@@ -1,4 +1,5 @@
 using System.Text;
+using CipherVault.Application.Backup;
 using CipherVault.Application.Vault;
 using CipherVault.Core.Audit;
 using CipherVault.Core.Database;
@@ -16,14 +17,17 @@ public sealed class ImportService
     private readonly VaultSessionManager sessionManager;
     private readonly TimeProvider timeProvider;
     private readonly ImportPreviewStore previews = new();
+    private readonly IDocumentMutationObserver? mutationObserver;
 
     public ImportService(
         VaultSessionManager sessionManager,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IDocumentMutationObserver? mutationObserver = null)
     {
         this.sessionManager = sessionManager ??
             throw new ArgumentNullException(nameof(sessionManager));
         this.timeProvider = timeProvider ?? TimeProvider.System;
+        this.mutationObserver = mutationObserver;
     }
 
     public async Task<ImportPreviewResult> PreviewAsync(
@@ -209,12 +213,19 @@ public sealed class ImportService
                     failed
                 },
                 cancellationToken);
-            return new ImportCommitResult(
+            var result = new ImportCommitResult(
                 imported,
                 skipped,
                 failed,
                 results,
                 auditEventId);
+            if (imported > 0)
+            {
+                await mutationObserver.NotifySafelyAsync(
+                    DocumentMutationKind.Import);
+            }
+
+            return result;
         }
         catch (OperationCanceledException)
         {

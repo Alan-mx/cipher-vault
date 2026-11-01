@@ -382,6 +382,28 @@ export interface BackupCreateResponse {
   backup: BackupListItem;
 }
 
+export type GitBackupState =
+  | "disabled"
+  | "idle"
+  | "pending"
+  | "running"
+  | "retry_wait"
+  | "rotation_required"
+  | "failed";
+
+export interface GitBackupStatus {
+  state: GitBackupState;
+  pending: boolean;
+  pushPending: boolean;
+  nextAttemptAtUtc?: UtcTimestamp | null;
+  lastSuccessAtUtc?: UtcTimestamp | null;
+  lastCommitShortSha?: string | null;
+  lastPushAtUtc?: UtcTimestamp | null;
+  lastErrorCode?: string | null;
+  rotationRequired: boolean;
+  repositoryObjectBytes?: number | null;
+}
+
 export interface BackupQuery {
   pageSize?: number;
   cursor?: string;

@@ -2,7 +2,7 @@ import { ref } from "vue";
 import { defineStore } from "pinia";
 import { backupApi } from "../api";
 import { registerSensitiveStore } from "../session/lifecycle";
-import type { BackupListItem } from "../types/api";
+import type { BackupListItem, GitBackupStatus } from "../types/api";
 import { ApiClientError } from "../types/domain";
 
 export const useBackupStore = defineStore("backups", () => {
@@ -12,6 +12,9 @@ export const useBackupStore = defineStore("backups", () => {
   const loadingMore = ref(false);
   const creating = ref(false);
   const error = ref<ApiClientError | null>(null);
+  const gitStatus = ref<GitBackupStatus | null>(null);
+  const gitStatusLoading = ref(false);
+  const gitStatusError = ref<ApiClientError | null>(null);
 
   const readError = (caught: unknown, fallback: string): ApiClientError =>
     caught instanceof ApiClientError
@@ -76,6 +79,18 @@ export const useBackupStore = defineStore("backups", () => {
   const downloadUrl = (fileName: string): string =>
     backupApi.downloadUrl(fileName);
 
+  const loadGitStatus = async (): Promise<void> => {
+    gitStatusLoading.value = true;
+    gitStatusError.value = null;
+    try {
+      gitStatus.value = await backupApi.getGitStatus();
+    } catch (caught) {
+      gitStatusError.value = readError(caught, "无法读取自动备份状态。");
+    } finally {
+      gitStatusLoading.value = false;
+    }
+  };
+
   const resetSensitive = (): void => {
     items.value = [];
     nextCursor.value = null;
@@ -83,6 +98,9 @@ export const useBackupStore = defineStore("backups", () => {
     loadingMore.value = false;
     creating.value = false;
     error.value = null;
+    gitStatus.value = null;
+    gitStatusLoading.value = false;
+    gitStatusError.value = null;
   };
 
   registerSensitiveStore({ resetSensitive });
@@ -94,10 +112,14 @@ export const useBackupStore = defineStore("backups", () => {
     loadingMore,
     creating,
     error,
+    gitStatus,
+    gitStatusLoading,
+    gitStatusError,
     load,
     loadMore,
     create,
     downloadUrl,
+    loadGitStatus,
     resetSensitive,
   };
 });

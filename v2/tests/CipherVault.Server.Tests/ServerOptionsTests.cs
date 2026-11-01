@@ -210,6 +210,142 @@ public sealed class ServerOptionsTests
             Path.Combine("config", "mcp-token.json"),
             options.Paths.McpTokenPath,
             StringComparison.Ordinal);
+        Assert.EndsWith(
+            Path.Combine("config", "git-backup-state.json"),
+            options.Paths.GitBackupStatePath,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GitBackupIsDisabledByDefault()
+    {
+        var parent = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-git-disabled-{Guid.NewGuid():N}");
+        var options = ServerOptions.Load(
+            CreateConfiguration(
+                parent,
+                new Dictionary<string, string?>()));
+
+        Assert.False(options.GitBackup.Enabled);
+        Assert.Null(options.GitBackup.ConfigurationErrorCode);
+    }
+
+    [Fact]
+    public void GitBackupLoadsValidConfiguration()
+    {
+        var parent = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-git-valid-{Guid.NewGuid():N}");
+        var repository = Path.Combine(parent, "backup-repo");
+        Directory.CreateDirectory(repository);
+        try
+        {
+            var options = ServerOptions.Load(
+                CreateConfiguration(
+                    parent,
+                    new Dictionary<string, string?>
+                    {
+                        ["CIPHERVAULT_GIT_BACKUP_ENABLED"] = "true",
+                        ["CIPHERVAULT_GIT_BACKUP_REPO"] = repository,
+                        ["CIPHERVAULT_GIT_BACKUP_REMOTE"] = "backup",
+                        ["CIPHERVAULT_GIT_BACKUP_BRANCH"] = "vault-main",
+                        ["CIPHERVAULT_GIT_BACKUP_DEBOUNCE_SECONDS"] = "120",
+                        ["CIPHERVAULT_GIT_BACKUP_MAX_DELAY_SECONDS"] = "600",
+                        ["CIPHERVAULT_GIT_BACKUP_RETRY_SECONDS"] = "90",
+                        ["CIPHERVAULT_GIT_BACKUP_ROTATE_BYTES"] = "209715200",
+                        ["CIPHERVAULT_GIT_BACKUP_ROTATE_DAYS"] = "180"
+                    }));
+
+            Assert.True(options.GitBackup.Enabled);
+            Assert.Equal(repository, options.GitBackup.RepositoryPath);
+            Assert.Equal("backup", options.GitBackup.Remote);
+            Assert.Equal("vault-main", options.GitBackup.Branch);
+            Assert.Equal(TimeSpan.FromSeconds(120), options.GitBackup.DebounceDelay);
+            Assert.Equal(TimeSpan.FromSeconds(600), options.GitBackup.MaxDelay);
+            Assert.Equal(TimeSpan.FromSeconds(90), options.GitBackup.RetryDelay);
+            Assert.Equal(209715200, options.GitBackup.RotationBytes);
+            Assert.Equal(TimeSpan.FromDays(180), options.GitBackup.RotationAge);
+            Assert.Null(options.GitBackup.ConfigurationErrorCode);
+        }
+        finally
+        {
+            if (Directory.Exists(parent))
+            {
+                Directory.Delete(parent, recursive: true);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData("CIPHERVAULT_GIT_BACKUP_ENABLED", "yes")]
+    [InlineData("CIPHERVAULT_GIT_BACKUP_DEBOUNCE_SECONDS", "30")]
+    [InlineData("CIPHERVAULT_GIT_BACKUP_MAX_DELAY_SECONDS", "120")]
+    [InlineData("CIPHERVAULT_GIT_BACKUP_ROTATE_BYTES", "1024")]
+    public void InvalidGitBackupConfigurationFailsClosed(
+        string key,
+        string value)
+    {
+        var parent = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-git-invalid-{Guid.NewGuid():N}");
+        var repository = Path.Combine(parent, "backup-repo");
+        Directory.CreateDirectory(repository);
+        try
+        {
+            var values = new Dictionary<string, string?>
+            {
+                ["CIPHERVAULT_GIT_BACKUP_ENABLED"] = "true",
+                ["CIPHERVAULT_GIT_BACKUP_REPO"] = repository,
+                [key] = value
+            };
+            var options = ServerOptions.Load(
+                CreateConfiguration(parent, values));
+
+            Assert.True(options.GitBackup.Enabled);
+            Assert.Equal(
+                GitBackupOptions.InvalidConfigurationCode,
+                options.GitBackup.ConfigurationErrorCode);
+        }
+        finally
+        {
+            if (Directory.Exists(parent))
+            {
+                Directory.Delete(parent, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void GitBackupRepositoryCannotOverlapVaultPaths()
+    {
+        var parent = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-git-overlap-{Guid.NewGuid():N}");
+        var repository = Path.Combine(parent, "data", "backup-repo");
+        Directory.CreateDirectory(repository);
+        try
+        {
+            var options = ServerOptions.Load(
+                CreateConfiguration(
+                    parent,
+                    new Dictionary<string, string?>
+                    {
+                        ["CIPHERVAULT_GIT_BACKUP_ENABLED"] = "true",
+                        ["CIPHERVAULT_GIT_BACKUP_REPO"] = repository
+                    }));
+
+            Assert.Equal(
+                GitBackupOptions.InvalidConfigurationCode,
+                options.GitBackup.ConfigurationErrorCode);
+        }
+        finally
+        {
+            if (Directory.Exists(parent))
+            {
+                Directory.Delete(parent, recursive: true);
+            }
+        }
     }
 
     [Fact]

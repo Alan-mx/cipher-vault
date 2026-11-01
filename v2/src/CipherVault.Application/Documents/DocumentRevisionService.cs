@@ -1,3 +1,4 @@
+using CipherVault.Application.Backup;
 using CipherVault.Application.Vault;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Storage.Documents;
@@ -8,14 +9,17 @@ public sealed class DocumentRevisionService
 {
     private readonly VaultSessionManager sessionManager;
     private readonly TimeProvider timeProvider;
+    private readonly IDocumentMutationObserver? mutationObserver;
 
     public DocumentRevisionService(
         VaultSessionManager sessionManager,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IDocumentMutationObserver? mutationObserver = null)
     {
         this.sessionManager = sessionManager ??
             throw new ArgumentNullException(nameof(sessionManager));
         this.timeProvider = timeProvider ?? TimeProvider.System;
+        this.mutationObserver = mutationObserver;
     }
 
     public Task<RevisionPage> ListAsync(
@@ -32,7 +36,7 @@ public sealed class DocumentRevisionService
                     token)),
             cancellationToken).AsTask();
 
-    public Task<DocumentWriteResult> RestoreAsync(
+    public async Task<DocumentWriteResult> RestoreAsync(
         Guid documentId,
         Guid revisionId,
         int expectedRevision,
@@ -40,7 +44,7 @@ public sealed class DocumentRevisionService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(actor);
-        return sessionManager.ExecuteAsync(
+        var result = await sessionManager.ExecuteAsync(
             async (context, token) =>
             {
                 await context.BeginTransactionAsync(token);
@@ -55,7 +59,13 @@ public sealed class DocumentRevisionService
                 await context.CommitTransactionAsync(token);
                 return result;
             },
-            cancellationToken).AsTask();
+            cancellationToken);
+        if (result.AuditEventId is not null)
+        {
+            await mutationObserver.NotifySafelyAsync(
+                DocumentMutationKind.RevisionRestore);
+        }
+        return result;
     }
 
     public Task<RevisionContent> GetContentAsync(

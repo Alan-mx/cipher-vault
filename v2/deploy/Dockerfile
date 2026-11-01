@@ -50,7 +50,11 @@ ARG RUNTIME_DEPS_IMAGE
 ARG RUNTIME_DEPS_DIGEST
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        git \
+        openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --gid 10001 cipher-vault \

@@ -61,4 +61,31 @@ describe("backup store", () => {
       `/api/backups/${encodeURIComponent(item.fileName)}/download`,
     );
   });
+
+  it("loads and clears automatic Git backup status", async () => {
+    setActivePinia(createPinia());
+    const store = useBackupStore();
+    vi.spyOn(backupApi, "getGitStatus").mockResolvedValue({
+      state: "retry_wait",
+      pending: true,
+      pushPending: true,
+      nextAttemptAtUtc: "2026-11-01T00:05:00Z",
+      lastSuccessAtUtc: null,
+      lastCommitShortSha: "aaaaaaaaaaaa",
+      lastPushAtUtc: null,
+      lastErrorCode: "git_push_failed",
+      rotationRequired: false,
+      repositoryObjectBytes: 4096,
+    });
+
+    await store.loadGitStatus();
+
+    expect(store.gitStatus?.state).toBe("retry_wait");
+    expect(store.gitStatus?.lastErrorCode).toBe("git_push_failed");
+
+    store.resetSensitive();
+
+    expect(store.gitStatus).toBeNull();
+    expect(store.gitStatusError).toBeNull();
+  });
 });

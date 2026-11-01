@@ -17,6 +17,8 @@ public sealed class VaultSessionManager : IAsyncDisposable
     private readonly object disposeSync = new();
     private readonly SemaphoreSlim operationGate = new(1, 1);
     private readonly AsyncLocal<bool> operationDepth = new();
+
+    public event Action<VaultStateChangedEvent>? StateChanged;
     private int state;
     private VaultSession? session = null;
     private VaultLockReason lockReason = VaultLockReason.None;
@@ -359,6 +361,7 @@ public sealed class VaultSessionManager : IAsyncDisposable
                 timeProvider.GetUtcNow(),
                 new VaultActivityState(timeProvider));
 
+            VaultSessionStatus completedStatus;
             lock (transitionSync)
             {
                 if ((VaultSessionState)state != VaultSessionState.Unlocking)
@@ -372,8 +375,11 @@ public sealed class VaultSessionManager : IAsyncDisposable
                 lockReason = VaultLockReason.None;
                 state = (int)VaultSessionState.Unlocked;
                 ownershipTransferred = true;
-                return CreateStatus();
+                completedStatus = CreateStatus();
             }
+
+            RaiseStateChanged(completedStatus);
+            return completedStatus;
         }
         catch (Exception exception)
         {
@@ -832,11 +838,14 @@ public sealed class VaultSessionManager : IAsyncDisposable
             if (!gateAcquired)
             {
                 SetLockFailed();
-                completion.TrySetResult(CreateStatus());
+                var failedStatus = CreateStatus();
+                RaiseStateChanged(failedStatus);
+                completion.TrySetResult(failedStatus);
                 return;
             }
 
             await lockedSession.ReleaseAsync();
+            VaultSessionStatus lockedStatus;
             lock (transitionSync)
             {
                 if (ReferenceEquals(session, lockedSession))
@@ -845,13 +854,18 @@ public sealed class VaultSessionManager : IAsyncDisposable
                 }
 
                 state = (int)VaultSessionState.Locked;
-                completion.TrySetResult(CreateStatus());
+                lockedStatus = CreateStatus();
             }
+
+            RaiseStateChanged(lockedStatus);
+            completion.TrySetResult(lockedStatus);
         }
         catch
         {
             SetLockFailed();
-            completion.TrySetResult(CreateStatus());
+            var failedStatus = CreateStatus();
+            RaiseStateChanged(failedStatus);
+            completion.TrySetResult(failedStatus);
         }
         finally
         {
@@ -882,6 +896,30 @@ public sealed class VaultSessionManager : IAsyncDisposable
         lock (transitionSync)
         {
             state = (int)VaultSessionState.LockFailed;
+        }
+    }
+
+    private void RaiseStateChanged(VaultSessionStatus status)
+    {
+        var handlers = StateChanged;
+        if (handlers is null)
+        {
+            return;
+        }
+
+        var change = new VaultStateChangedEvent(
+            status,
+            timeProvider.GetUtcNow());
+        foreach (var handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                ((Action<VaultStateChangedEvent>)handler)(change);
+            }
+            catch
+            {
+                // Observers must not change Vault lifecycle behavior.
+            }
         }
     }
 

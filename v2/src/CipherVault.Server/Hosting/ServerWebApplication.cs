@@ -7,6 +7,7 @@ using CipherVault.Application.Import;
 using CipherVault.Application.Search;
 using CipherVault.Server.Api;
 using CipherVault.Server.Api.Endpoints;
+using CipherVault.Server.Backup;
 using CipherVault.Server.Middleware;
 using CipherVault.Server.Mcp;
 using CipherVault.Server.Security;
@@ -54,6 +55,7 @@ public static class ServerWebApplication
         builder.Services.AddSingleton(new BackupStorageOptions(
             options.Paths.BackupDirectory,
             options.Paths.BackupLockPath));
+        builder.Services.AddSingleton(options.GitBackup);
         builder.Services.AddSingleton(timeProvider);
         builder.Services.AddSingleton(sessionManager);
         builder.Services.AddSingleton(tokenStore);
@@ -69,6 +71,14 @@ public static class ServerWebApplication
         builder.Services.AddSingleton<UnlockAttemptLimiter>();
         builder.Services.AddSingleton<ActivityTouchLimiter>();
         builder.Services.AddSingleton<BackupService>();
+        builder.Services.AddSingleton<GitBackupStateStore>();
+        builder.Services.AddSingleton<IGitCommandRunner, GitCommandRunner>();
+        builder.Services.AddSingleton<IGitBackupRepository, GitBackupRepository>();
+        builder.Services.AddSingleton<GitBackupCoordinator>();
+        builder.Services.AddSingleton<IDocumentMutationObserver>(
+            provider => provider.GetRequiredService<GitBackupCoordinator>());
+        builder.Services.AddHostedService(
+            provider => provider.GetRequiredService<GitBackupCoordinator>());
         builder.Services.AddCipherVaultDataProtection(options.Paths);
         builder.Services.AddVaultCookieAuthentication();
         builder.Services.AddVaultAntiforgery();

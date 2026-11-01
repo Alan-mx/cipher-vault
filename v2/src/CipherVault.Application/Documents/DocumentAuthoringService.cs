@@ -1,4 +1,5 @@
 using System.Text;
+using CipherVault.Application.Backup;
 using CipherVault.Application.Vault;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
@@ -13,17 +14,20 @@ public sealed class DocumentAuthoringService
     private const int MaxDocumentBytes = 4 * 1024 * 1024;
     private readonly VaultSessionManager sessionManager;
     private readonly TimeProvider timeProvider;
+    private readonly IDocumentMutationObserver? mutationObserver;
 
     public DocumentAuthoringService(
         VaultSessionManager sessionManager,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IDocumentMutationObserver? mutationObserver = null)
     {
         this.sessionManager = sessionManager ??
             throw new ArgumentNullException(nameof(sessionManager));
         this.timeProvider = timeProvider ?? TimeProvider.System;
+        this.mutationObserver = mutationObserver;
     }
 
-    public Task<DocumentWriteResult> AppendAsync(
+    public async Task<DocumentWriteResult> AppendAsync(
         Guid documentId,
         int expectedRevision,
         string content,
@@ -32,7 +36,7 @@ public sealed class DocumentAuthoringService
     {
         ArgumentNullException.ThrowIfNull(content);
         ArgumentNullException.ThrowIfNull(actor);
-        return sessionManager.ExecuteAsync(
+        var result = await sessionManager.ExecuteAsync(
             async (context, token) =>
             {
                 await context.BeginTransactionAsync(token);
@@ -68,10 +72,15 @@ public sealed class DocumentAuthoringService
                 await context.CommitTransactionAsync(token);
                 return result;
             },
-            cancellationToken).AsTask();
+            cancellationToken);
+        if (result.AuditEventId is not null)
+        {
+            await mutationObserver.NotifySafelyAsync(DocumentMutationKind.Update);
+        }
+        return result;
     }
 
-    public Task<DocumentWriteResult> UpdatePartialAsync(
+    public async Task<DocumentWriteResult> UpdatePartialAsync(
         Guid documentId,
         int expectedRevision,
         DocumentPartialUpdate update,
@@ -81,7 +90,7 @@ public sealed class DocumentAuthoringService
         ArgumentNullException.ThrowIfNull(update);
         ArgumentNullException.ThrowIfNull(actor);
         ValidatePresence(update);
-        return sessionManager.ExecuteAsync(
+        var result = await sessionManager.ExecuteAsync(
             async (context, token) =>
             {
                 await context.BeginTransactionAsync(token);
@@ -148,7 +157,12 @@ public sealed class DocumentAuthoringService
                 await context.CommitTransactionAsync(token);
                 return result;
             },
-            cancellationToken).AsTask();
+            cancellationToken);
+        if (result.AuditEventId is not null)
+        {
+            await mutationObserver.NotifySafelyAsync(DocumentMutationKind.Update);
+        }
+        return result;
     }
 
     private static async Task<CurrentAuthoringDocument> ReadCurrentAsync(

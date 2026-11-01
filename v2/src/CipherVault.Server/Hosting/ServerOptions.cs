@@ -19,7 +19,8 @@ public sealed record ServerOptions
         long maxRequestBodyBytes,
         bool containerMode = false,
         IReadOnlyList<string>? allowedHosts = null,
-        IReadOnlyList<Uri>? developmentOrigins = null)
+        IReadOnlyList<Uri>? developmentOrigins = null,
+        GitBackupOptions? gitBackup = null)
     {
         Paths = paths;
         ListenAddresses = listenAddresses;
@@ -28,6 +29,7 @@ public sealed record ServerOptions
         ContainerMode = containerMode;
         AllowedHosts = allowedHosts ?? ["127.0.0.1", "localhost"];
         DevelopmentOrigins = developmentOrigins ?? [];
+        GitBackup = gitBackup ?? GitBackupOptions.Disabled;
     }
 
     public ApplicationPaths Paths { get; }
@@ -43,6 +45,8 @@ public sealed record ServerOptions
     public IReadOnlyList<string> AllowedHosts { get; }
 
     public IReadOnlyList<Uri> DevelopmentOrigins { get; }
+
+    public GitBackupOptions GitBackup { get; }
 
     public static ServerOptions Load(IConfiguration configuration)
     {
@@ -60,6 +64,7 @@ public sealed record ServerOptions
         var addresses = ParseListenAddresses(
             configuration["ASPNETCORE_URLS"],
             containerMode);
+        var gitBackup = GitBackupOptions.Load(configuration, paths);
         return new ServerOptions(
             paths,
             addresses,
@@ -67,7 +72,8 @@ public sealed record ServerOptions
             DefaultMaxRequestBodyBytes,
             containerMode,
             allowedHosts,
-            developmentOrigins);
+            developmentOrigins,
+            gitBackup);
     }
 
     internal static ApplicationPaths ResolvePaths(

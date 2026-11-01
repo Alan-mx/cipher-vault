@@ -3,6 +3,7 @@ import type {
   BackupCreateResponse,
   BackupListResponse,
   BackupQuery,
+  GitBackupStatus,
 } from "../types/api";
 
 export const backupApi = {
@@ -23,4 +24,9 @@ export const backupApi = {
 
   downloadUrl: (fileName: string): string =>
     `/api/backups/${encodeURIComponent(fileName)}/download`,
+
+  getGitStatus: (): Promise<GitBackupStatus> =>
+    apiClient.request<GitBackupStatus>("/api/backups/git/status", {
+      method: "GET",
+    }),
 };

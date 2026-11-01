@@ -1,14 +1,21 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed, onBeforeUnmount, onMounted } from "vue";
 import { NAlert, NButton, NIcon, NSpin } from "naive-ui";
-import { Archive, Download, Plus, RefreshCw } from "@lucide/vue";
+import { Archive, Download, GitBranch, Plus, RefreshCw } from "@lucide/vue";
 import { useBackupStore } from "../../stores/backups";
-import type { BackupFileStatus, BackupListItem } from "../../types/api";
+import type {
+  BackupFileStatus,
+  BackupListItem,
+  GitBackupState,
+} from "../../types/api";
 import { describeApiError } from "../../utils/api-error";
 
 const backups = useBackupStore();
 const errorMessage = computed(() =>
   backups.error ? describeApiError(backups.error) : "",
+);
+const gitStatusError = computed(() =>
+  backups.gitStatusError ? describeApiError(backups.gitStatusError) : "",
 );
 
 const statusLabel = (status: BackupFileStatus): string => {
@@ -43,12 +50,52 @@ const formatDate = (item: BackupListItem): string => {
   });
 };
 
+const formatTimestamp = (value?: string | null): string =>
+  value
+    ? new Date(value).toLocaleString("zh-CN", {
+        dateStyle: "medium",
+        timeStyle: "short",
+      })
+    : "暂无";
+
+const gitStateLabel = (state: GitBackupState): string => {
+  switch (state) {
+    case "disabled":
+      return "未启用";
+    case "idle":
+      return "已同步";
+    case "pending":
+      return "等待同步";
+    case "running":
+      return "正在备份";
+    case "retry_wait":
+      return "等待重试";
+    case "rotation_required":
+      return "需要轮换仓库";
+    case "failed":
+      return "同步失败";
+  }
+};
+
 const createBackup = async (): Promise<void> => {
   await backups.create();
 };
 
+let gitStatusTimer: ReturnType<typeof setInterval> | null = null;
+
 onMounted(() => {
   void backups.load();
+  void backups.loadGitStatus();
+  gitStatusTimer = setInterval(() => {
+    void backups.loadGitStatus();
+  }, 10_000);
+});
+
+onBeforeUnmount(() => {
+  if (gitStatusTimer) {
+    clearInterval(gitStatusTimer);
+    gitStatusTimer = null;
+  }
 });
 </script>
 
@@ -75,6 +122,60 @@ onMounted(() => {
     <NAlert v-if="errorMessage" type="error" :show-icon="false">
       {{ errorMessage }}
     </NAlert>
+
+    <div class="git-backup-status">
+      <div class="git-backup-heading">
+        <div class="git-backup-title">
+          <NIcon :component="GitBranch" aria-hidden="true" />
+          <strong>自动 Git 备份</strong>
+        </div>
+        <span
+          v-if="backups.gitStatus"
+          class="git-state"
+          :class="`git-state--${backups.gitStatus.state}`"
+        >
+          {{ gitStateLabel(backups.gitStatus.state) }}
+        </span>
+        <NSpin v-else-if="backups.gitStatusLoading" size="small" />
+      </div>
+
+      <NAlert v-if="gitStatusError" type="error" :show-icon="false">
+        {{ gitStatusError }}
+      </NAlert>
+
+      <template v-if="backups.gitStatus">
+        <div class="git-backup-meta">
+          <span>
+            最近成功：{{ formatTimestamp(backups.gitStatus.lastSuccessAtUtc) }}
+          </span>
+          <span v-if="backups.gitStatus.lastCommitShortSha">
+            commit：<code>{{ backups.gitStatus.lastCommitShortSha }}</code>
+          </span>
+          <span v-if="backups.gitStatus.pushPending">等待 push</span>
+          <span v-if="backups.gitStatus.pending">存在待备份修改</span>
+          <span v-if="backups.gitStatus.nextAttemptAtUtc">
+            下次重试：{{ formatTimestamp(backups.gitStatus.nextAttemptAtUtc) }}
+          </span>
+        </div>
+
+        <NAlert
+          v-if="backups.gitStatus.state === 'rotation_required'"
+          type="warning"
+          :show-icon="false"
+        >
+          当前仓库已达到轮换阈值。请创建新的私有备份仓库，更新环境变量并重启
+          Server；旧仓库不会被自动删除。
+        </NAlert>
+
+        <NAlert
+          v-else-if="backups.gitStatus.lastErrorCode"
+          type="error"
+          :show-icon="false"
+        >
+          自动备份错误：<code>{{ backups.gitStatus.lastErrorCode }}</code>
+        </NAlert>
+      </template>
+    </div>
 
     <div v-if="backups.loading" class="backup-loading" aria-live="polite">
       <NSpin size="small" />
@@ -160,6 +261,61 @@ onMounted(() => {
 <style scoped>
 .backup-panel {
   min-width: 0;
+}
+
+.git-backup-status {
+  display: grid;
+  gap: 8px;
+  padding: 10px 0 14px;
+  border-top: 1px solid var(--cv-border);
+  border-bottom: 1px solid var(--cv-border);
+}
+
+.git-backup-heading,
+.git-backup-title,
+.git-backup-meta {
+  display: flex;
+  align-items: center;
+}
+
+.git-backup-heading {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.git-backup-title {
+  gap: 7px;
+}
+
+.git-backup-meta {
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: var(--cv-muted);
+  font-size: 11px;
+}
+
+.git-state {
+  color: var(--cv-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.git-state--idle {
+  color: #0b7a45;
+}
+
+.git-state--running,
+.git-state--pending {
+  color: var(--cv-accent);
+}
+
+.git-state--retry_wait,
+.git-state--rotation_required {
+  color: #8a5d00;
+}
+
+.git-state--failed {
+  color: var(--cv-danger);
 }
 
 .backup-heading {

@@ -1,5 +1,6 @@
 using CipherVault.Core.Documents;
 using CipherVault.Core.Storage.Documents;
+using CipherVault.Application.Backup;
 using CipherVault.Application.Vault;
 
 namespace CipherVault.Application.Documents;
@@ -8,24 +9,27 @@ public sealed class DocumentService
 {
     private readonly VaultSessionManager sessionManager;
     private readonly TimeProvider timeProvider;
+    private readonly IDocumentMutationObserver? mutationObserver;
 
     public DocumentService(
         VaultSessionManager sessionManager,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IDocumentMutationObserver? mutationObserver = null)
     {
         this.sessionManager = sessionManager ??
             throw new ArgumentNullException(nameof(sessionManager));
         this.timeProvider = timeProvider ?? TimeProvider.System;
+        this.mutationObserver = mutationObserver;
     }
 
-    public Task<DocumentWriteResult> CreateAsync(
+    public async Task<DocumentWriteResult> CreateAsync(
         CreateDocumentRequest request,
         VaultActorContext actor,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(actor);
-        return sessionManager.ExecuteAsync(
+        var result = await sessionManager.ExecuteAsync(
             async (context, token) =>
             {
                 await context.BeginTransactionAsync(token);
@@ -38,7 +42,12 @@ public sealed class DocumentService
                 await context.CommitTransactionAsync(token);
                 return result;
             },
-            cancellationToken).AsTask();
+            cancellationToken);
+        if (result.AuditEventId is not null)
+        {
+            await mutationObserver.NotifySafelyAsync(DocumentMutationKind.Create);
+        }
+        return result;
     }
 
     public Task<DocumentMetadata> GetAsync(
@@ -84,7 +93,7 @@ public sealed class DocumentService
                 DocumentQueryStore.GetMapAsync(context, documentId, token)),
             cancellationToken).AsTask();
 
-    public Task<DocumentWriteResult> UpdateAsync(
+    public async Task<DocumentWriteResult> UpdateAsync(
         Guid documentId,
         int expectedRevision,
         UpdateDocumentRequest request,
@@ -93,7 +102,7 @@ public sealed class DocumentService
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(actor);
-        return sessionManager.ExecuteAsync(
+        var result = await sessionManager.ExecuteAsync(
             async (context, token) =>
             {
                 await context.BeginTransactionAsync(token);
@@ -108,7 +117,12 @@ public sealed class DocumentService
                 await context.CommitTransactionAsync(token);
                 return result;
             },
-            cancellationToken).AsTask();
+            cancellationToken);
+        if (result.AuditEventId is not null)
+        {
+            await mutationObserver.NotifySafelyAsync(DocumentMutationKind.Update);
+        }
+        return result;
     }
 
     public Task<TagPage> ListTagsAsync(
@@ -151,7 +165,7 @@ public sealed class DocumentService
                     token)),
             cancellationToken).AsTask();
 
-    public Task<PatchResult> PatchAsync(
+    public async Task<PatchResult> PatchAsync(
         Guid documentId,
         int expectedRevision,
         DocumentPatchCommand command,
@@ -160,7 +174,7 @@ public sealed class DocumentService
     {
         ArgumentNullException.ThrowIfNull(command);
         ArgumentNullException.ThrowIfNull(actor);
-        return sessionManager.ExecuteAsync(
+        var result = await sessionManager.ExecuteAsync(
             async (context, token) =>
             {
                 if (!command.DryRun)
@@ -182,17 +196,23 @@ public sealed class DocumentService
                 }
                 return result;
             },
-            cancellationToken).AsTask();
+            cancellationToken);
+        if (!command.DryRun && result.AuditEventId is not null)
+        {
+            await mutationObserver.NotifySafelyAsync(DocumentMutationKind.Patch);
+        }
+
+        return result;
     }
 
-    public Task<TrashDeleteResult> DeleteAsync(
+    public async Task<TrashDeleteResult> DeleteAsync(
         Guid documentId,
         int expectedRevision,
         VaultActorContext actor,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(actor);
-        return sessionManager.ExecuteAsync(
+        var result = await sessionManager.ExecuteAsync(
             async (context, token) =>
             {
                 await context.BeginTransactionAsync(token);
@@ -206,7 +226,12 @@ public sealed class DocumentService
                 await context.CommitTransactionAsync(token);
                 return result;
             },
-            cancellationToken).AsTask();
+            cancellationToken);
+        if (result.AuditEventId is not null)
+        {
+            await mutationObserver.NotifySafelyAsync(DocumentMutationKind.Delete);
+        }
+        return result;
     }
 
     public Task<LinkRebuildResult> RebuildLinkIndexAsync(

@@ -1,3 +1,4 @@
+using CipherVault.Application.Backup;
 using CipherVault.Application.Vault;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Storage.Documents;
@@ -8,14 +9,17 @@ public sealed class TrashService
 {
     private readonly VaultSessionManager sessionManager;
     private readonly TimeProvider timeProvider;
+    private readonly IDocumentMutationObserver? mutationObserver;
 
     public TrashService(
         VaultSessionManager sessionManager,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IDocumentMutationObserver? mutationObserver = null)
     {
         this.sessionManager = sessionManager ??
             throw new ArgumentNullException(nameof(sessionManager));
         this.timeProvider = timeProvider ?? TimeProvider.System;
+        this.mutationObserver = mutationObserver;
     }
 
     public Task<TrashPage> ListAsync(
@@ -30,7 +34,7 @@ public sealed class TrashService
                     token)),
             cancellationToken).AsTask();
 
-    public Task<DocumentWriteResult> RestoreAsync(
+    public async Task<DocumentWriteResult> RestoreAsync(
         Guid documentId,
         int expectedRevision,
         string? replacementPath,
@@ -38,7 +42,7 @@ public sealed class TrashService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(actor);
-        return sessionManager.ExecuteAsync(
+        var result = await sessionManager.ExecuteAsync(
             async (context, token) =>
             {
                 await context.BeginTransactionAsync(token);
@@ -53,17 +57,22 @@ public sealed class TrashService
                 await context.CommitTransactionAsync(token);
                 return result;
             },
-            cancellationToken).AsTask();
+            cancellationToken);
+        if (result.AuditEventId is not null)
+        {
+            await mutationObserver.NotifySafelyAsync(DocumentMutationKind.Restore);
+        }
+        return result;
     }
 
-    public Task<Guid?> PurgeAsync(
+    public async Task<Guid?> PurgeAsync(
         Guid documentId,
         int expectedRevision,
         VaultActorContext actor,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(actor);
-        return sessionManager.ExecuteAsync(
+        var result = await sessionManager.ExecuteAsync(
             async (context, token) =>
             {
                 await context.BeginTransactionAsync(token);
@@ -77,6 +86,11 @@ public sealed class TrashService
                 await context.CommitTransactionAsync(token);
                 return result;
             },
-            cancellationToken).AsTask();
+            cancellationToken);
+        if (result is not null)
+        {
+            await mutationObserver.NotifySafelyAsync(DocumentMutationKind.Purge);
+        }
+        return result;
     }
 }
