@@ -1,6 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
 $v2Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$solution = Join-Path (Split-Path $v2Root -Parent) 'CipherVault.slnx'
 $applicationRoot = Join-Path $v2Root 'src/CipherVault.Application'
 $coreRoot = Join-Path $v2Root 'src/CipherVault.Core'
 $serverRoot = Join-Path $v2Root 'src/CipherVault.Server'
@@ -104,13 +105,13 @@ if ($routeCount -ne 28) {
 
 Push-Location $v2Root
 try {
-    dotnet restore CipherVault.V2.slnx --locked-mode -p:NuGetAudit=false
+    dotnet restore $solution --locked-mode -p:NuGetAudit=false
     if ($LASTEXITCODE -ne 0) { throw 'restore failed' }
 
-    dotnet format CipherVault.V2.slnx --verify-no-changes --no-restore
+    dotnet format $solution --verify-no-changes --no-restore
     if ($LASTEXITCODE -ne 0) { throw 'format verification failed' }
 
-    dotnet build CipherVault.V2.slnx -c Release --no-restore -warnaserror
+    dotnet build $solution -c Release --no-restore -warnaserror
     if ($LASTEXITCODE -ne 0) { throw 'Release build failed' }
 
     $resultsRoot = Join-Path $v2Root 'artifacts/test-results/windows'

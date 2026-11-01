@@ -3,6 +3,7 @@ set -euo pipefail
 
 readonly repo_root="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 readonly v2_root="${repo_root}/v2"
+readonly solution="${repo_root}/CipherVault.slnx"
 readonly image="cipher-vault-phase7:${RANDOM}-$$"
 readonly container="cipher-vault-phase7-${RANDOM}-$$"
 readonly target_volume="cipher-vault-phase7-target-${RANDOM}-$$"
@@ -20,8 +21,8 @@ cleanup() {
 trap cleanup EXIT
 
 export PATH="${HOME}/.dotnet:${PATH}"
-dotnet restore "${v2_root}/CipherVault.V2.slnx" --locked-mode -p:NuGetAudit=false
-dotnet build "${v2_root}/CipherVault.V2.slnx" -c Release --no-restore -warnaserror
+dotnet restore "$solution" --locked-mode -p:NuGetAudit=false
+dotnet build "$solution" -c Release --no-restore -warnaserror
 
 mkdir -p "$artifact_root"
 readonly source_root="${artifact_root}/source-${RANDOM}-$$"

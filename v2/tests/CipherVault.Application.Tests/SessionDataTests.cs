@@ -113,9 +113,9 @@ public sealed class SessionDataTests
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory is not null)
         {
-            if (File.Exists(Path.Combine(directory.FullName, "CipherVault.V2.slnx")))
+            if (File.Exists(Path.Combine(directory.FullName, "CipherVault.slnx")))
             {
-                return directory.FullName;
+                return Path.Combine(directory.FullName, "v2");
             }
 
             directory = directory.Parent;

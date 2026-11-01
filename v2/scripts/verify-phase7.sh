@@ -2,6 +2,8 @@
 set -euo pipefail
 
 readonly v2_root="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+readonly repo_root="$(cd "${v2_root}/.." && pwd)"
+readonly solution="${repo_root}/CipherVault.slnx"
 readonly probe_project="${v2_root}/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj"
 readonly password="phase7 cross platform password"
 readonly stamp="$(date +%Y%m%d-%H%M%S)"
@@ -19,10 +21,10 @@ fi
 export PATH="${HOME}/.dotnet:${PATH}"
 cd "$v2_root"
 
-dotnet restore CipherVault.V2.slnx --locked-mode -p:NuGetAudit=false \
+dotnet restore "$solution" --locked-mode -p:NuGetAudit=false \
     "${artifact_args[@]}"
-dotnet format CipherVault.V2.slnx --verify-no-changes --no-restore
-dotnet build CipherVault.V2.slnx -c Release --no-restore \
+dotnet format "$solution" --verify-no-changes --no-restore
+dotnet build "$solution" -c Release --no-restore \
     -warnaserror "${artifact_args[@]}"
 
 readonly results_dir="${v2_root}/artifacts/test-results/linux"

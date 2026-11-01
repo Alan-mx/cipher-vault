@@ -13,6 +13,7 @@ param(
 $ErrorActionPreference = "Stop"
 $v2Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $repoRoot = (Resolve-Path (Join-Path $v2Root "..")).Path
+$solution = Join-Path $repoRoot "CipherVault.slnx"
 . (Join-Path $v2Root "deploy/versions.ps1")
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
@@ -99,7 +100,7 @@ if (-not $SkipFrontendBuild) {
 $publishRoot = Join-Path $output "publish"
 Push-Location $v2Root
 try {
-    dotnet restore CipherVault.V2.slnx --locked-mode -p:NuGetAudit=false
+    dotnet restore $solution --locked-mode -p:NuGetAudit=false
     if ($LASTEXITCODE -ne 0) { throw "release_restore_failed" }
     dotnet publish src/CipherVault.Server/CipherVault.Server.csproj `
         -c Release `

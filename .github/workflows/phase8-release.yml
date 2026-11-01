@@ -82,9 +82,9 @@ jobs:
           path: v2/src/CipherVault.Server/wwwroot
       - name: Restore and test
         run: |
-          dotnet restore v2/CipherVault.V2.slnx --locked-mode -p:NuGetAudit=false
-          dotnet build v2/CipherVault.V2.slnx -c Release --no-restore -warnaserror
-          dotnet test v2/CipherVault.V2.slnx -c Release --no-build --no-restore
+          dotnet restore CipherVault.slnx --locked-mode -p:NuGetAudit=false
+          dotnet build CipherVault.slnx -c Release --no-restore -warnaserror
+          dotnet test CipherVault.slnx -c Release --no-build --no-restore
       - name: Publish Windows
         run: |
           $root = Join-Path $env:GITHUB_WORKSPACE $env:CIPHERVAULT_ARTIFACT_ROOT
@@ -128,9 +128,9 @@ jobs:
           path: v2/src/CipherVault.Server/wwwroot
       - name: Restore and test
         run: |
-          dotnet restore v2/CipherVault.V2.slnx --locked-mode -p:NuGetAudit=false
-          dotnet build v2/CipherVault.V2.slnx -c Release --no-restore -warnaserror
-          dotnet test v2/CipherVault.V2.slnx -c Release --no-build --no-restore
+          dotnet restore CipherVault.slnx --locked-mode -p:NuGetAudit=false
+          dotnet build CipherVault.slnx -c Release --no-restore -warnaserror
+          dotnet test CipherVault.slnx -c Release --no-build --no-restore
       - name: Publish Linux
         shell: bash
         run: |

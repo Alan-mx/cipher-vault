@@ -3,6 +3,7 @@ set -euo pipefail
 
 readonly v2_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly repo_root="$(cd "${v2_root}/.." && pwd)"
+readonly solution="${repo_root}/CipherVault.slnx"
 source "${v2_root}/deploy/versions.env"
 
 rid=""
@@ -77,7 +78,7 @@ else
 fi
 
 cd "$v2_root"
-dotnet restore CipherVault.V2.slnx --locked-mode -p:NuGetAudit=false
+dotnet restore "$solution" --locked-mode -p:NuGetAudit=false
 dotnet publish src/CipherVault.Server/CipherVault.Server.csproj \
     -c Release \
     -r "$rid" \

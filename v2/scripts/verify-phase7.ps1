@@ -1,6 +1,7 @@
 $ErrorActionPreference = "Stop"
 
 $v2Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$solution = Join-Path (Split-Path $v2Root -Parent) "CipherVault.slnx"
 $frontendRoot = Join-Path $v2Root "frontend"
 $probeProject = Join-Path $v2Root "tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj"
 $password = "phase7 cross platform password"
@@ -39,11 +40,11 @@ finally {
 
 Push-Location $v2Root
 try {
-    dotnet restore CipherVault.V2.slnx --locked-mode -p:NuGetAudit=false
+    dotnet restore $solution --locked-mode -p:NuGetAudit=false
     Assert-Success "restore" $LASTEXITCODE
-    dotnet format CipherVault.V2.slnx --verify-no-changes --no-restore
+    dotnet format $solution --verify-no-changes --no-restore
     Assert-Success "format" $LASTEXITCODE
-    dotnet build CipherVault.V2.slnx -c Release --no-restore -warnaserror
+    dotnet build $solution -c Release --no-restore -warnaserror
     Assert-Success "build" $LASTEXITCODE
 
     $resultsRoot = Join-Path $v2Root "artifacts/test-results/windows"

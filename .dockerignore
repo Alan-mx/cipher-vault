@@ -6,17 +6,9 @@ v2/artifacts/
 v2/frontend/
 v2/tests/
 v2/scripts/
-v2/artifacts/
 docs/
-poc/artifacts/
-poc/codex-home/
-poc/
-src/
-tests/
-scripts/
 .git/
 .github/
 .vs/
 .vscode/
 .idea/
-frontend/

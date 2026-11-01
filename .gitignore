@@ -6,8 +6,7 @@ v2/frontend/playwright-report/
 v2/frontend/test-results/
 v2/src/CipherVault.Server/wwwroot/
 artifacts/
-poc/artifacts/
-poc/codex-home/
+v2/artifacts/
 *.cvbackup
 vault.db
 vault.db-journal

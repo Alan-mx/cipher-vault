@@ -10,223 +10,204 @@ permissions:
 jobs:
   frontend:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-
+    timeout-minutes: 30
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 10.0.x
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+          dotnet-version: 10.0.402
+      - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: v2/frontend/package-lock.json
-
+      - name: Restore .NET
+        run: dotnet restore CipherVault.slnx --locked-mode -p:NuGetAudit=false
       - name: Install frontend dependencies
         working-directory: v2/frontend
         run: npm ci --no-audit --no-fund
-
-      - name: Typecheck frontend
-        working-directory: v2/frontend
-        run: npm run typecheck
-
       - name: Check frontend formatting
         working-directory: v2/frontend
         run: npm run format:check
-
+      - name: Typecheck frontend
+        working-directory: v2/frontend
+        run: npm run typecheck
       - name: Lint frontend
         working-directory: v2/frontend
         run: npm run lint
-
       - name: Test frontend
         working-directory: v2/frontend
         run: npm test
-
       - name: Build frontend
         working-directory: v2/frontend
         run: npm run build
-
       - name: Build Server for browser verification
-        run: dotnet build v2/src/CipherVault.Server/CipherVault.Server.csproj -c Release -warnaserror
-
+        run: dotnet build v2/src/CipherVault.Server/CipherVault.Server.csproj -c Release --no-restore -warnaserror
       - name: Install Chromium
         working-directory: v2/frontend
         run: npx playwright install --with-deps chromium
-
       - name: Browser and accessibility tests
         working-directory: v2/frontend
         run: npm run test:e2e
-
       - name: Upload frontend evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: phase6-frontend-evidence
+          name: v2-frontend-evidence
           path: |
             v2/artifacts/e2e
             v2/frontend/playwright-report
           if-no-files-found: ignore
-
-  windows:
-    runs-on: windows-latest
-    timeout-minutes: 20
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Restore
-        run: dotnet restore CipherVault.sln
-
-      - name: Build
-        run: dotnet build CipherVault.sln -c Release --no-restore
-
-      - name: Verify formatting
-        run: dotnet format CipherVault.sln --verify-no-changes --no-restore
-
-      - name: Test
-        run: |
-          $projects = @(
-            "tests/CipherVault.Auth.Win.Tests/CipherVault.Auth.Win.Tests.csproj",
-            "tests/CipherVault.Ui.Wpf.Tests/CipherVault.Ui.Wpf.Tests.csproj",
-            "tests/CipherVault.Mcp.Tests/CipherVault.Mcp.Tests.csproj",
-            "tests/CipherVault.Host.Tests/CipherVault.Host.Tests.csproj",
-            "tests/CipherVault.Core.Tests/CipherVault.Core.Tests.csproj"
-          )
-          $failedProjects = @()
-          $resultsDirectory = Join-Path $PWD "TestResults"
-          New-Item -ItemType Directory -Path $resultsDirectory -Force | Out-Null
-          foreach ($project in $projects) {
-            $projectName = [IO.Path]::GetFileNameWithoutExtension($project)
-            dotnet test $project `
-              -c Release `
-              --no-build `
-              --logger "console;verbosity=minimal" `
-              --logger "trx;LogFileName=$projectName.trx" `
-              --results-directory $resultsDirectory
-            if ($LASTEXITCODE -ne 0) {
-              $failedProjects += $project
-            }
-          }
-          [xml[]]$trxFiles = Get-ChildItem $resultsDirectory -Filter "*.trx" |
-            ForEach-Object { Get-Content -Raw $_.FullName }
-          foreach ($trx in $trxFiles) {
-            $ns = New-Object System.Xml.XmlNamespaceManager($trx.NameTable)
-            $ns.AddNamespace(
-              "t",
-              "http://microsoft.com/schemas/VisualStudio/TeamTest/2010")
-            foreach ($failure in $trx.SelectNodes(
-                "//t:UnitTestResult[@outcome='Failed']",
-                $ns)) {
-              Write-Output "::error title=Test failed::$($failure.testName)"
-            }
-          }
-          if ($failedProjects.Count -gt 0) {
-            Write-Output "Failed projects: $($failedProjects -join ', ')"
-            exit 1
-          }
-
-      - name: Upload test results
-        if: failure()
+      - name: Upload frontend build
         uses: actions/upload-artifact@v4
         with:
-          name: test-results
-          path: TestResults/*.trx
-          if-no-files-found: ignore
+          name: v2-frontend-wwwroot
+          path: v2/src/CipherVault.Server/wwwroot
+          retention-days: 14
 
-  phase7-linux:
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Restore
-        run: dotnet restore v2/CipherVault.V2.slnx --locked-mode -p:NuGetAudit=false
-
-      - name: Build
-        run: dotnet build v2/CipherVault.V2.slnx -c Release --no-restore -warnaserror
-
-      - name: Test
-        run: |
-          dotnet test v2/tests/CipherVault.Core.Tests/CipherVault.Core.Tests.csproj -c Release --no-build --no-restore
-          dotnet test v2/tests/CipherVault.Application.Tests/CipherVault.Application.Tests.csproj -c Release --no-build --no-restore
-          dotnet test v2/tests/CipherVault.Server.Tests/CipherVault.Server.Tests.csproj -c Release --no-build --no-restore
-
-      - name: Cross-platform backup probe
-        shell: bash
-        run: |
-          root="$RUNNER_TEMP/phase7-linux"
-          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release -- \
-            create "$root/source" "$root/backups" "$root/backup.cvbackup" "phase7 ci password"
-          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release -- \
-            restore "$root/backup.cvbackup" "$root/restored" "phase7 ci password"
-          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release -- \
-            verify "$root/restored" "phase7 ci password"
-
-  phase7-windows:
+  dotnet-windows:
+    needs: frontend
     runs-on: windows-latest
-    timeout-minutes: 25
-
+    timeout-minutes: 30
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
-          dotnet-version: 10.0.x
-
+          name: v2-frontend-wwwroot
+          path: v2/src/CipherVault.Server/wwwroot
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.402
       - name: Restore
-        run: dotnet restore v2/CipherVault.V2.slnx --locked-mode -p:NuGetAudit=false
-
+        run: dotnet restore CipherVault.slnx --locked-mode -p:NuGetAudit=false
+      - name: Verify formatting
+        run: dotnet format CipherVault.slnx --verify-no-changes --no-restore
       - name: Build
-        run: dotnet build v2/CipherVault.V2.slnx -c Release --no-restore -warnaserror
-
+        run: dotnet build CipherVault.slnx -c Release --no-restore -warnaserror
       - name: Test
-        run: |
-          dotnet test v2/tests/CipherVault.Core.Tests/CipherVault.Core.Tests.csproj -c Release --no-build --no-restore
-          dotnet test v2/tests/CipherVault.Application.Tests/CipherVault.Application.Tests.csproj -c Release --no-build --no-restore
-          dotnet test v2/tests/CipherVault.Server.Tests/CipherVault.Server.Tests.csproj -c Release --no-build --no-restore
-
+        run: dotnet test CipherVault.slnx -c Release --no-build --no-restore
       - name: Cross-platform backup probe
         shell: pwsh
         run: |
-          $root = Join-Path $env:RUNNER_TEMP "phase7-windows"
-          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release -- create "$root/source" "$root/backups" "$root/backup.cvbackup" "phase7 ci password"
-          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release -- restore "$root/backup.cvbackup" "$root/restored" "phase7 ci password"
-          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release -- verify "$root/restored" "phase7 ci password"
+          $root = Join-Path $env:RUNNER_TEMP "v2-windows"
+          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- create "$root/source" "$root/backups" "$root/backup.cvbackup" "v2 ci password"
+          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- restore "$root/backup.cvbackup" "$root/restored" "v2 ci password"
+          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- verify "$root/restored" "v2 ci password"
 
-  phase7-docker:
+  dotnet-linux:
+    needs: frontend
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-
+    timeout-minutes: 30
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
-          dotnet-version: 10.0.x
-
-      - name: Verify Docker backup restore
+          name: v2-frontend-wwwroot
+          path: v2/src/CipherVault.Server/wwwroot
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.402
+      - name: Restore
+        run: dotnet restore CipherVault.slnx --locked-mode -p:NuGetAudit=false
+      - name: Verify formatting
+        run: dotnet format CipherVault.slnx --verify-no-changes --no-restore
+      - name: Build
+        run: dotnet build CipherVault.slnx -c Release --no-restore -warnaserror
+      - name: Test
+        run: dotnet test CipherVault.slnx -c Release --no-build --no-restore
+      - name: Cross-platform backup probe
         shell: bash
-        run: bash v2/scripts/verify-phase7-docker.sh "$GITHUB_WORKSPACE"
+        run: |
+          root="$RUNNER_TEMP/v2-linux"
+          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- create "$root/source" "$root/backups" "$root/backup.cvbackup" "v2 ci password"
+          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- restore "$root/backup.cvbackup" "$root/restored" "v2 ci password"
+          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- verify "$root/restored" "v2 ci password"
+
+  docker:
+    needs: frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: v2-frontend-wwwroot
+          path: v2/src/CipherVault.Server/wwwroot
+      - name: Build formal image
+        run: |
+          docker build \
+            --file v2/deploy/Dockerfile \
+            --build-arg RELEASE_VERSION=2.0.0-rc.1 \
+            --build-arg BUILD_COMMIT="${GITHUB_SHA}" \
+            --build-arg BUILD_TIMESTAMP_UTC="$(date -u +%Y-%m-%dT%H:%M:%S.0000000Z)" \
+            --tag cipher-vault:ci \
+            .
+      - name: Inspect image
+        run: |
+          test "$(docker image inspect cipher-vault:ci --format '{{.Architecture}}')" = "amd64"
+          test "$(docker image inspect cipher-vault:ci --format '{{.Config.User}}')" = "10001:10001"
+          docker image inspect cipher-vault:ci --format '{{json .Config.Healthcheck}}' |
+            grep -q '/api/vault/status'
+      - name: Run image smoke
+        shell: bash
+        run: |
+          container="cipher-vault-ci-${RANDOM}-$$"
+          volume="cipher-vault-ci-data-${RANDOM}-$$"
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            docker volume rm "$volume" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker volume create "$volume" >/dev/null
+          docker run -d \
+            --name "$container" \
+            --publish 127.0.0.1:18080:8080 \
+            --read-only \
+            --tmpfs /tmp \
+            --security-opt no-new-privileges \
+            --cap-drop ALL \
+            --volume "$volume:/data" \
+            cipher-vault:ci >/dev/null
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:18080/api/vault/status >/tmp/status.json; then
+              break
+            fi
+            sleep 1
+          done
+          grep -q '"state":"uninitialized"' /tmp/status.json
+          curl -fsS http://127.0.0.1:18080/api/version >/tmp/version.json
+          grep -q '"productVersion":"2.0.0-rc.1"' /tmp/version.json
+          docker port "$container" 8080/tcp | grep -q '127.0.0.1:18080'
+
+  structure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate repository structure
+        shell: bash
+        run: |
+          test -f CipherVault.slnx
+          test ! -e CipherVault.sln
+          test ! -e v2/CipherVault.V2.slnx
+          test "$(grep -c '<Project ' CipherVault.slnx)" -eq 10
+          test -z "$(git ls-files src tests scripts poc)"
+          test -z "$(git grep -n -E 'CipherVault\.V2\.slnx|CipherVault\.sln([^x]|$)' -- . ':!docs' ':!.github/workflows/ci.yml' || true)"
+          test -f v2/deploy/Dockerfile
+          test -f v2/deploy/docker-compose.yml
+          test -f v2/scripts/publish-phase8.ps1
+          test -f v2/scripts/publish-phase8.sh
+          test -f v2/scripts/package-phase8.ps1
+          test -f v2/scripts/package-phase8.sh
+      - name: Reject tracked sensitive artifacts
+        shell: bash
+        run: |
+          candidates="$(
+            git ls-files |
+              grep -E '(^|/)(appsettings\.Development\.json|.*\.(pdb|cvbackup|db|db-shm|db-wal))$' ||
+              true
+          )"
+          if [[ -n "$candidates" ]]; then
+            echo "$candidates" >&2
+            exit 1
+          fi

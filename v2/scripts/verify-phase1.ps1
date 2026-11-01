@@ -1,6 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
 $v2Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$solution = Join-Path (Split-Path $v2Root -Parent) 'CipherVault.slnx'
 $sourceRoot = Join-Path $v2Root 'src/CipherVault.Core'
 $forbidden = @(
     'SQLCipher',
@@ -27,13 +28,13 @@ foreach ($file in $sourceFiles) {
 
 Push-Location $v2Root
 try {
-    dotnet restore CipherVault.V2.slnx --locked-mode
+    dotnet restore $solution --locked-mode
     if ($LASTEXITCODE -ne 0) { throw 'restore failed' }
 
-    dotnet build CipherVault.V2.slnx --no-restore
+    dotnet build $solution --no-restore
     if ($LASTEXITCODE -ne 0) { throw 'build failed' }
 
-    dotnet test CipherVault.V2.slnx --no-build --no-restore
+    dotnet test $solution --no-build --no-restore
     if ($LASTEXITCODE -ne 0) { throw 'tests failed' }
 }
 finally {

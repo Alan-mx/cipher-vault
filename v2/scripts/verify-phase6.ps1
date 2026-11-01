@@ -1,6 +1,7 @@
 $ErrorActionPreference = "Stop"
 
 $v2Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$solution = Join-Path (Split-Path $v2Root -Parent) "CipherVault.slnx"
 $frontendRoot = Join-Path $v2Root "frontend"
 $serverProject = Join-Path $v2Root "src/CipherVault.Server/CipherVault.Server.csproj"
 $indexPath = Join-Path $v2Root "src/CipherVault.Server/wwwroot/index.html"
@@ -60,11 +61,11 @@ if (-not (Test-Path $indexPath)) {
 
 Push-Location $v2Root
 try {
-    dotnet restore CipherVault.V2.slnx --locked-mode -p:NuGetAudit=false
+    dotnet restore $solution --locked-mode -p:NuGetAudit=false
     Assert-Success "dotnet restore" $LASTEXITCODE
-    dotnet format CipherVault.V2.slnx --verify-no-changes --no-restore
+    dotnet format $solution --verify-no-changes --no-restore
     Assert-Success "dotnet format" $LASTEXITCODE
-    dotnet build CipherVault.V2.slnx -c Release --no-restore -warnaserror
+    dotnet build $solution -c Release --no-restore -warnaserror
     Assert-Success "dotnet build" $LASTEXITCODE
 
     $resultsRoot = Join-Path $v2Root "artifacts/test-results/windows"

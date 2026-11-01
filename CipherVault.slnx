@@ -1,0 +1,12 @@
+<Solution>
+  <Project Path="v2/src/CipherVault.Application/CipherVault.Application.csproj" />
+  <Project Path="v2/src/CipherVault.Core/CipherVault.Core.csproj" />
+  <Project Path="v2/src/CipherVault.Server/CipherVault.Server.csproj" />
+  <Project Path="v2/tests/CipherVault.Application.Tests/CipherVault.Application.Tests.csproj" />
+  <Project Path="v2/tests/CipherVault.Core.Tests/CipherVault.Core.Tests.csproj" />
+  <Project Path="v2/tests/CipherVault.Phase1.ProcessProbe/CipherVault.Phase1.ProcessProbe.csproj" />
+  <Project Path="v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj" />
+  <Project Path="v2/tests/CipherVault.Phase8.ProcessProbe/CipherVault.Phase8.ProcessProbe.csproj" />
+  <Project Path="v2/tests/CipherVault.PlainSqliteProbe/CipherVault.PlainSqliteProbe.csproj" />
+  <Project Path="v2/tests/CipherVault.Server.Tests/CipherVault.Server.Tests.csproj" />
+</Solution>
