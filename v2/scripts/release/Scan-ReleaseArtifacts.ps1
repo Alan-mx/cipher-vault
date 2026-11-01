@@ -14,7 +14,10 @@ $ErrorActionPreference = "Stop"
 $root = (Resolve-Path -LiteralPath $ReleaseRoot).Path
 $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) `
     "cipher-vault-scan-$([Guid]::NewGuid().ToString('N'))"
-New-Item -ItemType Directory -Path $temporaryRoot -Force | Out-Null
+Microsoft.PowerShell.Management\New-Item `
+    -ItemType Directory `
+    -Path $temporaryRoot `
+    -Force | Out-Null
 $findings = [System.Collections.Generic.List[string]]::new()
 $scannedRoots = [System.Collections.Generic.List[string]]::new()
 $checksumFiles = Get-ChildItem -LiteralPath $root -File |
@@ -117,7 +120,10 @@ try {
     }
     if (Test-Path -LiteralPath $tar) {
         $tarRoot = Join-Path $temporaryRoot "linux"
-        New-Item -ItemType Directory -Path $tarRoot -Force | Out-Null
+        Microsoft.PowerShell.Management\New-Item `
+            -ItemType Directory `
+            -Path $tarRoot `
+            -Force | Out-Null
         & tar -xzf $tar -C $tarRoot
         if ($LASTEXITCODE -ne 0) {
             Add-Finding "archive_extract_failed" $tar
@@ -164,7 +170,10 @@ try {
         ).ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ")
     }
     $evidenceDirectory = Split-Path -Parent $EvidencePath
-    New-Item -ItemType Directory -Path $evidenceDirectory -Force | Out-Null
+    Microsoft.PowerShell.Management\New-Item `
+        -ItemType Directory `
+        -Path $evidenceDirectory `
+        -Force | Out-Null
     [IO.File]::WriteAllText(
         $EvidencePath,
         ($evidence | ConvertTo-Json -Depth 6),

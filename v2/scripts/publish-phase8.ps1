@@ -70,7 +70,10 @@ if ([IO.Path]::IsPathRooted($relativeOutput) -or
 if (Test-Path -LiteralPath $output) {
     Remove-Item -LiteralPath $output -Recurse -Force
 }
-New-Item -ItemType Directory -Path $output -Force | Out-Null
+Microsoft.PowerShell.Management\New-Item `
+    -ItemType Directory `
+    -Path $output `
+    -Force | Out-Null
 
 if (-not $SkipFrontendBuild) {
     Push-Location (Join-Path $v2Root "frontend")

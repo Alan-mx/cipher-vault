@@ -19,7 +19,10 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 
 $publish = (Resolve-Path -LiteralPath $PublishRoot).Path
 $output = [IO.Path]::GetFullPath($OutputRoot)
-New-Item -ItemType Directory -Path $output -Force | Out-Null
+Microsoft.PowerShell.Management\New-Item `
+    -ItemType Directory `
+    -Path $output `
+    -Force | Out-Null
 $archive = Join-Path $output "CipherVault-$Version-win-x64.zip"
 $staging = Join-Path ([IO.Path]::GetTempPath()) `
     "cipher-vault-package-$([Guid]::NewGuid().ToString('N'))"
@@ -27,7 +30,10 @@ $wrapperName = "CipherVault-$Version-win-x64"
 $wrapper = Join-Path $staging $wrapperName
 
 try {
-    New-Item -ItemType Directory -Path $wrapper -Force | Out-Null
+    Microsoft.PowerShell.Management\New-Item `
+        -ItemType Directory `
+        -Path $wrapper `
+        -Force | Out-Null
     Copy-Item -Path (Join-Path $publish "*") -Destination $wrapper -Recurse
     Copy-Item -LiteralPath (Join-Path $v2Root "deploy/windows/Start-CipherVault.ps1") $wrapper
     Copy-Item -LiteralPath (Join-Path $v2Root "deploy/windows/Install-CipherVaultStartup.ps1") $wrapper

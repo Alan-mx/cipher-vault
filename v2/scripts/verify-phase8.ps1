@@ -29,7 +29,10 @@ else {
 $dotnet = (Get-Command dotnet -ErrorAction Stop).Source
 $probeDll = Join-Path $v2Root "tests/CipherVault.Phase8.ProcessProbe/bin/Release/net10.0/CipherVault.Phase8.ProcessProbe.dll"
 
-New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
+Microsoft.PowerShell.Management\New-Item `
+    -ItemType Directory `
+    -Path $runRoot `
+    -Force | Out-Null
 $extractRoot = Join-Path $runRoot "extracted"
 Microsoft.PowerShell.Archive\Expand-Archive `
     -LiteralPath $archive `
@@ -125,7 +128,10 @@ function Complete-Probe {
     $stdout = $process.StandardOutput.ReadToEnd()
     $stderr = $process.StandardError.ReadToEnd()
     $logRoot = Join-Path $runRoot "logs"
-    New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
+    Microsoft.PowerShell.Management\New-Item `
+        -ItemType Directory `
+        -Path $logRoot `
+        -Force | Out-Null
     [IO.File]::WriteAllText(
         (Join-Path $logRoot "$Name.stdout.log"),
         $stdout)
@@ -200,7 +206,10 @@ $baseUrl = "http://127.0.0.1:43127"
 $data = Join-Path $runRoot "data"
 $config = Join-Path $runRoot "config"
 $backups = Join-Path $runRoot "backups"
-New-Item -ItemType Directory -Path $data,$config,$backups -Force | Out-Null
+Microsoft.PowerShell.Management\New-Item `
+    -ItemType Directory `
+    -Path $data,$config,$backups `
+    -Force | Out-Null
 $ready = Join-Path $runRoot "ready.json"
 $continue = Join-Path $runRoot "continue"
 $lifecycleEvidence = Join-Path $runRoot "process-resources.json"
@@ -413,7 +422,7 @@ $restoredContinue = Join-Path $runRoot "restored-continue"
 $restoredData = $restoreTarget
 $restoredConfig = Join-Path $runRoot "restored-config"
 $restoredBackups = Join-Path $runRoot "restored-backups"
-New-Item -ItemType Directory `
+Microsoft.PowerShell.Management\New-Item -ItemType Directory `
     -Path $restoredConfig,$restoredBackups `
     -Force | Out-Null
 $restoredProbe = Start-Probe `
@@ -454,7 +463,10 @@ catch {
     throw
 }
 $evidenceDirectory = [IO.Path]::GetFullPath($EvidenceRoot)
-New-Item -ItemType Directory -Path $evidenceDirectory -Force | Out-Null
+Microsoft.PowerShell.Management\New-Item `
+    -ItemType Directory `
+    -Path $evidenceDirectory `
+    -Force | Out-Null
 $archiveHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
 $evidence = [ordered]@{
     platform = $platform
