@@ -11,6 +11,7 @@ import {
 } from "naive-ui";
 import McpTokenPanel from "../components/settings/McpTokenPanel.vue";
 import BackupPanel from "../components/settings/BackupPanel.vue";
+import PlaintextExportPanel from "../components/settings/PlaintextExportPanel.vue";
 import { useSessionStore } from "../stores/session";
 import { useSettingsStore } from "../stores/settings";
 import { describeApiError } from "../utils/api-error";
@@ -146,6 +147,8 @@ onMounted(() => {
     </section>
 
     <McpTokenPanel />
+
+    <PlaintextExportPanel />
 
     <BackupPanel />
   </section>

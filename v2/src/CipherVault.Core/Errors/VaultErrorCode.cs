@@ -29,5 +29,6 @@ public enum VaultErrorCode
     PurgeNotEligible,
     BackupInProgress,
     BackupTooLarge,
-    BackupNotFound
+    BackupNotFound,
+    ExportTooLarge
 }

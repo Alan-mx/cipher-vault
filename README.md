@@ -195,6 +195,22 @@ http://127.0.0.1:8080/mcp
 }
 ```
 
+## 明文导出
+
+Settings 页面提供“导出明文”。该操作会下载当前全部有效 Markdown/TXT 文档的未加密 ZIP：
+
+- 保持 Vault 中的虚拟目录和 `.md` / `.txt` 路径。
+- 正文逐字导出，包含 Frontmatter、标签和 WikiLink 原文。
+- 不包含回收站、历史 Revision、Audit、备份或配置。
+- ZIP 内包含 `_cipher-vault-export.json` 清单和逐文件 SHA-256。
+- 不新增导出密码；下载后文件完全脱离 Vault 加密保护。
+- 用户必须输入确认短语 `导出明文` 并再次确认。
+- MCP 和 AI 无权触发或读取全部明文导出。
+- 服务端直接流式返回 ZIP，不保存明文临时文件。
+
+明文导出要求 Vault 已解锁。导出期间文档写入会等待，以保证 ZIP 内容来自一致 revision。
+当前限制为最多 10,000 篇、未压缩正文总量最多 1 GiB。
+
 ## 加密备份与离线恢复
 
 在 Settings 中创建并下载 `.cvbackup`。备份包含加密数据库快照和 key envelope，不包含
@@ -295,6 +311,7 @@ Docker 镜像已包含 Git 与 OpenSSH client。启用时需把独立备份仓�
 - Docker：加载新镜像并重建容器，保留 `cipher-vault-data`。
 - 不提供自动更新器。
 - 不兼容旧 SQLCipher 数据库、旧 Recovery Key、旧 `.cvbackup` 或旧配置文件。
+- 当前数据库 Schema 为 `4`；更早 Schema 的备份按精确版本策略不能由当前 Server 恢复。
 
 ## 安全边界
 

@@ -30,6 +30,7 @@ public sealed class ApiContractTests
     [InlineData(VaultErrorCode.VaultBusy, 409, "vault_busy")]
     [InlineData(VaultErrorCode.VaultLockFailed, 503, "vault_lock_failed")]
     [InlineData(VaultErrorCode.DatabaseError, 500, "database_error")]
+    [InlineData(VaultErrorCode.ExportTooLarge, 413, "export_too_large")]
     public void VaultErrorsMapToStableHttpStatuses(
         VaultErrorCode code,
         int expectedStatus,

@@ -35,6 +35,7 @@ public static class ApiErrorCodes
     public const string BackupInProgress = "backup_in_progress";
     public const string BackupTooLarge = "backup_too_large";
     public const string BackupNotFound = "backup_not_found";
+    public const string ExportTooLarge = "export_too_large";
     public const string InvalidIfMatch = "invalid_if_match";
     public const string UnsupportedMediaType = "unsupported_media_type";
     public const string InternalError = "internal_error";

@@ -151,6 +151,10 @@ public static class ApiErrorMapper
                 StatusCodes.Status413PayloadTooLarge,
                 ApiErrorCodes.BackupTooLarge,
                 "Backup package is too large."),
+            VaultErrorCode.ExportTooLarge => Failure(
+                StatusCodes.Status413PayloadTooLarge,
+                ApiErrorCodes.ExportTooLarge,
+                "Plaintext export is too large."),
             VaultErrorCode.VaultLocked => Failure(
                 StatusCodes.Status423Locked,
                 ApiErrorCodes.VaultLocked,

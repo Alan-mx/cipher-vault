@@ -149,6 +149,8 @@ test("Phase 6 desktop flow, responsive layout and accessibility", async ({
     page.getByText("CIPHERVAULT_IDLE_TIMEOUT_MINUTES"),
   ).toBeVisible();
   await expect(page.getByText("0.0.0-local")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "导出明文" })).toBeVisible();
+  await expect(page.getByText("下载后将失去 Vault 加密保护")).toBeVisible();
   await page.getByRole("button", { name: "创建备份" }).click();
   await expect(page.locator(".backup-row")).toHaveCount(1);
   await expect(page.locator(".backup-row")).toContainText("已验证");

@@ -18,7 +18,7 @@ public sealed class DatabaseSchemaTests
         var verified = await SqliteMcVaultStore.VerifyAsync(fixture.Root, fixture.Material);
 
         Assert.Equal(fixture.Material.VaultId, initialized.VaultId);
-        Assert.Equal(3, initialized.SchemaVersion);
+        Assert.Equal(4, initialized.SchemaVersion);
         Assert.Equal(initialized, verified);
     }
 
@@ -36,8 +36,8 @@ public sealed class DatabaseSchemaTests
             create: false);
         using var command = connection.Connection.CreateCommand();
         command.CommandText = "SELECT count(*) FROM schema_migrations;";
-        Assert.Equal(3, Convert.ToInt32(await command.ExecuteScalarAsync()));
-        Assert.Equal(3, second.SchemaVersion);
+        Assert.Equal(4, Convert.ToInt32(await command.ExecuteScalarAsync()));
+        Assert.Equal(4, second.SchemaVersion);
     }
 
     [Fact]
@@ -166,7 +166,7 @@ public sealed class DatabaseSchemaTests
                 migrations,
                 CancellationToken.None);
 
-            Assert.Equal(3, upgraded.SchemaVersion);
+            Assert.Equal(4, upgraded.SchemaVersion);
             using var command = session.Connection.CreateCommand();
             command.CommandText =
                 """
@@ -184,7 +184,7 @@ public sealed class DatabaseSchemaTests
                 """;
             Assert.Equal(7, Convert.ToInt32(await command.ExecuteScalarAsync()));
             command.CommandText = "SELECT count(*) FROM schema_migrations;";
-            Assert.Equal(3, Convert.ToInt32(await command.ExecuteScalarAsync()));
+            Assert.Equal(4, Convert.ToInt32(await command.ExecuteScalarAsync()));
         }
         finally
         {
@@ -193,7 +193,7 @@ public sealed class DatabaseSchemaTests
     }
 
     [Fact]
-    public async Task BackupAuditMigrationPreservesRowsIndexesAndAppendOnlyProtection()
+    public async Task AuditMigrationsPreserveRowsIndexesAndAppendOnlyProtection()
     {
         var root = Path.Combine(
             Path.GetTempPath(),
@@ -243,7 +243,7 @@ public sealed class DatabaseSchemaTests
                 migrations,
                 CancellationToken.None);
 
-            Assert.Equal(3, upgraded.SchemaVersion);
+            Assert.Equal(4, upgraded.SchemaVersion);
             using (var selectHistorical = session.Connection.CreateCommand())
             {
                 selectHistorical.CommandText = """
@@ -261,9 +261,9 @@ public sealed class DatabaseSchemaTests
                 Assert.Equal("{\"kept\":true}", reader.GetString(1));
             }
 
-            using (var insertBackupAudits = session.Connection.CreateCommand())
+            using (var insertAudits = session.Connection.CreateCommand())
             {
-                insertBackupAudits.CommandText = """
+                insertAudits.CommandText = """
                     INSERT INTO audit_events(
                         event_id, occurred_at, actor_kind, action,
                         document_id, revision, correlation_id, result, details_json)
@@ -271,15 +271,20 @@ public sealed class DatabaseSchemaTests
                         ($createId, '2026-11-01T00:00:01Z', 'user_ui',
                          'backup.create', NULL, NULL, NULL, 'success', '{}'),
                         ($downloadId, '2026-11-01T00:00:02Z', 'user_ui',
-                         'backup.download', NULL, NULL, NULL, 'success', '{}');
+                         'backup.download', NULL, NULL, NULL, 'success', '{}'),
+                        ($exportId, '2026-11-01T00:00:03Z', 'user_ui',
+                         'export.plaintext', NULL, NULL, NULL, 'success', '{}');
                     """;
-                insertBackupAudits.Parameters.AddWithValue(
+                insertAudits.Parameters.AddWithValue(
                     "$createId",
                     Guid.NewGuid().ToString("D"));
-                insertBackupAudits.Parameters.AddWithValue(
+                insertAudits.Parameters.AddWithValue(
                     "$downloadId",
                     Guid.NewGuid().ToString("D"));
-                await insertBackupAudits.ExecuteNonQueryAsync();
+                insertAudits.Parameters.AddWithValue(
+                    "$exportId",
+                    Guid.NewGuid().ToString("D"));
+                await insertAudits.ExecuteNonQueryAsync();
             }
 
             using (var unknown = session.Connection.CreateCommand())
