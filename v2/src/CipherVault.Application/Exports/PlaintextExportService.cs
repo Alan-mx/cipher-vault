@@ -246,10 +246,10 @@ public sealed class PlaintextExportService
     private string ClassifyOutcome(Exception exception) =>
         exception is OperationCanceledException
         || exception is VaultException
-            {
-                Code: VaultErrorCode.VaultLocked
+        {
+            Code: VaultErrorCode.VaultLocked
                     or VaultErrorCode.VaultLockFailed
-            }
+        }
         || sessionManager.State is
             VaultSessionState.Locking
             or VaultSessionState.LockFailed

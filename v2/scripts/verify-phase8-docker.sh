@@ -115,6 +115,7 @@ start_container() {
         --tmpfs /tmp \
         --security-opt no-new-privileges \
         --cap-drop ALL \
+        --env "CIPHERVAULT_PUBLIC_HTTP_PORTS=${port}" \
         --volume "${data_volume}:/data" \
         "$image" >/dev/null
 }
@@ -334,6 +335,7 @@ docker run -d \
     --tmpfs /tmp \
     --security-opt no-new-privileges \
     --cap-drop ALL \
+    --env "CIPHERVAULT_PUBLIC_HTTP_PORTS=${port}" \
     --env CIPHERVAULT_DATA_DIR=/restore/restored \
     --volume "${target_volume}:/restore" \
     --volume "${data_volume}:/data" \

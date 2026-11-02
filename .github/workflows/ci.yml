@@ -166,6 +166,7 @@ jobs:
             --tmpfs /tmp \
             --security-opt no-new-privileges \
             --cap-drop ALL \
+            --env CIPHERVAULT_PUBLIC_HTTP_PORTS=18080 \
             --volume "$volume:/data" \
             cipher-vault:ci >/dev/null
           for _ in $(seq 1 60); do
