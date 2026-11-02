@@ -5,6 +5,15 @@ using Microsoft.Extensions.Configuration;
 
 namespace CipherVault.Server.Hosting;
 
+public enum GitCredentialHelperMode
+{
+    None,
+    Manager,
+    ManagerCore,
+    LibSecret,
+    Cache
+}
+
 public sealed record GitBackupOptions(
     bool Enabled,
     string? RepositoryPath,
@@ -15,7 +24,13 @@ public sealed record GitBackupOptions(
     TimeSpan RetryDelay,
     long RotationBytes,
     TimeSpan RotationAge,
-    string? ConfigurationErrorCode)
+    string? ConfigurationErrorCode,
+    GitCredentialHelperMode CredentialHelper,
+    bool AllowHttp,
+    bool AllowGitProtocol,
+    bool AllowFileRemote,
+    string? SecureHooksPath,
+    string? SecureAttributesPath)
 {
     public const string InvalidConfigurationCode = "git_config_invalid";
     public const long DefaultRotationBytes = 1024L * 1024 * 1024;
@@ -30,7 +45,13 @@ public sealed record GitBackupOptions(
         RetryDelay: TimeSpan.FromSeconds(60),
         RotationBytes: DefaultRotationBytes,
         RotationAge: TimeSpan.FromDays(365),
-        ConfigurationErrorCode: null);
+        ConfigurationErrorCode: null,
+        CredentialHelper: DefaultCredentialHelper,
+        AllowHttp: false,
+        AllowGitProtocol: false,
+        AllowFileRemote: false,
+        SecureHooksPath: null,
+        SecureAttributesPath: null);
 
     public bool IsUsable => Enabled && ConfigurationErrorCode is null;
 
@@ -121,6 +142,17 @@ public sealed record GitBackupOptions(
                 30,
                 3650,
                 "CIPHERVAULT_GIT_BACKUP_ROTATE_DAYS");
+            var credentialHelper = ParseCredentialHelper(
+                configuration["CIPHERVAULT_GIT_CREDENTIAL_HELPER"]);
+            var allowHttp = ParseBoolean(
+                configuration["CIPHERVAULT_GIT_ALLOW_HTTP"],
+                defaultValue: false);
+            var allowGit = ParseBoolean(
+                configuration["CIPHERVAULT_GIT_ALLOW_GIT_PROTOCOL"],
+                defaultValue: false);
+            var allowFile = ParseBoolean(
+                configuration["CIPHERVAULT_GIT_ALLOW_FILE_REMOTE"],
+                defaultValue: false);
 
             return new GitBackupOptions(
                 Enabled: true,
@@ -132,7 +164,13 @@ public sealed record GitBackupOptions(
                 RetryDelay: retryDelay,
                 RotationBytes: rotationBytes,
                 RotationAge: TimeSpan.FromDays(rotationDays),
-                ConfigurationErrorCode: null);
+                ConfigurationErrorCode: null,
+                CredentialHelper: credentialHelper,
+                AllowHttp: allowHttp,
+                AllowGitProtocol: allowGit,
+                AllowFileRemote: allowFile,
+                SecureHooksPath: paths.GitHooksDirectory,
+                SecureAttributesPath: paths.GitAttributesFile);
         }
         catch (Exception exception) when (
             exception is VaultException
@@ -188,16 +226,59 @@ public sealed record GitBackupOptions(
         var result = string.IsNullOrWhiteSpace(value)
             ? defaultValue
             : value.Trim();
-        if (result.Length is < 1 or > 255
-            || result.Length > maxLength
-            || result.Any(character =>
-                char.IsWhiteSpace(character) || char.IsControl(character)))
+        var valid = fieldName == "Remote"
+            ? IsValidRemoteName(result, maxLength)
+            : IsValidBranchName(result, maxLength);
+        if (!valid)
         {
             throw Invalid($"{fieldName} is invalid.");
         }
 
         return result;
     }
+
+    private static bool IsValidRemoteName(string value, int maxLength) =>
+        value.Length is >= 1 and <= 128
+        && value.Length <= maxLength
+        && char.IsAsciiLetterOrDigit(value[0])
+        && value.All(character =>
+            char.IsAsciiLetterOrDigit(character)
+            || character is '.' or '_' or '-')
+        && !value.Contains("..", StringComparison.Ordinal);
+
+    private static bool IsValidBranchName(string value, int maxLength) =>
+        value.Length is >= 1 and <= 255
+        && value.Length <= maxLength
+        && value[0] is not ('-' or '.' or '/')
+        && value[^1] is not ('.' or '/')
+        && !value.Contains("..", StringComparison.Ordinal)
+        && !value.Contains("@{", StringComparison.Ordinal)
+        && !value.Contains("//", StringComparison.Ordinal)
+        && !value.EndsWith(".lock", StringComparison.OrdinalIgnoreCase)
+        && value != "@"
+        && value.All(character =>
+            !char.IsWhiteSpace(character)
+            && !char.IsControl(character)
+            && character is not ('~' or '^' or ':' or '?' or '*'
+                or '[' or '\\' or '}' or '+'));
+
+    private static GitCredentialHelperMode ParseCredentialHelper(
+        string? value) =>
+        value switch
+        {
+            null or "" => DefaultCredentialHelper,
+            "none" => GitCredentialHelperMode.None,
+            "manager" => GitCredentialHelperMode.Manager,
+            "manager-core" => GitCredentialHelperMode.ManagerCore,
+            "libsecret" => GitCredentialHelperMode.LibSecret,
+            "cache" => GitCredentialHelperMode.Cache,
+            _ => throw Invalid("Credential helper is invalid.")
+        };
+
+    private static GitCredentialHelperMode DefaultCredentialHelper =>
+        OperatingSystem.IsWindows()
+            ? GitCredentialHelperMode.Manager
+            : GitCredentialHelperMode.None;
 
     private static int ParseInteger(
         string? value,

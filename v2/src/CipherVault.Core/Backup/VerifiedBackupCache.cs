@@ -30,6 +30,8 @@ public sealed class VerifiedBackupCache
         lock (sync)
         {
             if (!entries.TryGetValue(canonicalPath, out var node)
+                || !current.IsReliable
+                || !node.Value.Entry.Identity.IsReliable
                 || node.Value.Entry.Identity != current)
             {
                 entry = null!;
@@ -52,6 +54,12 @@ public sealed class VerifiedBackupCache
 
         lock (sync)
         {
+            if (!entry.Identity.IsReliable)
+            {
+                Remove(canonicalPath);
+                return;
+            }
+
             if (entries.TryGetValue(canonicalPath, out var existing))
             {
                 existing.Value = new CacheItem(canonicalPath, entry);

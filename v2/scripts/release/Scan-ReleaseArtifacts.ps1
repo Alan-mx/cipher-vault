@@ -1,8 +1,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)] [string] $ReleaseRoot,
+    [Parameter(Mandatory)] [string] $Version,
     [Parameter(Mandatory)] [string] $EvidencePath,
-    [string] $Version = "2.0.0-rc.1",
     [string[]] $ForbiddenMarkers = @(
         "phase8-release-password-marker",
         "phase8-release-token-marker",

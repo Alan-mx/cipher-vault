@@ -40,6 +40,41 @@ describe("session lifecycle", () => {
     expect(getSessionAbortSignal().aborted).toBe(false);
   });
 
+  it("rotates generation before aborting the previous session controller", () => {
+    const originalSignal = getSessionAbortSignal();
+    let generationWhenAborted = -1;
+    originalSignal.addEventListener("abort", () => {
+      generationWhenAborted = getSessionGeneration();
+    });
+
+    const generation = clearSensitiveState("manual_lock");
+
+    expect(generation).toBe(1);
+    expect(generationWhenAborted).toBe(generation);
+  });
+
+  it("runs session local cleanup after abort and before other stores", () => {
+    const order: string[] = [];
+    const originalSignal = getSessionAbortSignal();
+    originalSignal.addEventListener("abort", () => {
+      order.push("abort");
+    });
+    registerSensitiveStore({
+      resetSensitive: () => order.push("sensitive"),
+    });
+    window.addEventListener("cv:session-cleared", () => order.push("event"), {
+      once: true,
+    });
+
+    clearSensitiveState("pagehide", () => {
+      expect(originalSignal.aborted).toBe(true);
+      expect(getSessionAbortSignal().aborted).toBe(false);
+      order.push("local");
+    });
+
+    expect(order).toEqual(["abort", "local", "sensitive", "event"]);
+  });
+
   it("uses the smaller of 60 seconds and 20 percent of the idle window", () => {
     expect(idleWarningThresholdSeconds(1)).toBe(12);
     expect(idleWarningThresholdSeconds(10)).toBe(60);

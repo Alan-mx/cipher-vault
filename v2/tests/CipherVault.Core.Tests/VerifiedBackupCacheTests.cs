@@ -33,13 +33,33 @@ public sealed class VerifiedBackupCacheTests
         Assert.True(cache.TryGet("three", three, out _));
     }
 
+    [Fact]
+    public void UnreliableIdentityIsNeverCached()
+    {
+        var cache = new VerifiedBackupCache(capacity: 2);
+        var identity = Identity("fallback", bytes: 1) with
+        {
+            PlatformIdentityKind = PlatformIdentityKind.Unreliable
+        };
+
+        cache.Set("fallback", Entry(identity));
+
+        Assert.False(cache.TryGet("fallback", identity, out _));
+    }
+
     private static RegularFileIdentity Identity(string name, long bytes) =>
         new(
             Path.Combine(Path.GetTempPath(), name),
             bytes,
             DateTimeOffset.UnixEpoch,
             DateTimeOffset.UnixEpoch.AddSeconds(1),
-            bytes);
+            bytes,
+            PlatformIdentityKind.WindowsFileId128,
+            VolumeId: 1,
+            FileIdLow: (ulong)bytes,
+            FileIdHigh: 0,
+            ChangeTimeSeconds: 1,
+            ChangeTimeNanoseconds: 0);
 
     private static VerifiedBackupCacheEntry Entry(
         RegularFileIdentity identity) =>

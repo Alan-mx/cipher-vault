@@ -52,11 +52,12 @@ internal sealed class GitCommandRunner : IGitCommandRunner
             startInfo.ArgumentList.Add(argument);
         }
 
-        startInfo.Environment["GIT_TERMINAL_PROMPT"] = "0";
-        startInfo.Environment["GCM_INTERACTIVE"] = "Never";
-        if (environment is not null)
+        startInfo.Environment.Clear();
+        var controlledEnvironment = environment
+            ?? GitExecutionEnvironment.CreateBaseEnvironment();
+        foreach (var pair in controlledEnvironment)
         {
-            foreach (var pair in environment)
+            if (GitExecutionEnvironment.IsAllowedVariable(pair.Key))
             {
                 startInfo.Environment[pair.Key] = pair.Value;
             }

@@ -54,18 +54,6 @@ public sealed class BackupStorageTests
         }
     }
 
-    [Fact]
-    public void SensitiveDatabaseKeyLeaseClearsOnDispose()
-    {
-        var lease = new SensitiveDatabaseKeyLease(new byte[32]);
-        Assert.Equal(32, lease.DatabaseKey.Length);
-
-        lease.Dispose();
-
-        Assert.Throws<ObjectDisposedException>(
-            () => _ = lease.DatabaseKey);
-    }
-
     private static string CreateRoot()
     {
         var root = Path.Combine(

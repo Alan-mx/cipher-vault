@@ -1,3 +1,12 @@
+import { apiClient } from "./client";
+
+export interface PlaintextExportPreflightResponse {
+  ticket: string;
+  expiresAtUtc: string;
+  documentCount: number;
+  totalContentBytes: number;
+}
+
 let downloadSequence = 0;
 
 const appendHidden = (
@@ -30,14 +39,26 @@ const ensureDownloadFrame = (): HTMLIFrameElement => {
 };
 
 export const exportApi = {
-  submitPlaintextExport: (confirmation: string, csrfToken: string): void => {
+  preflight: async (
+    confirmation: string,
+  ): Promise<PlaintextExportPreflightResponse> =>
+    apiClient.request<PlaintextExportPreflightResponse>(
+      "/api/exports/plaintext/preflight",
+      {
+        method: "POST",
+        body: { confirmation },
+        csrf: true,
+      },
+    ),
+
+  submitPlaintextExport: (ticket: string, csrfToken: string): void => {
     const frame = ensureDownloadFrame();
     const form = document.createElement("form");
     form.method = "POST";
-    form.action = "/api/exports/plaintext";
+    form.action = "/api/exports/plaintext/download";
     form.target = frame.name;
     form.hidden = true;
-    appendHidden(form, "confirmation", confirmation);
+    appendHidden(form, "ticket", ticket);
     appendHidden(form, "__CipherVaultAntiforgery", csrfToken);
     document.body.append(form);
     form.submit();

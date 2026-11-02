@@ -3,7 +3,6 @@ import type { Router } from "vue-router";
 import { configureApiClient } from "../api";
 import { useSessionStore } from "../stores/session";
 import {
-  clearSensitiveState,
   getSessionAbortSignal,
   getSessionGeneration,
   hasDirtySensitiveState,
@@ -16,20 +15,26 @@ export const installSessionLifecycle = (
   const session = useSessionStore(pinia);
   configureApiClient({
     getCsrfToken: () => session.csrfToken,
-    refreshCsrfToken: () => session.ensureCsrf(),
+    refreshCsrfToken: (expectedGeneration) =>
+      session.refreshCsrfToken(expectedGeneration),
     currentSessionGeneration: getSessionGeneration,
     currentAbortSignal: getSessionAbortSignal,
-    onSessionInvalid: (error) => {
-      session.handleSessionInvalid(error);
+    onSessionInvalid: (error, expectedGeneration) => {
+      const cleared = session.handleSessionInvalid(error, expectedGeneration);
+      if (!cleared) {
+        return false;
+      }
       if (router.currentRoute.value.name !== "unlock") {
         void router.replace({ name: "unlock" });
       }
+      return true;
     },
   });
 
   let pollTimer: number | null = null;
   let tickTimer: number | null = null;
   let lastActivityRequest = 0;
+  let revalidationGeneration = 0;
 
   const syncRoute = async (): Promise<void> => {
     const current = router.currentRoute.value;
@@ -48,7 +53,7 @@ export const installSessionLifecycle = (
   };
 
   const noteActivity = (): void => {
-    if (!session.isUnlocked) {
+    if (!session.isUnlocked || session.revalidating) {
       return;
     }
     const now = performance.now();
@@ -61,7 +66,11 @@ export const installSessionLifecycle = (
 
   const handleSessionCleared = (event: Event): void => {
     session.syncGeneration();
+    lastActivityRequest = 0;
     const reason = (event as CustomEvent<string>).detail;
+    if (reason === "pagehide" || reason === "bfcache_revalidate") {
+      return;
+    }
     if (
       reason !== "pagehide" &&
       router.currentRoute.value.name !== "unlock" &&
@@ -80,22 +89,34 @@ export const installSessionLifecycle = (
   };
 
   const handlePageHide = (): void => {
-    clearSensitiveState("pagehide");
+    session.clearSensitive("pagehide");
+    lastActivityRequest = 0;
   };
 
   const handlePageShow = (event: PageTransitionEvent): void => {
     if (!event.persisted) {
       return;
     }
-    session.revalidating = true;
-    clearSensitiveState("bfcache_revalidate");
+    session.clearSensitive("bfcache_revalidate");
+    lastActivityRequest = 0;
+    const revalidationId = ++revalidationGeneration;
+    const expectedGeneration = getSessionGeneration();
     void session
-      .bootstrap()
+      .bootstrap(expectedGeneration)
       .then(async () => {
+        if (
+          revalidationId !== revalidationGeneration ||
+          getSessionGeneration() !== expectedGeneration
+        ) {
+          return;
+        }
         await syncRoute();
       })
+      .catch(() => undefined)
       .finally(() => {
-        session.revalidating = false;
+        if (revalidationId === revalidationGeneration) {
+          session.revalidating = false;
+        }
       });
   };
 

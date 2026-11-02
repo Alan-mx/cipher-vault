@@ -15,12 +15,14 @@ const session = useSessionStore();
 const confirmation = ref("");
 const exporting = ref(false);
 const errorMessage = ref("");
+const downloadNotice = ref("");
 const canExport = computed(
   () => confirmation.value === confirmationPhrase && !exporting.value,
 );
 
 const requestExport = async (): Promise<void> => {
   errorMessage.value = "";
+  downloadNotice.value = "";
   if (!canExport.value) {
     errorMessage.value = `请输入“${confirmationPhrase}”确认导出。`;
     return;
@@ -35,8 +37,11 @@ const requestExport = async (): Promise<void> => {
 
   exporting.value = true;
   try {
+    const preflight = await exportApi.preflight(confirmationPhrase);
     const csrfToken = await session.ensureCsrf();
-    exportApi.submitPlaintextExport(confirmationPhrase, csrfToken);
+    exportApi.submitPlaintextExport(preflight.ticket, csrfToken);
+    downloadNotice.value =
+      "下载请求已提交，请查看浏览器下载列表；页面无法确认文件是否已完整下载。";
   } catch (error) {
     errorMessage.value = describeApiError(error);
   } finally {
@@ -48,6 +53,7 @@ const resetSensitive = (): void => {
   confirmation.value = "";
   exporting.value = false;
   errorMessage.value = "";
+  downloadNotice.value = "";
 };
 
 let unregisterSensitiveStore: (() => void) | null = null;
@@ -86,6 +92,9 @@ onBeforeUnmount(() => {
 
     <NAlert v-if="errorMessage" type="error" :show-icon="false">
       {{ errorMessage }}
+    </NAlert>
+    <NAlert v-if="downloadNotice" type="info" :show-icon="false">
+      {{ downloadNotice }}
     </NAlert>
 
     <div class="export-confirmation">

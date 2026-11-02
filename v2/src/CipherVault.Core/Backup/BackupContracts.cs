@@ -13,6 +13,13 @@ public enum BackupFileStatus
     Verified
 }
 
+public enum PlatformIdentityKind
+{
+    Unreliable,
+    WindowsFileId128,
+    LinuxStatx
+}
+
 public sealed record BackupListItem(
     string FileName,
     long Bytes,
@@ -34,7 +41,14 @@ public sealed record RegularFileIdentity(
     long Bytes,
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset ModifiedAtUtc,
-    long IdentityStamp)
+    long IdentityStamp,
+    PlatformIdentityKind PlatformIdentityKind =
+        PlatformIdentityKind.Unreliable,
+    ulong VolumeId = 0,
+    ulong FileIdLow = 0,
+    ulong FileIdHigh = 0,
+    long ChangeTimeSeconds = 0,
+    long ChangeTimeNanoseconds = 0)
 {
     public static RegularFileIdentity Read(string path)
     {
@@ -52,6 +66,7 @@ public sealed record RegularFileIdentity(
             "Backup file");
         var created = info.CreationTimeUtc.ToUniversalTime();
         var modified = info.LastWriteTimeUtc.ToUniversalTime();
+        var platform = PlatformFileIdentityReader.Read(path);
         return new RegularFileIdentity(
             canonical,
             info.Length,
@@ -61,8 +76,21 @@ public sealed record RegularFileIdentity(
                 canonical,
                 info.Length,
                 created,
-                modified));
+                modified),
+            platform.Kind,
+            platform.VolumeId,
+            platform.FileIdLow,
+            platform.FileIdHigh,
+            platform.ChangeTimeSeconds,
+            platform.ChangeTimeNanoseconds);
     }
+
+    public bool IsReliable =>
+        PlatformIdentityKind
+            is PlatformIdentityKind.WindowsFileId128
+                or PlatformIdentityKind.LinuxStatx
+        && (FileIdLow != 0 || FileIdHigh != 0)
+        && (ChangeTimeSeconds != 0 || ChangeTimeNanoseconds != 0);
 
     private static long ComputeIdentityStamp(
         string canonicalPath,
@@ -80,6 +108,7 @@ public sealed record RegularFileIdentity(
 public sealed class BackupDownloadLease : IAsyncDisposable
 {
     private int disposed;
+    private int terminalAttempted;
 
     public BackupDownloadLease(
         string fileName,
@@ -103,11 +132,16 @@ public sealed class BackupDownloadLease : IAsyncDisposable
 
     public string FileName { get; }
 
+    public Guid DownloadId { get; } = Guid.NewGuid();
+
     public long Bytes { get; }
 
-    internal RegularFileIdentity Identity { get; }
+    public RegularFileIdentity Identity { get; }
 
     public Stream Content { get; }
+
+    public bool TryBeginTerminalAttempt() =>
+        Interlocked.Exchange(ref terminalAttempted, 1) == 0;
 
     public async ValueTask DisposeAsync()
     {

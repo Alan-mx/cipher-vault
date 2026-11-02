@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from "pinia";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { documentApi } from "../../src/api";
+import { documentApi, revisionApi } from "../../src/api";
 import { useDocumentStore } from "../../src/stores/document";
 import { isGuid } from "../../src/utils/guid";
 
@@ -160,3 +160,265 @@ describe("document inspector", () => {
     expect(store.refreshWarning).toContain("已保存");
   });
 });
+
+describe("document operation generation guards", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("drops stale conflict and reload responses after opening another document", async () => {
+    setActivePinia(createPinia());
+    const store = useDocumentStore();
+    setDocument(store, "doc-a", "A");
+    const conflictMetadata = deferred(metadata("doc-a", "A conflict"));
+    const reloadMetadata = deferred(metadata("doc-a", "A reload"));
+    let aMetadataCalls = 0;
+    vi.spyOn(documentApi, "metadata").mockImplementation((id) => {
+      if (id === "doc-b") {
+        return Promise.resolve(metadata("doc-b", "B"));
+      }
+      aMetadataCalls++;
+      return aMetadataCalls === 1
+        ? conflictMetadata.promise
+        : reloadMetadata.promise;
+    });
+    vi.spyOn(documentApi, "content").mockImplementation((id) =>
+      Promise.resolve(content(id, id)),
+    );
+    vi.spyOn(documentApi, "map").mockImplementation((id) =>
+      Promise.resolve(map(id, id === "doc-a" ? "A" : "B")),
+    );
+
+    const conflictLoad = store.loadLatestConflict();
+    const reload = store.reloadLatest();
+    await store.open("doc-b");
+
+    conflictMetadata.resolve(metadata("doc-a", "A conflict"));
+    reloadMetadata.resolve(metadata("doc-a", "A reload"));
+    await Promise.all([conflictLoad, reload]);
+
+    expect(store.documentId).toBe("doc-b");
+    expect(store.draft?.title).toBe("B");
+    expect(store.conflict).toBeNull();
+  });
+
+  it("invalidates an in-flight revision compare when selection changes", async () => {
+    setActivePinia(createPinia());
+    const store = useDocumentStore();
+    setDocument(store, "doc-a", "A");
+    store.selectedRevisionIds = ["rev-1", "rev-2"];
+    const firstContent = deferred(revisionContent("doc-a", "rev-1", "one"));
+    vi.spyOn(revisionApi, "content").mockImplementation((_id, revisionId) =>
+      revisionId === "rev-1"
+        ? firstContent.promise
+        : Promise.resolve(revisionContent("doc-a", "rev-2", "two")),
+    );
+
+    const comparison = store.compareSelectedRevisions();
+    store.toggleRevisionSelection("rev-2");
+    firstContent.resolve(revisionContent("doc-a", "rev-1", "one"));
+    await comparison;
+
+    expect(store.revisionDiff).toBe("");
+    expect(store.revisionCompareLoading).toBe(false);
+    expect(store.revisionContents["rev-1"]).toBeDefined();
+  });
+
+  it("stops restore follow-up work after the document changes", async () => {
+    setActivePinia(createPinia());
+    const store = useDocumentStore();
+    setDocument(store, "doc-a", "A");
+    const restore = deferred<void>(undefined);
+    vi.spyOn(revisionApi, "restore").mockReturnValue(restore.promise);
+    vi.spyOn(documentApi, "metadata").mockImplementation((id) =>
+      Promise.resolve(metadata(id, id === "doc-a" ? "A" : "B")),
+    );
+    vi.spyOn(documentApi, "content").mockImplementation((id) =>
+      Promise.resolve(content(id, id)),
+    );
+    vi.spyOn(documentApi, "map").mockImplementation((id) =>
+      Promise.resolve(map(id, id === "doc-a" ? "A" : "B")),
+    );
+
+    const restoring = store.restoreRevision("rev-0");
+    await store.open("doc-b");
+    restore.resolve(undefined);
+    await restoring;
+
+    expect(store.documentId).toBe("doc-b");
+    expect(store.draft?.title).toBe("B");
+  });
+
+  it("does not continue reading chunks for an open that was superseded", async () => {
+    setActivePinia(createPinia());
+    const store = useDocumentStore();
+    const firstChunk = deferred({
+      documentId: "doc-a",
+      revision: 1,
+      content: "A",
+      offset: 0,
+      nextOffset: 1,
+      totalLength: 2,
+      done: false,
+    });
+    const contentCalls: string[] = [];
+    vi.spyOn(documentApi, "metadata").mockImplementation((id) =>
+      Promise.resolve(metadata(id, id === "doc-a" ? "A" : "B")),
+    );
+    vi.spyOn(documentApi, "content").mockImplementation((id, offset) => {
+      contentCalls.push(`${id}:${offset}`);
+      if (id === "doc-a") {
+        return firstChunk.promise;
+      }
+      return Promise.resolve(content(id, "B"));
+    });
+    vi.spyOn(documentApi, "map").mockImplementation((id) =>
+      Promise.resolve(map(id, id === "doc-a" ? "A" : "B")),
+    );
+
+    const openingA = store.open("doc-a");
+    await Promise.resolve();
+    await store.open("doc-b");
+    firstChunk.resolve({
+      documentId: "doc-a",
+      revision: 1,
+      content: "A",
+      offset: 0,
+      nextOffset: 1,
+      totalLength: 2,
+      done: false,
+    });
+    await openingA;
+
+    expect(contentCalls.filter((value) => value.startsWith("doc-a:"))).toEqual([
+      "doc-a:0",
+    ]);
+    expect(store.documentId).toBe("doc-b");
+  });
+
+  it("returns late create results without replacing the current document", async () => {
+    setActivePinia(createPinia());
+    const store = useDocumentStore();
+    setDocument(store, "doc-a", "A");
+    const create = deferred({
+      documentId: "doc-created",
+      revision: 1,
+      virtualPath: "Created.md",
+      committedAt: "2026-11-02T00:00:00Z",
+      auditEventId: "audit",
+    });
+    vi.spyOn(documentApi, "create").mockReturnValue(create.promise);
+    vi.spyOn(documentApi, "metadata").mockImplementation((id) =>
+      Promise.resolve(metadata(id, id === "doc-a" ? "A" : "B")),
+    );
+    vi.spyOn(documentApi, "content").mockImplementation((id) =>
+      Promise.resolve(content(id, id)),
+    );
+    vi.spyOn(documentApi, "map").mockImplementation((id) =>
+      Promise.resolve(map(id, id === "doc-a" ? "A" : "B")),
+    );
+
+    const creating = store.create({
+      title: "Created",
+      virtualPath: "Created.md",
+      format: "txt",
+      content: "created",
+      tags: [],
+    });
+    await store.open("doc-b");
+    create.resolve({
+      documentId: "doc-created",
+      revision: 1,
+      virtualPath: "Created.md",
+      committedAt: "2026-11-02T00:00:00Z",
+      auditEventId: "audit",
+    });
+    const result = await creating;
+
+    expect(result.documentId).toBe("doc-created");
+    expect(store.documentId).toBe("doc-b");
+    expect(store.draft?.title).toBe("B");
+  });
+});
+
+const deferred = <T>(initial?: T) => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  if (initial !== undefined) {
+    resolve(initial);
+  }
+  return {
+    promise,
+    resolve: (value: T) => resolve(value),
+  };
+};
+
+const metadata = (documentId: string, title: string) => ({
+  documentId,
+  title,
+  virtualPath: `${title}.md`,
+  format: "md" as const,
+  revision: 1,
+  tags: [],
+  createdAt: "2026-11-02T00:00:00Z",
+  updatedAt: "2026-11-02T00:00:00Z",
+});
+
+const content = (documentId: string, value: string) => ({
+  documentId,
+  revision: 1,
+  content: value,
+  offset: 0,
+  nextOffset: value.length,
+  totalLength: value.length,
+  done: true,
+});
+
+const revisionContent = (
+  documentId: string,
+  revisionId: string,
+  contentValue: string,
+) => ({
+  revisionId,
+  documentId,
+  revision: 1,
+  title: contentValue,
+  virtualPath: `${contentValue}.md`,
+  format: "md" as const,
+  tags: [],
+  content: contentValue,
+  createdAt: "2026-11-02T00:00:00Z",
+  retainUntil: "2026-11-03T00:00:00Z",
+});
+
+const map = (documentId: string, title: string) => ({
+  metadata: metadata(documentId, title),
+  headings: [],
+  frontMatterFields: [],
+  outgoingLinks: [],
+  backlinkCount: 0,
+  headingsTruncated: false,
+  frontMatterTruncated: false,
+  linksTruncated: false,
+});
+
+const setDocument = (
+  store: ReturnType<typeof useDocumentStore>,
+  documentId: string,
+  title: string,
+) => {
+  const info = metadata(documentId, title);
+  store.documentId = documentId;
+  store.metadata = info;
+  store.loadedRevision = info.revision;
+  const draft = {
+    title,
+    virtualPath: info.virtualPath,
+    content: title,
+    tags: [],
+  };
+  store.savedDraft = draft;
+  store.draft = { ...draft };
+};

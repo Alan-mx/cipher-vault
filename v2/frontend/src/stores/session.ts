@@ -10,7 +10,22 @@ import {
   type SessionClearReason,
 } from "../session/lifecycle";
 
-let csrfRequest: Promise<string> | null = null;
+interface CsrfRequest {
+  generation: number;
+  requestId: number;
+  forced: boolean;
+  promise: Promise<string>;
+}
+
+let csrfRequest: CsrfRequest | null = null;
+let nextCsrfRequestId = 0;
+let csrfRepair: { generation: number; promise: Promise<void> } | null = null;
+
+export const resetCsrfRequestForTest = (): void => {
+  csrfRequest = null;
+  nextCsrfRequestId = 0;
+  csrfRepair = null;
+};
 
 export const idleWarningThresholdSeconds = (
   idleTimeoutMinutes: number,
@@ -71,9 +86,14 @@ export const useSessionStore = defineStore("session", () => {
     bootstrapped.value = true;
   };
 
-  const refreshStatus = async (): Promise<VaultStatus> => {
+  const refreshStatus = async (
+    expectedGeneration: number = getSessionGeneration(),
+  ): Promise<VaultStatus> => {
     const wasUnlocked = isUnlocked.value;
     const next = await vaultApi.status();
+    if (getSessionGeneration() !== expectedGeneration) {
+      throw new StaleSessionResponseError();
+    }
     updateStatus(next);
     if (!next.isUnlocked && wasUnlocked) {
       clearSensitive("session_expired");
@@ -81,9 +101,11 @@ export const useSessionStore = defineStore("session", () => {
     return next;
   };
 
-  const bootstrap = async (): Promise<VaultStatus> => {
+  const bootstrap = async (
+    expectedGeneration: number = getSessionGeneration(),
+  ): Promise<VaultStatus> => {
     try {
-      return await refreshStatus();
+      return await refreshStatus(expectedGeneration);
     } catch (error) {
       if (error instanceof StaleSessionResponseError) {
         throw error;
@@ -99,23 +121,107 @@ export const useSessionStore = defineStore("session", () => {
     }
   };
 
-  const ensureCsrf = async (): Promise<string> => {
+  const createCsrfRequest = (
+    generation: number,
+    forced: boolean,
+  ): CsrfRequest => {
+    const request = {
+      generation,
+      requestId: ++nextCsrfRequestId,
+      forced,
+      promise: Promise.resolve(""),
+    } as CsrfRequest;
+    request.promise = (async () => {
+      const response = await vaultApi.antiforgery();
+      const matchesRequest =
+        getSessionGeneration() === request.generation &&
+        csrfRequest === request;
+      if (matchesRequest) {
+        csrfToken.value = response.token;
+      } else {
+        scheduleCsrfRepairIfNeeded();
+      }
+      return response.token;
+    })();
+    csrfRequest = request;
+    return request;
+  };
+
+  const scheduleCsrfRepairIfNeeded = (): void => {
+    const generation = getSessionGeneration();
+    if (
+      status.value?.state !== "unlocked" ||
+      (csrfRequest && csrfRequest.generation === generation) ||
+      csrfRepair?.generation === generation
+    ) {
+      return;
+    }
+
+    const promise = (async () => {
+      try {
+        await refreshCsrfToken(generation);
+      } catch (error) {
+        if (!(error instanceof StaleSessionResponseError)) {
+          // CSRF recovery remains best effort; the next request will retry.
+        }
+      }
+    })().finally(() => {
+      if (csrfRepair?.generation === generation) {
+        csrfRepair = null;
+      }
+    });
+    csrfRepair = { generation, promise };
+  };
+
+  const ensureCsrf = async (
+    expectedGeneration: number = getSessionGeneration(),
+  ): Promise<string> => {
+    if (getSessionGeneration() !== expectedGeneration) {
+      throw new StaleSessionResponseError();
+    }
     if (csrfToken.value) {
       return csrfToken.value;
     }
-    if (csrfRequest) {
-      return await csrfRequest;
+    if (
+      csrfRequest &&
+      csrfRequest.generation === expectedGeneration &&
+      !csrfRequest.forced
+    ) {
+      return await csrfRequest.promise;
     }
 
-    csrfRequest = (async () => {
-      const response = await vaultApi.antiforgery();
-      csrfToken.value = response.token;
-      return response.token;
-    })();
+    const request = createCsrfRequest(expectedGeneration, false);
     try {
-      return await csrfRequest;
+      return await request.promise;
     } finally {
-      csrfRequest = null;
+      if (csrfRequest === request) {
+        csrfRequest = null;
+      }
+    }
+  };
+
+  const refreshCsrfToken = async (
+    expectedGeneration: number,
+  ): Promise<string> => {
+    if (getSessionGeneration() !== expectedGeneration) {
+      throw new StaleSessionResponseError();
+    }
+    if (
+      csrfRequest &&
+      csrfRequest.generation === expectedGeneration &&
+      csrfRequest.forced
+    ) {
+      return await csrfRequest.promise;
+    }
+
+    csrfToken.value = null;
+    const request = createCsrfRequest(expectedGeneration, true);
+    try {
+      return await request.promise;
+    } finally {
+      if (csrfRequest === request) {
+        csrfRequest = null;
+      }
     }
   };
 
@@ -172,25 +278,37 @@ export const useSessionStore = defineStore("session", () => {
     reason: SessionClearReason,
     error: ApiClientError | null = null,
   ): void => {
-    clearReason.value = reason;
-    lastError.value = error;
-    csrfToken.value = null;
-    sessionGeneration.value = clearSensitiveState(reason);
-    idleDeadlineMonotonic.value = null;
+    const clearLocal = (): void => {
+      csrfToken.value = null;
+      csrfRequest = null;
+      csrfRepair = null;
+      idleDeadlineMonotonic.value = null;
+      activityLastRequestMonotonic.value = null;
+      status.value = null;
+      bootstrapped.value = false;
+      revalidating.value = reason === "bfcache_revalidate";
+      clearReason.value = reason;
+      lastError.value =
+        reason === "session_expired" || reason === "lock_failed" ? error : null;
+    };
+    sessionGeneration.value = clearSensitiveState(reason, clearLocal);
   };
 
-  const handleSessionInvalid = (error: ApiClientError): void => {
+  const handleSessionInvalid = (
+    error: ApiClientError,
+    expectedGeneration: number,
+  ): boolean => {
+    if (
+      getSessionGeneration() !== expectedGeneration ||
+      sessionGeneration.value !== expectedGeneration
+    ) {
+      return false;
+    }
     clearSensitive(
       error.code === "vault_lock_failed" ? "lock_failed" : "session_expired",
       error,
     );
-    if (status.value) {
-      status.value = {
-        ...status.value,
-        state: error.code === "vault_lock_failed" ? "lock_failed" : "locked",
-        isUnlocked: false,
-      };
-    }
+    return true;
   };
 
   const canLeaveDirtyEditor = (): boolean => {
@@ -220,6 +338,7 @@ export const useSessionStore = defineStore("session", () => {
     refreshStatus,
     bootstrap,
     ensureCsrf,
+    refreshCsrfToken,
     setup,
     unlock,
     lock,

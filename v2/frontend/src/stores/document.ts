@@ -17,6 +17,21 @@ import type {
 } from "../types/api";
 import { ApiClientError, StaleSessionResponseError } from "../types/domain";
 
+export class StaleDocumentOperationError extends Error {
+  constructor() {
+    super("The document operation belongs to an inactive document.");
+    this.name = "StaleDocumentOperationError";
+  }
+}
+
+interface DocumentOperationContext {
+  documentId: string;
+  documentGeneration: number;
+  operationGeneration: number;
+  operationKind:
+    "conflict" | "reload" | "compare" | "restore" | "create" | "delete";
+}
+
 export interface DocumentDraft {
   title: string;
   virtualPath: string;
@@ -59,8 +74,108 @@ export const useDocumentStore = defineStore("document", () => {
   let backlinkRequestGeneration = 0;
   let mentionRequestGeneration = 0;
   let revisionRequestGeneration = 0;
+  let conflictRequestGeneration = 0;
+  let reloadRequestGeneration = 0;
+  let revisionCompareRequestGeneration = 0;
+  let restoreRequestGeneration = 0;
+  let createRequestGeneration = 0;
+  let deleteRequestGeneration = 0;
+  let documentSwitchInProgress = false;
 
   const hasDocument = computed(() => documentId.value !== null);
+
+  const invalidateDocumentOperations = (): void => {
+    conflictRequestGeneration++;
+    reloadRequestGeneration++;
+    revisionCompareRequestGeneration++;
+    restoreRequestGeneration++;
+    createRequestGeneration++;
+    deleteRequestGeneration++;
+    backlinkRequestGeneration++;
+    mentionRequestGeneration++;
+    revisionRequestGeneration++;
+    revisionCompareLoading.value = false;
+    revisionCompareError.value = null;
+    conflict.value = null;
+    saveState.value = "idle";
+    refreshWarning.value = null;
+  };
+
+  const isCurrent = (context: DocumentOperationContext): boolean =>
+    !documentSwitchInProgress &&
+    documentId.value === context.documentId &&
+    requestGeneration === context.documentGeneration;
+
+  const operationCounter = (
+    kind: DocumentOperationContext["operationKind"],
+  ): number =>
+    kind === "conflict"
+      ? conflictRequestGeneration
+      : kind === "reload"
+        ? reloadRequestGeneration
+        : kind === "compare"
+          ? revisionCompareRequestGeneration
+          : kind === "restore"
+            ? restoreRequestGeneration
+            : kind === "create"
+              ? createRequestGeneration
+              : deleteRequestGeneration;
+
+  const isCurrentOperation = (context: DocumentOperationContext): boolean =>
+    isCurrent(context) &&
+    operationCounter(context.operationKind) === context.operationGeneration;
+
+  const assertCurrent = (context: DocumentOperationContext): void => {
+    if (!isCurrentOperation(context)) {
+      throw new StaleDocumentOperationError();
+    }
+  };
+
+  const assertDocumentCurrent = (context: DocumentOperationContext): void => {
+    if (!isCurrent(context)) {
+      throw new StaleDocumentOperationError();
+    }
+  };
+
+  const isStaleError = (value: unknown): boolean =>
+    value instanceof StaleSessionResponseError ||
+    value instanceof StaleDocumentOperationError;
+
+  const incrementOperation = (
+    kind: DocumentOperationContext["operationKind"],
+  ): number => {
+    if (kind === "conflict") {
+      return ++conflictRequestGeneration;
+    }
+    if (kind === "reload") {
+      return ++reloadRequestGeneration;
+    }
+    if (kind === "compare") {
+      return ++revisionCompareRequestGeneration;
+    }
+    if (kind === "restore") {
+      return ++restoreRequestGeneration;
+    }
+    if (kind === "create") {
+      return ++createRequestGeneration;
+    }
+    return ++deleteRequestGeneration;
+  };
+
+  const captureOperation = (
+    kind: DocumentOperationContext["operationKind"],
+  ): DocumentOperationContext => {
+    const id = documentId.value;
+    if (!id || documentSwitchInProgress) {
+      throw new StaleDocumentOperationError();
+    }
+    return {
+      documentId: id,
+      documentGeneration: requestGeneration,
+      operationGeneration: incrementOperation(kind),
+      operationKind: kind,
+    };
+  };
 
   const copyDraft = (value: DocumentDraft): DocumentDraft => ({
     title: value.title,
@@ -85,15 +200,23 @@ export const useDocumentStore = defineStore("document", () => {
 
   const open = async (id: string): Promise<void> => {
     const generation = ++requestGeneration;
+    invalidateDocumentOperations();
+    documentSwitchInProgress = true;
     loading.value = true;
     error.value = null;
     refreshWarning.value = null;
     try {
       const info = await documentApi.metadata(id);
+      if (generation !== requestGeneration) {
+        throw new StaleDocumentOperationError();
+      }
       let offset = 0;
       const chunks: string[] = [];
       while (true) {
         const chunk = await documentApi.content(id, offset, 65_536);
+        if (generation !== requestGeneration) {
+          throw new StaleDocumentOperationError();
+        }
         chunks.push(chunk.content);
         if (chunk.done) {
           break;
@@ -102,7 +225,7 @@ export const useDocumentStore = defineStore("document", () => {
       }
       const documentMap = await documentApi.map(id);
       if (generation !== requestGeneration) {
-        return;
+        throw new StaleDocumentOperationError();
       }
 
       documentId.value = id;
@@ -121,7 +244,10 @@ export const useDocumentStore = defineStore("document", () => {
       refreshWarning.value = null;
       conflict.value = null;
     } catch (caught) {
-      if (caught instanceof StaleSessionResponseError) {
+      if (
+        caught instanceof StaleSessionResponseError ||
+        caught instanceof StaleDocumentOperationError
+      ) {
         return;
       }
       if (generation === requestGeneration) {
@@ -135,6 +261,7 @@ export const useDocumentStore = defineStore("document", () => {
       }
     } finally {
       if (generation === requestGeneration) {
+        documentSwitchInProgress = false;
         loading.value = false;
       }
     }
@@ -143,10 +270,20 @@ export const useDocumentStore = defineStore("document", () => {
   const create = async (
     request: CreateDocumentRequest,
   ): Promise<DocumentWriteResult> => {
+    const documentGeneration = requestGeneration;
+    const previousDocumentId = documentId.value;
+    const operationGeneration = ++createRequestGeneration;
     const result = await documentApi.create(request);
-    resetSensitive();
-    documentId.value = result.documentId;
-    loadedRevision.value = result.revision;
+    if (
+      requestGeneration === documentGeneration &&
+      documentId.value === previousDocumentId &&
+      !documentSwitchInProgress &&
+      createRequestGeneration === operationGeneration
+    ) {
+      resetSensitive();
+      documentId.value = result.documentId;
+      loadedRevision.value = result.revision;
+    }
     return result;
   };
 
@@ -167,11 +304,16 @@ export const useDocumentStore = defineStore("document", () => {
       draft.value.tags.join("\u001F") !== savedDraft.value.tags.join("\u001F");
   };
 
-  const readAllContent = async (id: string): Promise<string> => {
+  const readAllContent = async (
+    id: string,
+    guard?: () => void,
+  ): Promise<string> => {
     let offset = 0;
     const chunks: string[] = [];
     while (true) {
+      guard?.();
       const chunk = await documentApi.content(id, offset, 65_536);
+      guard?.();
       chunks.push(chunk.content);
       if (chunk.done) {
         return chunks.join("");
@@ -282,34 +424,62 @@ export const useDocumentStore = defineStore("document", () => {
   };
 
   const loadLatestConflict = async (): Promise<void> => {
-    const id = documentId.value;
-    if (!id) {
-      return;
+    let context: DocumentOperationContext;
+    try {
+      context = captureOperation("conflict");
+      const latestMetadata = await documentApi.metadata(context.documentId);
+      assertCurrent(context);
+      const latestContent = await readAllContent(context.documentId, () =>
+        assertCurrent(context),
+      );
+      assertCurrent(context);
+      conflict.value = {
+        currentRevision: latestMetadata.revision,
+        mode: "compare",
+        latestMetadata,
+        latest: {
+          title: latestMetadata.title,
+          virtualPath: latestMetadata.virtualPath,
+          content: latestContent,
+          tags: [...latestMetadata.tags],
+        },
+      };
+    } catch (caught) {
+      if (isStaleError(caught)) {
+        return;
+      }
+      throw caught;
     }
-    const latestMetadata = await documentApi.metadata(id);
-    const latestContent = await readAllContent(id);
-    conflict.value = {
-      currentRevision: latestMetadata.revision,
-      mode: "compare",
-      latestMetadata,
-      latest: {
-        title: latestMetadata.title,
-        virtualPath: latestMetadata.virtualPath,
-        content: latestContent,
-        tags: [...latestMetadata.tags],
-      },
-    };
+  };
+
+  const reloadLatestWithContext = async (
+    context: DocumentOperationContext,
+    createContext: boolean,
+  ): Promise<void> => {
+    const active = createContext ? captureOperation("reload") : context;
+    const latestMetadata = await documentApi.metadata(active.documentId);
+    assertCurrent(active);
+    const content = await readAllContent(active.documentId, () =>
+      assertCurrent(active),
+    );
+    assertCurrent(active);
+    setFromMetadata(latestMetadata, content);
+    conflict.value = null;
+    saveState.value = "idle";
   };
 
   const reloadLatest = async (): Promise<void> => {
-    const id = documentId.value;
-    if (!id) {
-      return;
+    let context: DocumentOperationContext;
+    try {
+      context = captureOperation("reload");
+      await reloadLatestWithContext(context, false);
+      assertCurrent(context);
+    } catch (caught) {
+      if (isStaleError(caught)) {
+        return;
+      }
+      throw caught;
     }
-    const latestMetadata = await documentApi.metadata(id);
-    setFromMetadata(latestMetadata, await readAllContent(id));
-    conflict.value = null;
-    saveState.value = "idle";
   };
 
   const discardLocalConflict = (): void => {
@@ -349,13 +519,17 @@ export const useDocumentStore = defineStore("document", () => {
     saveState.value = "idle";
   };
 
-  const loadBacklinks = async (append = false): Promise<void> => {
-    const id = documentId.value;
+  const loadBacklinks = async (
+    append = false,
+    inheritedContext?: DocumentOperationContext,
+  ): Promise<void> => {
+    const id = inheritedContext?.documentId ?? documentId.value;
     if (!id || (append && !backlinkCursor.value)) {
       return;
     }
     const generation = ++backlinkRequestGeneration;
-    const documentGeneration = requestGeneration;
+    const documentGeneration =
+      inheritedContext?.documentGeneration ?? requestGeneration;
     const page = await documentApi.backlinks(
       id,
       append ? (backlinkCursor.value ?? undefined) : undefined,
@@ -363,7 +537,8 @@ export const useDocumentStore = defineStore("document", () => {
     if (
       generation !== backlinkRequestGeneration ||
       documentGeneration !== requestGeneration ||
-      documentId.value !== id
+      documentId.value !== id ||
+      (inheritedContext !== undefined && !isCurrentOperation(inheritedContext))
     ) {
       return;
     }
@@ -371,13 +546,17 @@ export const useDocumentStore = defineStore("document", () => {
     backlinkCursor.value = page.nextCursor ?? null;
   };
 
-  const loadMentions = async (append = false): Promise<void> => {
-    const id = documentId.value;
+  const loadMentions = async (
+    append = false,
+    inheritedContext?: DocumentOperationContext,
+  ): Promise<void> => {
+    const id = inheritedContext?.documentId ?? documentId.value;
     if (!id || (append && !mentionCursor.value)) {
       return;
     }
     const generation = ++mentionRequestGeneration;
-    const documentGeneration = requestGeneration;
+    const documentGeneration =
+      inheritedContext?.documentGeneration ?? requestGeneration;
     const page = await documentApi.unlinkedMentions(
       id,
       append ? (mentionCursor.value ?? undefined) : undefined,
@@ -385,7 +564,8 @@ export const useDocumentStore = defineStore("document", () => {
     if (
       generation !== mentionRequestGeneration ||
       documentGeneration !== requestGeneration ||
-      documentId.value !== id
+      documentId.value !== id ||
+      (inheritedContext !== undefined && !isCurrentOperation(inheritedContext))
     ) {
       return;
     }
@@ -393,13 +573,17 @@ export const useDocumentStore = defineStore("document", () => {
     mentionCursor.value = page.nextCursor ?? null;
   };
 
-  const loadRevisions = async (append = false): Promise<void> => {
-    const id = documentId.value;
+  const loadRevisions = async (
+    append = false,
+    inheritedContext?: DocumentOperationContext,
+  ): Promise<void> => {
+    const id = inheritedContext?.documentId ?? documentId.value;
     if (!id || (append && !revisionCursor.value)) {
       return;
     }
     const generation = ++revisionRequestGeneration;
-    const documentGeneration = requestGeneration;
+    const documentGeneration =
+      inheritedContext?.documentGeneration ?? requestGeneration;
     const page = await revisionApi.list(
       id,
       append ? (revisionCursor.value ?? undefined) : undefined,
@@ -407,7 +591,8 @@ export const useDocumentStore = defineStore("document", () => {
     if (
       generation !== revisionRequestGeneration ||
       documentGeneration !== requestGeneration ||
-      documentId.value !== id
+      documentId.value !== id ||
+      (inheritedContext !== undefined && !isCurrentOperation(inheritedContext))
     ) {
       return;
     }
@@ -415,15 +600,21 @@ export const useDocumentStore = defineStore("document", () => {
     revisionCursor.value = page.nextCursor ?? null;
   };
 
-  const loadInspector = async (): Promise<void> => {
+  const loadInspector = async (
+    inheritedContext?: DocumentOperationContext,
+  ): Promise<void> => {
     await Promise.all([
-      loadBacklinks(false),
-      loadMentions(false),
-      loadRevisions(false),
+      loadBacklinks(false, inheritedContext),
+      loadMentions(false, inheritedContext),
+      loadRevisions(false, inheritedContext),
     ]);
   };
 
   const toggleRevisionSelection = (revisionId: string): void => {
+    revisionCompareRequestGeneration++;
+    revisionDiff.value = "";
+    revisionCompareError.value = null;
+    revisionCompareLoading.value = false;
     if (selectedRevisionIds.value.includes(revisionId)) {
       selectedRevisionIds.value = selectedRevisionIds.value.filter(
         (id) => id !== revisionId,
@@ -437,27 +628,43 @@ export const useDocumentStore = defineStore("document", () => {
   };
 
   const compareSelectedRevisions = async (): Promise<void> => {
-    const id = documentId.value;
-    if (!id || selectedRevisionIds.value.length !== 2) {
+    if (selectedRevisionIds.value.length !== 2) {
       return;
     }
+    let context: DocumentOperationContext;
+    try {
+      context = captureOperation("compare");
+    } catch (caught) {
+      if (isStaleError(caught)) {
+        return;
+      }
+      throw caught;
+    }
+    const revisionIds = [...selectedRevisionIds.value];
     revisionCompareLoading.value = true;
     revisionCompareError.value = null;
     try {
-      const contents = await Promise.all(
-        selectedRevisionIds.value.map(async (revisionId) => {
-          const cached = revisionContents.value[revisionId];
-          if (cached) {
-            return cached;
-          }
-          const content = await revisionApi.content(id, revisionId);
+      const contents: RevisionContent[] = [];
+      for (const revisionId of revisionIds) {
+        assertCurrent(context);
+        let content = revisionContents.value[revisionId];
+        if (!content) {
+          content = await revisionApi.content(context.documentId, revisionId);
+          assertDocumentCurrent(context);
           revisionContents.value[revisionId] = content;
-          return content;
-        }),
-      );
+        }
+        contents.push(content);
+      }
       const { createRevisionDiff } = await import("../utils/revision-diff");
+      assertDocumentCurrent(context);
+      if (!isCurrentOperation(context)) {
+        return;
+      }
       revisionDiff.value = createRevisionDiff(contents[0]!, contents[1]!);
     } catch (caught) {
+      if (isStaleError(caught) || !isCurrentOperation(context)) {
+        return;
+      }
       revisionCompareError.value =
         caught instanceof ApiClientError
           ? caught
@@ -466,36 +673,65 @@ export const useDocumentStore = defineStore("document", () => {
               message: "无法读取历史版本。",
             });
     } finally {
-      revisionCompareLoading.value = false;
+      if (isCurrentOperation(context)) {
+        revisionCompareLoading.value = false;
+      }
     }
   };
 
   const restoreRevision = async (revisionId: string): Promise<void> => {
-    const id = documentId.value;
     const revision = loadedRevision.value;
-    if (!id || revision === null) {
+    let context: DocumentOperationContext;
+    try {
+      context = captureOperation("restore");
+    } catch (caught) {
+      if (isStaleError(caught)) {
+        return;
+      }
+      throw caught;
+    }
+    if (revision === null) {
       return;
     }
-    await revisionApi.restore(id, revisionId, revision);
-    await reloadLatest();
-    await loadInspector();
+    try {
+      await revisionApi.restore(context.documentId, revisionId, revision);
+      assertCurrent(context);
+      await reloadLatestWithContext(context, false);
+      assertCurrent(context);
+      await loadInspector(context);
+      assertCurrent(context);
+    } catch (caught) {
+      if (isStaleError(caught)) {
+        return;
+      }
+      throw caught;
+    }
   };
 
   const deleteDocument = async (): Promise<void> => {
-    const id = documentId.value;
     const revision = loadedRevision.value;
-    if (!id || revision === null) {
+    let context: DocumentOperationContext;
+    try {
+      context = captureOperation("delete");
+    } catch (caught) {
+      if (isStaleError(caught)) {
+        return;
+      }
+      throw caught;
+    }
+    if (revision === null) {
       return;
     }
-    await documentApi.delete(id, revision);
-    resetSensitive();
+    await documentApi.delete(context.documentId, revision);
+    if (isCurrentOperation(context)) {
+      resetSensitive();
+    }
   };
 
   const resetSensitive = (): void => {
     requestGeneration++;
-    backlinkRequestGeneration++;
-    mentionRequestGeneration++;
-    revisionRequestGeneration++;
+    invalidateDocumentOperations();
+    documentSwitchInProgress = false;
     documentId.value = null;
     metadata.value = null;
     loadedRevision.value = null;

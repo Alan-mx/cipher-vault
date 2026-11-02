@@ -31,7 +31,7 @@ describe("ApiClient", () => {
         throw new Error("unconfigured");
       },
       currentSessionGeneration: () => 0,
-      onSessionInvalid: () => undefined,
+      onSessionInvalid: () => false,
     });
   });
 
@@ -46,7 +46,7 @@ describe("ApiClient", () => {
       getCsrfToken: () => "csrf-token",
       refreshCsrfToken: async () => "csrf-token",
       currentSessionGeneration: () => 1,
-      onSessionInvalid: () => undefined,
+      onSessionInvalid: () => false,
     });
     const client = new ApiClient();
 
@@ -93,6 +93,10 @@ describe("ApiClient", () => {
       new ApiClient().request("/api/documents"),
     ).rejects.toBeInstanceOf(ApiClientError);
     expect(onSessionInvalid).toHaveBeenCalledOnce();
+    expect(onSessionInvalid).toHaveBeenCalledWith(
+      expect.any(ApiClientError),
+      1,
+    );
   });
 
   it("drops responses from an invalidated session generation", async () => {
@@ -108,11 +112,173 @@ describe("ApiClient", () => {
       getCsrfToken: () => null,
       refreshCsrfToken: async () => "",
       currentSessionGeneration: () => generation,
-      onSessionInvalid: () => undefined,
+      onSessionInvalid: () => false,
     });
 
     await expect(
       new ApiClient().request("/api/documents", { sessionGeneration: 1 }),
+    ).rejects.toBeInstanceOf(StaleSessionResponseError);
+  });
+
+  it.each([401, 423])(
+    "does not clear a newer session after a stale %i response",
+    async (status) => {
+      let generation = 1;
+      const onSessionInvalid = vi.fn(() => false);
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+        generation = 2;
+        return new Response(
+          JSON.stringify({
+            code: "vault_locked",
+            message: "Vault is locked.",
+          }),
+          {
+            status,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      });
+      configureApiClient({
+        getCsrfToken: () => null,
+        refreshCsrfToken: async () => "",
+        currentSessionGeneration: () => generation,
+        onSessionInvalid,
+      });
+
+      await expect(
+        new ApiClient().request("/api/documents", {
+          sessionGeneration: 1,
+        }),
+      ).rejects.toBeInstanceOf(StaleSessionResponseError);
+
+      expect(onSessionInvalid).not.toHaveBeenCalled();
+    },
+  );
+
+  it("maps a late network error to a stale response", async () => {
+    let generation = 1;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      generation = 2;
+      throw new TypeError("network down");
+    });
+    configureApiClient({
+      getCsrfToken: () => null,
+      refreshCsrfToken: async () => "",
+      currentSessionGeneration: () => generation,
+      onSessionInvalid: () => false,
+    });
+
+    await expect(
+      new ApiClient().request("/api/documents", {
+        sessionGeneration: 1,
+      }),
+    ).rejects.toBeInstanceOf(StaleSessionResponseError);
+  });
+
+  it("does not retry CSRF after the session generation changes", async () => {
+    let generation = 1;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          code: "antiforgery_invalid",
+          message: "CSRF expired.",
+        }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    const refreshCsrfToken = vi.fn(async () => {
+      generation = 2;
+      return "stale-token";
+    });
+    configureApiClient({
+      getCsrfToken: () => "old-token",
+      refreshCsrfToken,
+      currentSessionGeneration: () => generation,
+      onSessionInvalid: () => false,
+    });
+
+    await expect(
+      new ApiClient().request("/api/documents", {
+        method: "POST",
+        csrf: true,
+        sessionGeneration: 1,
+      }),
+    ).rejects.toBeInstanceOf(StaleSessionResponseError);
+
+    expect(refreshCsrfToken).toHaveBeenCalledWith(1);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("refreshes CSRF once and retries with the new token", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            code: "antiforgery_invalid",
+            message: "CSRF expired.",
+          }),
+          {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    const refreshCsrfToken = vi.fn(async () => "new-token");
+    let csrfToken = "old-token";
+    configureApiClient({
+      getCsrfToken: () => csrfToken,
+      refreshCsrfToken: async (expectedGeneration) => {
+        csrfToken = await refreshCsrfToken(expectedGeneration);
+        return csrfToken;
+      },
+      currentSessionGeneration: () => 1,
+      onSessionInvalid: () => false,
+    });
+
+    await expect(
+      new ApiClient().request("/api/documents", {
+        method: "POST",
+        csrf: true,
+        sessionGeneration: 1,
+      }),
+    ).resolves.toEqual({ ok: true });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(refreshCsrfToken).toHaveBeenCalledOnce();
+    const retryHeaders = fetchMock.mock.calls[1]?.[1]?.headers as Headers;
+    expect(retryHeaders.get("X-CSRF-TOKEN")).toBe("new-token");
+  });
+
+  it("turns a stale parse failure into a stale response", async () => {
+    let generation = 1;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      generation = 2;
+      return new Response("{not-json", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    configureApiClient({
+      getCsrfToken: () => null,
+      refreshCsrfToken: async () => "",
+      currentSessionGeneration: () => generation,
+      onSessionInvalid: () => false,
+    });
+
+    await expect(
+      new ApiClient().request("/api/documents", {
+        sessionGeneration: 1,
+      }),
     ).rejects.toBeInstanceOf(StaleSessionResponseError);
   });
 });

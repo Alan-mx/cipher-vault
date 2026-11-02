@@ -44,7 +44,10 @@ export const registerDirtyStateProvider = (
 export const hasDirtySensitiveState = (): boolean =>
   Array.from(dirtyProviders).some((provider) => provider());
 
-export const clearSensitiveState = (reason: SessionClearReason): number => {
+export const clearSensitiveState = (
+  reason: SessionClearReason,
+  localCleanup?: (reason: SessionClearReason) => void,
+): number => {
   if (clearing) {
     return generation;
   }
@@ -54,6 +57,7 @@ export const clearSensitiveState = (reason: SessionClearReason): number => {
     generation++;
     requestController.abort();
     requestController = new AbortController();
+    localCleanup?.(reason);
     for (const reset of Array.from(resetHandlers)) {
       try {
         reset();

@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using CipherVault.Application.Exports;
+using CipherVault.Core.Database;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
 using CipherVault.Core.Exports;
@@ -119,7 +120,7 @@ public sealed class PlaintextExportServiceTests
             "md",
             documents[1].GetProperty("format").GetString());
 
-        var audit = await fixture.QueryAsync(
+        var auditRows = await fixture.QueryAsync(
             async context =>
             {
                 using var command = context.CreateCommand();
@@ -127,22 +128,25 @@ public sealed class PlaintextExportServiceTests
                     """
                     SELECT result, details_json
                     FROM audit_events
-                    WHERE action = 'export.plaintext'
-                    ORDER BY occurred_at DESC
-                    LIMIT 1;
+                    WHERE action = 'export.plaintext';
                     """;
                 await using var reader =
                     await command.Command.ExecuteReaderAsync();
-                if (!await reader.ReadAsync())
+                var rows = new List<(string Result, string Details)>();
+                while (await reader.ReadAsync())
                 {
-                    return string.Empty;
+                    rows.Add((reader.GetString(0), reader.GetString(1)));
                 }
-                return $"{reader.GetString(0)}:{reader.GetString(1)}";
+                return rows;
             });
-        Assert.StartsWith("success:", audit, StringComparison.Ordinal);
+        Assert.Equal(
+            ["started", "success"],
+            auditRows.Select(row => row.Result).Order(StringComparer.Ordinal));
+        var successDetails = auditRows.Single(
+            row => row.Result == "success").Details;
         Assert.Contains(
             $"\"documentCount\":2",
-            audit,
+            successDetails,
             StringComparison.Ordinal);
     }
 
@@ -203,7 +207,7 @@ public sealed class PlaintextExportServiceTests
                 _ => { },
                 actor));
 
-        var auditResult = await fixture.QueryAsync(
+        var auditResults = await fixture.QueryAsync(
             async context =>
             {
                 using var command = context.CreateCommand();
@@ -211,14 +215,20 @@ public sealed class PlaintextExportServiceTests
                     """
                     SELECT result
                     FROM audit_events
-                    WHERE action = 'export.plaintext'
-                    ORDER BY occurred_at DESC
-                    LIMIT 1;
+                    WHERE action = 'export.plaintext';
                     """;
-                return Convert.ToString(
-                    await command.Command.ExecuteScalarAsync());
+                var values = new List<string>();
+                await using var reader =
+                    await command.Command.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    values.Add(reader.GetString(0));
+                }
+                return values;
             });
-        Assert.Equal("cancelled", auditResult);
+        Assert.Equal(
+            ["cancelled", "started"],
+            auditResults.Order(StringComparer.Ordinal));
     }
 
     [Fact]
@@ -287,6 +297,89 @@ public sealed class PlaintextExportServiceTests
                 new VaultActorContext(VaultActorKind.UserUi)));
 
         Assert.Equal(VaultErrorCode.ExportTooLarge, exception.Code);
+        Assert.Equal(0, destination.Length);
+    }
+
+    [Fact]
+    public async Task StartedAuditIsCommittedBeforePreparedCallback()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var service = new PlaintextExportService(
+            fixture.Manager,
+            fixture.TimeProvider);
+        using var destination = new MemoryStream();
+        var observed = false;
+
+        var result = await service.WriteAsync(
+            destination,
+            metadata =>
+            {
+                var material = fixture.Manager.Session!.KeyMaterial;
+                using var observer = SqliteMcDatabaseFactory
+                    .OpenReadOnlyConnectionAsync(
+                        fixture.VaultDirectory,
+                        material.DatabaseKey)
+                    .GetAwaiter()
+                    .GetResult();
+                using var command = observer.CreateCommand();
+                command.CommandText =
+                    """
+                    SELECT count(*)
+                    FROM audit_events
+                    WHERE action = 'export.plaintext'
+                      AND result = 'started'
+                      AND instr(details_json, $exportId) > 0;
+                    """;
+                command.Parameters.AddWithValue(
+                    "$exportId",
+                    metadata.ExportId.ToString("D"));
+                observed = Convert.ToInt32(
+                    command.ExecuteScalar()) == 1;
+            },
+            new VaultActorContext(VaultActorKind.UserUi));
+
+        Assert.True(observed);
+        Assert.True(result.ZipBytes > 0);
+    }
+
+    [Fact]
+    public async Task PreparedCallbackFailureRecordsStartedAndFailed()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var service = new PlaintextExportService(
+            fixture.Manager,
+            fixture.TimeProvider);
+        using var destination = new MemoryStream();
+
+        var exception = await Assert.ThrowsAsync<VaultException>(
+            () => service.WriteAsync(
+                destination,
+                _ => throw new InvalidOperationException("prepared failed"),
+                new VaultActorContext(VaultActorKind.UserUi)));
+        Assert.Equal(VaultErrorCode.DatabaseError, exception.Code);
+
+        var results = await fixture.QueryAsync(
+            async context =>
+            {
+                using var command = context.CreateCommand();
+                command.Command.CommandText =
+                    """
+                    SELECT result
+                    FROM audit_events
+                    WHERE action = 'export.plaintext'
+                    ORDER BY result;
+                    """;
+                var values = new List<string>();
+                await using var reader =
+                    await command.Command.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    values.Add(reader.GetString(0));
+                }
+
+                return values;
+            });
+        Assert.Equal(["failed", "started"], results);
         Assert.Equal(0, destination.Length);
     }
 

@@ -104,6 +104,49 @@ public sealed class VaultOperationContext
         }
     }
 
+    internal async ValueTask CommitTransactionNowAsync(
+        CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+        await transactionGate.WaitAsync(cancellationToken);
+        try
+        {
+            ThrowIfDisposed();
+            if (transaction is null)
+            {
+                throw new VaultException(
+                    VaultErrorCode.DatabaseError,
+                    "There is no transaction available to commit.");
+            }
+
+            try
+            {
+                await transaction.CommitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (SqliteException exception)
+            {
+                throw new VaultException(
+                    VaultErrorCode.DatabaseError,
+                    "Unable to commit the Vault transaction.",
+                    exception);
+            }
+            finally
+            {
+                await transaction.DisposeAsync();
+                transaction = null;
+                commitRequested = false;
+            }
+        }
+        finally
+        {
+            transactionGate.Release();
+        }
+    }
+
     public async ValueTask RollbackTransactionAsync(
         CancellationToken cancellationToken = default)
     {

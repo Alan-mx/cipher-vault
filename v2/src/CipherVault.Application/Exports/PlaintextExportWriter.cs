@@ -44,12 +44,13 @@ internal static class PlaintextExportWriter
                 counting,
                 ZipArchiveMode.Create,
                 leaveOpen: true);
-            for (var offset = 0; ; offset++)
+            PlaintextExportCursor? cursor = null;
+            while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var document = await PlaintextExportStore.ReadNextAsync(
                     context,
-                    offset,
+                    cursor,
                     cancellationToken);
                 if (document is null)
                 {
@@ -83,6 +84,9 @@ internal static class PlaintextExportWriter
                     bytes.LongLength,
                     Convert.ToHexString(SHA256.HashData(bytes))
                         .ToLowerInvariant()));
+                cursor = new PlaintextExportCursor(
+                    document.PathKey,
+                    document.DocumentId);
             }
 
             if (manifestDocuments.Count != metadata.DocumentCount

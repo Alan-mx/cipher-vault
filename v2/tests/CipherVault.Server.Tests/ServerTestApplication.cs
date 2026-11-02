@@ -107,6 +107,16 @@ internal sealed class ServerTestApplication : IAsyncDisposable
             Path.Combine(parent, "data"),
             Path.Combine(parent, "config"));
         paths.EnsureCreated();
+        if (gitBackup is not null)
+        {
+            gitBackup = gitBackup with
+            {
+                SecureHooksPath =
+                    gitBackup.SecureHooksPath ?? paths.GitHooksDirectory,
+                SecureAttributesPath =
+                    gitBackup.SecureAttributesPath ?? paths.GitAttributesFile
+            };
+        }
         var options = new ServerOptions(
             paths,
             [new ServerListenAddress("127.0.0.1", FindFreePort())],

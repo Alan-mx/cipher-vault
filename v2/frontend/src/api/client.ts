@@ -21,10 +21,13 @@ export interface ApiRequestOptions {
 
 export interface ApiClientHooks {
   getCsrfToken: () => string | null;
-  refreshCsrfToken: () => Promise<string>;
+  refreshCsrfToken: (expectedGeneration: number) => Promise<string>;
   currentSessionGeneration: () => number;
   currentAbortSignal?: () => AbortSignal;
-  onSessionInvalid: (error: ApiClientError) => void;
+  onSessionInvalid: (
+    error: ApiClientError,
+    expectedGeneration: number,
+  ) => boolean;
 }
 
 const defaultHooks: ApiClientHooks = {
@@ -33,7 +36,7 @@ const defaultHooks: ApiClientHooks = {
     throw new Error("CSRF provider is not configured.");
   },
   currentSessionGeneration: () => 0,
-  onSessionInvalid: () => undefined,
+  onSessionInvalid: () => false,
 };
 
 let hooks = defaultHooks;
@@ -97,7 +100,9 @@ const readErrorBody = async (
 
 const createRequestInit = async (
   options: ApiRequestOptions,
+  generation: number,
 ): Promise<RequestInit> => {
+  ensureCurrentGeneration(generation);
   const headers = new Headers();
   const method = options.method ?? "GET";
   if (options.body !== undefined) {
@@ -107,7 +112,12 @@ const createRequestInit = async (
     headers.set("If-Match", `"${options.ifMatch}"`);
   }
   if (options.csrf) {
-    const token = hooks.getCsrfToken() ?? (await hooks.refreshCsrfToken());
+    let token = hooks.getCsrfToken();
+    if (!token) {
+      ensureCurrentGeneration(generation);
+      token = await hooks.refreshCsrfToken(generation);
+      ensureCurrentGeneration(generation);
+    }
     headers.set("X-CSRF-TOKEN", token);
   }
 
@@ -128,6 +138,12 @@ const createRequestInit = async (
   };
 };
 
+const ensureCurrentGeneration = (expectedGeneration: number): void => {
+  if (hooks.currentSessionGeneration() !== expectedGeneration) {
+    throw new StaleSessionResponseError();
+  }
+};
+
 const execute = async (
   path: string,
   options: ApiRequestOptions,
@@ -139,10 +155,15 @@ const execute = async (
   let retriedCsrf = false;
 
   while (true) {
+    ensureCurrentGeneration(generation);
     let response: Response;
     try {
-      response = await fetch(url, await createRequestInit(options));
+      response = await fetch(url, await createRequestInit(options, generation));
     } catch (error) {
+      if (error instanceof StaleSessionResponseError) {
+        throw error;
+      }
+      ensureCurrentGeneration(generation);
       if (error instanceof DOMException && error.name === "AbortError") {
         throw error;
       }
@@ -154,8 +175,10 @@ const execute = async (
       });
     }
 
+    ensureCurrentGeneration(generation);
     if (!response.ok) {
       const body = await readErrorBody(response);
+      ensureCurrentGeneration(generation);
       const error = new ApiClientError(
         response.status,
         body,
@@ -169,20 +192,30 @@ const execute = async (
         error.code === "antiforgery_invalid"
       ) {
         retriedCsrf = true;
-        await hooks.refreshCsrfToken();
+        ensureCurrentGeneration(generation);
+        await hooks.refreshCsrfToken(generation);
+        ensureCurrentGeneration(generation);
         continue;
       }
 
       if (response.status === 401 || response.status === 423) {
-        hooks.onSessionInvalid(error);
+        ensureCurrentGeneration(generation);
+        hooks.onSessionInvalid(error, generation);
       }
       throw error;
     }
 
-    const parsed = await parse(response);
-    if (generation !== hooks.currentSessionGeneration()) {
-      throw new StaleSessionResponseError();
+    let parsed: unknown;
+    try {
+      parsed = await parse(response);
+    } catch (error) {
+      if (error instanceof StaleSessionResponseError) {
+        throw error;
+      }
+      ensureCurrentGeneration(generation);
+      throw error;
     }
+    ensureCurrentGeneration(generation);
     return parsed;
   }
 };

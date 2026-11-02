@@ -11,7 +11,9 @@ public sealed record ApplicationPaths(
     string ServerLockPath,
     string McpTokenPath,
     string GitBackupStatePath,
-    string BackupLockPath)
+    string BackupLockPath,
+    string GitHooksDirectory,
+    string GitAttributesFile)
 {
     public static ApplicationPaths Create(
         string vaultDirectory,
@@ -70,7 +72,9 @@ public sealed record ApplicationPaths(
             Path.Combine(config, "server.lock"),
             Path.Combine(config, "mcp-token.json"),
             Path.Combine(config, "git-backup-state.json"),
-            Path.Combine(backup, ".cipher-vault-backup.lock"));
+            Path.Combine(backup, ".cipher-vault-backup.lock"),
+            Path.Combine(config, "git-hooks-empty"),
+            Path.Combine(config, "git-attributes-empty"));
     }
 
     public void EnsureCreated()
@@ -81,13 +85,26 @@ public sealed record ApplicationPaths(
             Directory.CreateDirectory(ConfigDirectory);
             Directory.CreateDirectory(BackupDirectory);
             Directory.CreateDirectory(DataProtectionDirectory);
+            Directory.CreateDirectory(GitHooksDirectory);
+            if (!File.Exists(GitAttributesFile))
+            {
+                using var attributes = new FileStream(
+                    GitAttributesFile,
+                    FileMode.CreateNew,
+                    FileAccess.Write,
+                    FileShare.Read);
+            }
             EnsurePathHasNoLinks(VaultDirectory, "Vault directory");
             EnsurePathHasNoLinks(ConfigDirectory, "Config directory");
             EnsurePathHasNoLinks(BackupDirectory, "Backup directory");
+            EnsurePathHasNoLinks(GitHooksDirectory, "Git hooks directory");
+            EnsurePathHasNoLinks(GitAttributesFile, "Git attributes file");
             VaultFilePermissions.ProtectDirectory(VaultDirectory);
             VaultFilePermissions.ProtectDirectory(ConfigDirectory);
             VaultFilePermissions.ProtectDirectory(BackupDirectory);
             VaultFilePermissions.ProtectDirectory(DataProtectionDirectory);
+            VaultFilePermissions.ProtectDirectory(GitHooksDirectory);
+            VaultFilePermissions.ProtectFile(GitAttributesFile);
         }
         catch (ServerStartupException)
         {

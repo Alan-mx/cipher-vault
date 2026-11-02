@@ -203,6 +203,8 @@ public sealed class GitBackupCoordinatorTests
             Directory.CreateDirectory(Root);
             Directory.CreateDirectory(RepositoryPath);
             Directory.CreateDirectory(RemotePath);
+            Directory.CreateDirectory(HooksPath);
+            File.WriteAllBytes(AttributesPath, []);
         }
 
         public string Root { get; } = Path.Combine(
@@ -213,12 +215,19 @@ public sealed class GitBackupCoordinatorTests
 
         public string RemotePath => Path.Combine(Root, "remote.git");
 
+        public string HooksPath => Path.Combine(Root, "hooks-empty");
+
+        public string AttributesPath => Path.Combine(Root, "attributes-empty");
+
         public GitBackupOptions Options => GitBackupOptions.Disabled with
         {
             Enabled = true,
             RepositoryPath = RepositoryPath,
             Remote = "origin",
-            Branch = "main"
+            Branch = "main",
+            AllowFileRemote = true,
+            SecureHooksPath = HooksPath,
+            SecureAttributesPath = AttributesPath
         };
 
         public async Task InitializeAsync(bool createRemote = true)

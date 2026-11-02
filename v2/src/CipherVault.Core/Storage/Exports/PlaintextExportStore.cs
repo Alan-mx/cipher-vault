@@ -54,26 +54,43 @@ public static class PlaintextExportStore
 
     public static async Task<PlaintextExportDocument?> ReadNextAsync(
         VaultOperationContext context,
-        int offset,
+        PlaintextExportCursor? cursor,
         CancellationToken cancellationToken)
     {
-        if (offset < 0)
-        {
-            throw new VaultException(
-                VaultErrorCode.InvalidInput,
-                "Plaintext export offset is invalid.");
-        }
-
         using var command = context.CreateCommand();
-        command.Command.CommandText =
-            """
-            SELECT document_id, path, format, revision, content
-            FROM documents
-            WHERE deleted_at IS NULL
-            ORDER BY path_key ASC, document_id ASC
-            LIMIT 1 OFFSET $offset;
-            """;
-        command.Command.Parameters.AddWithValue("$offset", offset);
+        command.Command.CommandText = cursor is null
+            ? """
+              SELECT document_id, path_key, path, format, revision, content
+              FROM documents
+              WHERE deleted_at IS NULL
+              ORDER BY path_key COLLATE BINARY,
+                       document_id COLLATE BINARY
+              LIMIT 1;
+              """
+            : """
+              SELECT document_id, path_key, path, format, revision, content
+              FROM documents
+              WHERE deleted_at IS NULL
+                AND (
+                    path_key COLLATE BINARY > $afterPath
+                    OR (
+                        path_key COLLATE BINARY = $afterPath
+                        AND document_id COLLATE BINARY > $afterDocumentId
+                    )
+                )
+              ORDER BY path_key COLLATE BINARY,
+                       document_id COLLATE BINARY
+              LIMIT 1;
+              """;
+        if (cursor is not null)
+        {
+            command.Command.Parameters.AddWithValue(
+                "$afterPath",
+                cursor.PathKey);
+            command.Command.Parameters.AddWithValue(
+                "$afterDocumentId",
+                cursor.DocumentId.ToString("D"));
+        }
         await using var reader = await command.Command.ExecuteReaderAsync(
             cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
@@ -89,11 +106,12 @@ public static class PlaintextExportStore
                 "Plaintext export document identity is invalid.");
         }
 
-        var path = reader.GetString(1);
+        var pathKey = reader.GetString(1);
+        var path = reader.GetString(2);
         var format = VaultDocumentFormatExtensions.ParseDatabaseValue(
-            reader.GetString(2));
-        var revision = reader.GetInt32(3);
-        var content = reader.GetString(4);
+            reader.GetString(3));
+        var revision = reader.GetInt32(4);
+        var content = reader.GetString(5);
 
         try
         {
@@ -118,6 +136,7 @@ public static class PlaintextExportStore
             path,
             format,
             revision,
-            content);
+            content,
+            pathKey);
     }
 }

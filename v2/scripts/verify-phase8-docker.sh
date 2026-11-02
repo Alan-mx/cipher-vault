@@ -1,9 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly release_version="2.0.0-rc.1"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+release_version="${CIPHERVAULT_RELEASE_VERSION:-}"
+if [[ -z "$release_version" ]]; then
+    # shellcheck disable=SC1091
+    source "${repo_root}/v2/deploy/versions.env"
+    release_version="${RELEASE_VERSION:-}"
+fi
+test -n "$release_version"
+readonly release_version
+export CIPHERVAULT_RELEASE_VERSION="$release_version"
 readonly image="cipher-vault:${release_version}"
-readonly repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly password="phase8 docker acceptance password"
 readonly marker="phase8-docker-acceptance-marker"
 readonly stamp="$$-$RANDOM"
@@ -67,6 +75,7 @@ test "$architecture" = "amd64"
 test "$image_user" = "10001:10001"
 python3 - "$healthcheck" "$labels" <<'PY'
 import json
+import os
 import sys
 
 health = json.loads(sys.argv[1])
@@ -74,7 +83,8 @@ labels = json.loads(sys.argv[2])
 test = " ".join(health.get("Test") or [])
 if "/api/vault/status" not in test:
     raise SystemExit("phase8_docker_healthcheck_invalid")
-if labels.get("org.opencontainers.image.version") != "2.0.0-rc.1":
+if labels.get("org.opencontainers.image.version") != os.environ[
+        "CIPHERVAULT_RELEASE_VERSION"]:
     raise SystemExit("phase8_docker_version_label_invalid")
 if not str(labels.get("org.opencontainers.image.revision", "")).startswith(
         "0000000000000000000000000000000000000000"):
@@ -142,11 +152,12 @@ python3 - \
     "${temporary_root}/version.headers" \
     "${temporary_root}/index.headers" <<'PY'
 import json
+import os
 import sys
 
 with open(sys.argv[1], encoding="utf-8") as stream:
     version = json.load(stream)
-if version.get("productVersion") != "2.0.0-rc.1":
+if version.get("productVersion") != os.environ["CIPHERVAULT_RELEASE_VERSION"]:
     raise SystemExit("phase8_docker_version_invalid")
 if version.get("rid") != "linux-x64":
     raise SystemExit("phase8_docker_rid_invalid")
@@ -359,7 +370,8 @@ archive_sha="$(sha256sum "$docker_tar" | awk '{print $1}')"
 compose_file="${repo_root}/v2/deploy/docker-compose.yml"
 compose_validation=yaml
 if docker compose version >/dev/null 2>&1; then
-    docker compose --file "$compose_file" config >/dev/null
+    CIPHERVAULT_IMAGE="$image" \
+        docker compose --file "$compose_file" config >/dev/null
     compose_validation=docker-compose
 else
     python3 - "$compose_file" <<'PY'
@@ -397,7 +409,7 @@ evidence = {
     "imageId": image_id,
     "architecture": architecture,
     "user": image_user,
-    "artifactFileName": "cipher-vault-2.0.0-rc.1-docker-linux-amd64.tar",
+    "artifactFileName": f'cipher-vault-{os.environ["CIPHERVAULT_RELEASE_VERSION"]}-docker-linux-amd64.tar',
     "artifactSha256": archive_sha,
     "healthcheckUsesStatus": True,
     "curlPresent": True,

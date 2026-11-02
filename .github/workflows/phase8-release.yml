@@ -4,26 +4,34 @@ on:
   workflow_dispatch:
   push:
     tags:
-      - "v2.0.0-rc.*"
+      - "v2.0.0-rc.1"
 
 permissions:
   contents: read
 
-env:
-  CIPHERVAULT_RELEASE_VERSION: 2.0.0-rc.1
-  CIPHERVAULT_ARTIFACT_ROOT: v2/artifacts/release/2.0.0-rc.1
+concurrency:
+  group: phase8-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   prepare:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.release.outputs.version }}
+      artifactRoot: ${{ steps.release.outputs.artifactRoot }}
       commit: ${{ steps.release.outputs.commit }}
       builtAtUtc: ${{ steps.release.outputs.builtAtUtc }}
 
     steps:
+      - name: Validate release ref
+        shell: bash
+        run: |
+          test "$GITHUB_REF_TYPE" = "tag"
+          test "$GITHUB_REF_PROTECTED" = "true"
+
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.ref }}
           fetch-depth: 0
 
       - name: Validate release worktree
@@ -32,19 +40,35 @@ jobs:
           test -z "$(git status --porcelain --untracked-files=no)"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
+      - name: Verify release version consistency
+        shell: pwsh
+        run: |
+          .\v2\scripts\release\Test-ReleaseVersionConsistency.ps1
+
       - name: Resolve release context
         id: release
         shell: bash
         run: |
-          echo "version=$CIPHERVAULT_RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          source v2/deploy/versions.env
+          test "$RELEASE_VERSION" = "2.0.0-rc.1"
+          test "$GITHUB_REF_NAME" = "v$RELEASE_VERSION"
+          artifact_root="v2/artifacts/release/$RELEASE_VERSION"
+          echo "version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "artifactRoot=$artifact_root" >> "$GITHUB_OUTPUT"
           echo "commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
           echo "builtAtUtc=$(date -u +%Y-%m-%dT%H:%M:%S.0000000Z)" >> "$GITHUB_OUTPUT"
 
   frontend:
     needs: prepare
     runs-on: ubuntu-latest
+    env:
+      CIPHERVAULT_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      CIPHERVAULT_ARTIFACT_ROOT: ${{ needs.prepare.outputs.artifactRoot }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -69,10 +93,14 @@ jobs:
     needs: [prepare, frontend]
     runs-on: windows-latest
     env:
+      CIPHERVAULT_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      CIPHERVAULT_ARTIFACT_ROOT: ${{ needs.prepare.outputs.artifactRoot }}
       CIPHERVAULT_BUILD_COMMIT: ${{ needs.prepare.outputs.commit }}
       CIPHERVAULT_BUILD_TIMESTAMP_UTC: ${{ needs.prepare.outputs.builtAtUtc }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.402
@@ -103,23 +131,28 @@ jobs:
           $root = Join-Path $env:GITHUB_WORKSPACE $env:CIPHERVAULT_ARTIFACT_ROOT
           .\v2\scripts\verify-phase8.ps1 `
             -ArtifactRoot $root `
-            -EvidenceRoot (Join-Path $root "evidence")
+            -EvidenceRoot (Join-Path $root "evidence") `
+            -ReleaseVersion $env:CIPHERVAULT_RELEASE_VERSION
       - uses: actions/upload-artifact@v4
         with:
           name: phase8-windows
           path: |
-            v2/artifacts/release/2.0.0-rc.1/CipherVault-2.0.0-rc.1-win-x64.zip
-            v2/artifacts/release/2.0.0-rc.1/evidence/windows.json
+            ${{ needs.prepare.outputs.artifactRoot }}/CipherVault-${{ needs.prepare.outputs.version }}-win-x64.zip
+            ${{ needs.prepare.outputs.artifactRoot }}/evidence/windows.json
           retention-days: 14
 
   linux-package:
     needs: [prepare, frontend]
     runs-on: ubuntu-latest
     env:
+      CIPHERVAULT_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      CIPHERVAULT_ARTIFACT_ROOT: ${{ needs.prepare.outputs.artifactRoot }}
       CIPHERVAULT_BUILD_COMMIT: ${{ needs.prepare.outputs.commit }}
       CIPHERVAULT_BUILD_TIMESTAMP_UTC: ${{ needs.prepare.outputs.builtAtUtc }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.402
@@ -150,6 +183,8 @@ jobs:
           mkdir -p "$CIPHERVAULT_ARTIFACT_ROOT/evidence"
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/repo" \
+            --env CIPHERVAULT_ARTIFACT_ROOT \
+            --env CIPHERVAULT_RELEASE_VERSION \
             ubuntu:22.04 \
             bash -lc '
               apt-get update &&
@@ -158,8 +193,8 @@ jobs:
                 ca-certificates curl python3 util-linux binutils \
                 libicu-dev libssl3 zlib1g systemd &&
               bash /repo/v2/scripts/verify-phase8.sh \
-                --artifact-root /repo/v2/artifacts/release/2.0.0-rc.1 \
-                --evidence-root /repo/v2/artifacts/release/2.0.0-rc.1/evidence \
+                --artifact-root "/repo/$CIPHERVAULT_ARTIFACT_ROOT" \
+                --evidence-root "/repo/$CIPHERVAULT_ARTIFACT_ROOT/evidence" \
                 --distribution ubuntu \
                 --distribution-version 22.04
             '
@@ -167,6 +202,8 @@ jobs:
         run: |
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/repo" \
+            --env CIPHERVAULT_ARTIFACT_ROOT \
+            --env CIPHERVAULT_RELEASE_VERSION \
             debian:12 \
             bash -lc '
               apt-get update &&
@@ -175,8 +212,8 @@ jobs:
                 ca-certificates curl python3 util-linux binutils \
                 libicu-dev libssl3 zlib1g systemd &&
               bash /repo/v2/scripts/verify-phase8.sh \
-                --artifact-root /repo/v2/artifacts/release/2.0.0-rc.1 \
-                --evidence-root /repo/v2/artifacts/release/2.0.0-rc.1/evidence \
+                --artifact-root "/repo/$CIPHERVAULT_ARTIFACT_ROOT" \
+                --evidence-root "/repo/$CIPHERVAULT_ARTIFACT_ROOT/evidence" \
                 --distribution debian \
                 --distribution-version 12
             '
@@ -184,19 +221,23 @@ jobs:
         with:
           name: phase8-linux
           path: |
-            v2/artifacts/release/2.0.0-rc.1/CipherVault-2.0.0-rc.1-linux-x64.tar.gz
-            v2/artifacts/release/2.0.0-rc.1/evidence/linux-ubuntu-22.04.json
-            v2/artifacts/release/2.0.0-rc.1/evidence/linux-debian-12.json
+            ${{ needs.prepare.outputs.artifactRoot }}/CipherVault-${{ needs.prepare.outputs.version }}-linux-x64.tar.gz
+            ${{ needs.prepare.outputs.artifactRoot }}/evidence/linux-ubuntu-22.04.json
+            ${{ needs.prepare.outputs.artifactRoot }}/evidence/linux-debian-12.json
           retention-days: 14
 
   docker-package:
     needs: [prepare, frontend]
     runs-on: ubuntu-latest
     env:
+      CIPHERVAULT_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      CIPHERVAULT_ARTIFACT_ROOT: ${{ needs.prepare.outputs.artifactRoot }}
       CIPHERVAULT_BUILD_COMMIT: ${{ needs.prepare.outputs.commit }}
       CIPHERVAULT_BUILD_TIMESTAMP_UTC: ${{ needs.prepare.outputs.builtAtUtc }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
       - uses: actions/download-artifact@v4
         with:
           name: phase8-frontend
@@ -213,7 +254,7 @@ jobs:
             .
           mkdir -p "$CIPHERVAULT_ARTIFACT_ROOT"
           docker save "cipher-vault:$CIPHERVAULT_RELEASE_VERSION" \
-            --output "$CIPHERVAULT_ARTIFACT_ROOT/cipher-vault-2.0.0-rc.1-docker-linux-amd64.tar"
+            --output "$CIPHERVAULT_ARTIFACT_ROOT/cipher-vault-$CIPHERVAULT_RELEASE_VERSION-docker-linux-amd64.tar"
       - name: Verify Docker artifact
         run: |
           bash v2/scripts/verify-phase8-docker.sh \
@@ -223,39 +264,45 @@ jobs:
         with:
           name: phase8-docker
           path: |
-            v2/artifacts/release/2.0.0-rc.1/cipher-vault-2.0.0-rc.1-docker-linux-amd64.tar
-            v2/artifacts/release/2.0.0-rc.1/evidence/docker.json
+            ${{ needs.prepare.outputs.artifactRoot }}/cipher-vault-${{ needs.prepare.outputs.version }}-docker-linux-amd64.tar
+            ${{ needs.prepare.outputs.artifactRoot }}/evidence/docker.json
           retention-days: 14
 
   release-aggregate:
     needs: [prepare, windows-package, linux-package, docker-package]
     runs-on: ubuntu-latest
+    env:
+      CIPHERVAULT_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      CIPHERVAULT_ARTIFACT_ROOT: ${{ needs.prepare.outputs.artifactRoot }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
       - uses: actions/download-artifact@v4
         with:
           name: phase8-windows
-          path: v2/artifacts/release/2.0.0-rc.1
+          path: ${{ needs.prepare.outputs.artifactRoot }}
       - uses: actions/download-artifact@v4
         with:
           name: phase8-linux
-          path: v2/artifacts/release/2.0.0-rc.1
+          path: ${{ needs.prepare.outputs.artifactRoot }}
       - uses: actions/download-artifact@v4
         with:
           name: phase8-docker
-          path: v2/artifacts/release/2.0.0-rc.1
+          path: ${{ needs.prepare.outputs.artifactRoot }}
       - name: Verify evidence presence
         run: |
-          test -s v2/artifacts/release/2.0.0-rc.1/evidence/windows.json
-          test -s v2/artifacts/release/2.0.0-rc.1/evidence/linux-ubuntu-22.04.json
-          test -s v2/artifacts/release/2.0.0-rc.1/evidence/linux-debian-12.json
-          test -s v2/artifacts/release/2.0.0-rc.1/evidence/docker.json
+          test -s "$CIPHERVAULT_ARTIFACT_ROOT/evidence/windows.json"
+          test -s "$CIPHERVAULT_ARTIFACT_ROOT/evidence/linux-ubuntu-22.04.json"
+          test -s "$CIPHERVAULT_ARTIFACT_ROOT/evidence/linux-debian-12.json"
+          test -s "$CIPHERVAULT_ARTIFACT_ROOT/evidence/docker.json"
       - name: Generate manifest and checksums
         shell: pwsh
         run: |
+          $releaseRoot = Join-Path $env:GITHUB_WORKSPACE $env:CIPHERVAULT_ARTIFACT_ROOT
           . .\v2\deploy\versions.ps1
           .\v2\scripts\release\New-ReleaseManifest.ps1 `
-            -ReleaseRoot ".\v2\artifacts\release\2.0.0-rc.1" `
+            -ReleaseRoot $releaseRoot `
             -Version "${{ needs.prepare.outputs.version }}" `
             -Commit "${{ needs.prepare.outputs.commit }}" `
             -BuiltAtUtc "${{ needs.prepare.outputs.builtAtUtc }}" `
@@ -266,10 +313,11 @@ jobs:
             -DockerBaseImage $CipherVaultDockerBaseImage `
             -DockerBaseImageDigest $CipherVaultDockerBaseDigest
           .\v2\scripts\release\Scan-ReleaseArtifacts.ps1 `
-            -ReleaseRoot ".\v2\artifacts\release\2.0.0-rc.1" `
-            -EvidencePath ".\v2\artifacts\release\2.0.0-rc.1\evidence\scans.json"
+            -ReleaseRoot $releaseRoot `
+            -Version "${{ needs.prepare.outputs.version }}" `
+            -EvidencePath (Join-Path $releaseRoot "evidence/scans.json")
       - uses: actions/upload-artifact@v4
         with:
           name: phase8-release-bundle
-          path: v2/artifacts/release/2.0.0-rc.1
+          path: ${{ needs.prepare.outputs.artifactRoot }}
           retention-days: 14

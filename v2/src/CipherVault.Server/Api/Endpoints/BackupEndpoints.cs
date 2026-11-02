@@ -118,9 +118,11 @@ public static class BackupEndpoints
                     ILoggerFactory loggerFactory,
                     CancellationToken cancellationToken) =>
                 {
+                    var actor = context.CreateUserActor();
                     await using var lease =
-                        await backups.OpenDownloadAsync(
+                        await backups.BeginDownloadAsync(
                             fileName,
+                            actor,
                             cancellationToken);
                     context.Response.StatusCode = StatusCodes.Status200OK;
                     context.Response.ContentType = "application/octet-stream";
@@ -131,23 +133,81 @@ public static class BackupEndpoints
                         {
                             FileName = lease.FileName
                         }.ToString();
-                    await lease.Content.CopyToAsync(
-                        context.Response.Body,
-                        cancellationToken);
-                    await context.Response.Body.FlushAsync(
-                        cancellationToken);
-                    if (!await backups.RecordDownloadAsync(
-                            lease,
-                            context.CreateUserActor(),
-                            cancellationToken))
+                    var outcome = "failed";
+                    string? errorCode = "download_failed";
+                    long bytesWritten = 0;
+                    try
                     {
-                        loggerFactory
-                            .CreateLogger("CipherVault.Server.Backup")
-                            .LogWarning(
-                                new EventId(
-                                    3201,
-                                    "BackupDownloadAuditFailed"),
-                                "Backup download completed but audit recording failed.");
+                        var buffer = new byte[64 * 1024];
+                        while (true)
+                        {
+                            var read = await lease.Content.ReadAsync(
+                                buffer,
+                                cancellationToken);
+                            if (read == 0)
+                            {
+                                break;
+                            }
+
+                            await context.Response.Body.WriteAsync(
+                                buffer.AsMemory(0, read),
+                                cancellationToken);
+                            bytesWritten += read;
+                        }
+
+                        await context.Response.Body.FlushAsync(
+                            cancellationToken);
+                        var after = RegularFileIdentity.Read(
+                            lease.Identity.CanonicalPath);
+                        if (bytesWritten != lease.Bytes
+                            || after != lease.Identity)
+                        {
+                            throw new VaultException(
+                                VaultErrorCode.StorageError,
+                                "Backup file changed during download.");
+                        }
+
+                        outcome = "success";
+                        errorCode = null;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        outcome = "cancelled";
+                        errorCode = "download_cancelled";
+                        throw;
+                    }
+                    catch (VaultException)
+                    {
+                        outcome = "failed";
+                        errorCode = "download_failed";
+                        throw;
+                    }
+                    catch (Exception exception) when (
+                        exception is IOException
+                            or UnauthorizedAccessException
+                            or System.Security.SecurityException)
+                    {
+                        outcome = "failed";
+                        errorCode = "download_failed";
+                        throw;
+                    }
+                    finally
+                    {
+                        if (!await backups.RecordDownloadTerminalAsync(
+                                lease,
+                                actor,
+                                outcome,
+                                bytesWritten,
+                                errorCode))
+                        {
+                            loggerFactory
+                                .CreateLogger("CipherVault.Server.Backup")
+                                .LogWarning(
+                                    new EventId(
+                                        3201,
+                                        "BackupDownloadAuditFailed"),
+                                    "Backup download terminal audit recording failed.");
+                        }
                     }
                 })
             .RequireAuthorization()

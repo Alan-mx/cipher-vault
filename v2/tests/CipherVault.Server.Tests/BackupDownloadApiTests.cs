@@ -55,14 +55,34 @@ public sealed class BackupDownloadApiTests
         Assert.Equal(HttpStatusCode.OK, audit.StatusCode);
         using var auditJson = JsonDocument.Parse(
             await audit.Content.ReadAsStringAsync());
-        var item = auditJson.RootElement.GetProperty("items")[0];
+        var items = auditJson.RootElement
+            .GetProperty("items")
+            .EnumerateArray()
+            .ToArray();
+        Assert.Equal(2, items.Length);
+        Assert.All(items, item =>
+        {
+            Assert.Equal(
+                "backup.download",
+                item.GetProperty("action").GetString());
+            Assert.Equal("user_ui", item.GetProperty("actor").GetString());
+        });
         Assert.Equal(
-            "backup.download",
-            item.GetProperty("action").GetString());
-        Assert.Equal("user_ui", item.GetProperty("actor").GetString());
+            ["started", "success"],
+            items
+                .Select(item => item.GetProperty("result").GetString())
+                .Order(StringComparer.Ordinal));
+        var downloadIds = items
+            .Select(item =>
+                JsonDocument.Parse(
+                    item.GetProperty("detailsJson").GetString()!)
+                    .RootElement.GetProperty("downloadId").GetString())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        Assert.Single(downloadIds);
         Assert.DoesNotContain(
             server.Options.Paths.BackupDirectory,
-            item.GetProperty("detailsJson").GetString(),
+            items[0].GetProperty("detailsJson").GetString(),
             StringComparison.Ordinal);
     }
 

@@ -72,7 +72,15 @@ public static class ServerWebApplication
         builder.Services.AddSingleton<UnlockAttemptLimiter>();
         builder.Services.AddSingleton<ActivityTouchLimiter>();
         builder.Services.AddSingleton<BackupService>();
-        builder.Services.AddSingleton<PlaintextExportService>();
+        builder.Services.AddSingleton<
+            IPlaintextExportAuditFailureSink,
+            PlaintextExportAuditFailureSink>();
+        builder.Services.AddSingleton(provider =>
+            new PlaintextExportService(
+                provider.GetRequiredService<VaultSessionManager>(),
+                provider.GetRequiredService<TimeProvider>(),
+                provider.GetRequiredService<IPlaintextExportAuditFailureSink>()));
+        builder.Services.AddSingleton<ExportDownloadTicketStore>();
         builder.Services.AddSingleton<GitBackupStateStore>();
         builder.Services.AddSingleton<IGitCommandRunner, GitCommandRunner>();
         builder.Services.AddSingleton<IGitBackupRepository, GitBackupRepository>();

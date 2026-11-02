@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly release_version="2.0.0-rc.1"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+release_version="${CIPHERVAULT_RELEASE_VERSION:-}"
+if [[ -z "$release_version" ]]; then
+    # shellcheck disable=SC1091
+    source "${repo_root}/deploy/versions.env"
+    release_version="${RELEASE_VERSION:-}"
+fi
+test -n "$release_version"
+readonly release_version
+export CIPHERVAULT_RELEASE_VERSION="$release_version"
 readonly password="phase8 linux acceptance password"
 readonly marker="phase8-linux-acceptance-marker"
 
@@ -166,6 +175,7 @@ start_server \
     "${temporary_root}/first-server.log"
 python3 - "${temporary_root}/status.json" <<'PY'
 import json
+import os
 import sys
 
 with open(sys.argv[1], encoding="utf-8") as stream:
@@ -195,7 +205,7 @@ import sys
 
 with open(sys.argv[1], encoding="utf-8") as stream:
     version = json.load(stream)
-if version.get("productVersion") != "2.0.0-rc.1":
+if version.get("productVersion") != os.environ["CIPHERVAULT_RELEASE_VERSION"]:
     raise SystemExit("phase8_linux_version_invalid")
 if version.get("rid") != "linux-x64":
     raise SystemExit("phase8_linux_rid_invalid")
@@ -279,6 +289,7 @@ python3 - \
     "${temporary_root}/mcp-status.json" <<'PY'
 import json
 import sys
+import os
 
 def payload(path):
     text = open(path, encoding="utf-8").read().strip()
@@ -398,7 +409,7 @@ evidence = {
     "distributionVersion": distribution_version,
     "kernel": platform.release(),
     "glibcMax": glibc,
-    "artifactFileName": "CipherVault-2.0.0-rc.1-linux-x64.tar.gz",
+    "artifactFileName": f'CipherVault-{os.environ["CIPHERVAULT_RELEASE_VERSION"]}-linux-x64.tar.gz',
     "artifactSha256": archive_sha,
     "noPreinstalledDotnet": True,
     "lddMissingDependencies": False,

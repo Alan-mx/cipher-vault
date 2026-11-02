@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Net;
+using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using CipherVault.Core.Exports;
@@ -31,7 +32,7 @@ public sealed class PlaintextExportApiTests
             Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         }
 
-        using var wrong = await PostExportAsync(
+        using var wrong = await PostPreflightAsync(
             server.Client,
             csrf,
             "错误确认");
@@ -42,10 +43,14 @@ public sealed class PlaintextExportApiTests
             "invalid_input",
             wrongJson.RootElement.GetProperty("code").GetString());
 
-        using var response = await PostExportAsync(
+        var ticket = await PreflightTicketAsync(
             server.Client,
             csrf,
             PlaintextExportLimits.ConfirmationPhrase);
+        using var response = await PostDownloadAsync(
+            server.Client,
+            csrf,
+            ticket);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("application/zip", response.Content.Headers.ContentType?.MediaType);
         Assert.Equal("no-store", response.Headers.CacheControl?.ToString());
@@ -78,8 +83,30 @@ public sealed class PlaintextExportApiTests
         Assert.Equal(HttpStatusCode.OK, audit.StatusCode);
         using var auditJson = JsonDocument.Parse(
             await audit.Content.ReadAsStringAsync());
-        Assert.Single(
-            auditJson.RootElement.GetProperty("items").EnumerateArray());
+        var auditItems = auditJson.RootElement
+            .GetProperty("items")
+            .EnumerateArray()
+            .ToArray();
+        Assert.Equal(2, auditItems.Length);
+        Assert.Equal(
+            ["started", "success"],
+            auditItems
+                .Select(item => item.GetProperty("result").GetString())
+                .Order(StringComparer.Ordinal));
+        var exportIds = auditItems
+            .Select(item =>
+                JsonDocument.Parse(
+                    item.GetProperty("detailsJson").GetString()!)
+                    .RootElement.GetProperty("exportId").GetString())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        Assert.Single(exportIds);
+
+        using var reused = await PostDownloadAsync(
+            server.Client,
+            csrf,
+            ticket);
+        Assert.Equal(HttpStatusCode.NotFound, reused.StatusCode);
     }
 
     [Fact]
@@ -88,19 +115,18 @@ public sealed class PlaintextExportApiTests
         await using var server = await ServerTestApplication.CreateAsync(
             initializeVault: true);
         using var anonymous = server.CreateClient();
-        using var form = CreateExportForm("unused", PlaintextExportLimits.ConfirmationPhrase);
         using var unauthorized = await anonymous.PostAsync(
-            "/api/exports/plaintext",
-            form);
+            "/api/exports/plaintext/preflight",
+            JsonContent.Create(
+                new { confirmation = PlaintextExportLimits.ConfirmationPhrase }));
         Assert.Equal(HttpStatusCode.Unauthorized, unauthorized.StatusCode);
 
         using var unlock = await server.Client.UnlockAsync();
         Assert.Equal(HttpStatusCode.OK, unlock.StatusCode);
         using var missingCsrf = await server.Client.PostAsync(
-            "/api/exports/plaintext",
-            CreateExportForm(
-                token: null,
-                PlaintextExportLimits.ConfirmationPhrase));
+            "/api/exports/plaintext/preflight",
+            JsonContent.Create(
+                new { confirmation = PlaintextExportLimits.ConfirmationPhrase }));
         Assert.Equal(HttpStatusCode.BadRequest, missingCsrf.StatusCode);
     }
 
@@ -112,10 +138,14 @@ public sealed class PlaintextExportApiTests
         using var unlock = await server.Client.UnlockAsync();
         var csrf = await server.Client.GetAntiforgeryTokenAsync();
 
-        using var response = await PostExportAsync(
+        var ticket = await PreflightTicketAsync(
             server.Client,
             csrf,
             PlaintextExportLimits.ConfirmationPhrase);
+        using var response = await PostDownloadAsync(
+            server.Client,
+            csrf,
+            ticket);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var archive = new ZipArchive(
@@ -127,29 +157,49 @@ public sealed class PlaintextExportApiTests
             archive.Entries[0].FullName);
     }
 
-    private static async Task<HttpResponseMessage> PostExportAsync(
+    private static async Task<HttpResponseMessage> PostPreflightAsync(
         HttpClient client,
         string csrf,
         string confirmation) =>
-        await client.PostAsync(
-            "/api/exports/plaintext",
-            CreateExportForm(csrf, confirmation));
+        await client.PostJsonWithAntiforgeryAsync(
+            "/api/exports/plaintext/preflight",
+            csrf,
+            new { confirmation });
 
-    private static FormUrlEncodedContent CreateExportForm(
-        string? token,
+    private static async Task<string> PreflightTicketAsync(
+        HttpClient client,
+        string csrf,
         string confirmation)
+    {
+        using var response = await PostPreflightAsync(
+            client,
+            csrf,
+            confirmation);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var json = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync());
+        return json.RootElement.GetProperty("ticket").GetString()!;
+    }
+
+    private static async Task<HttpResponseMessage> PostDownloadAsync(
+        HttpClient client,
+        string csrf,
+        string ticket) =>
+        await client.PostAsync(
+            "/api/exports/plaintext/download",
+            CreateDownloadForm(ticket, csrf));
+
+    private static FormUrlEncodedContent CreateDownloadForm(
+        string ticket,
+        string token)
     {
         var values = new List<KeyValuePair<string, string>>
         {
-            new("confirmation", confirmation)
+            new("ticket", ticket),
+            new(
+                "__CipherVaultAntiforgery",
+                token)
         };
-        if (token is not null)
-        {
-            values.Add(
-                new KeyValuePair<string, string>(
-                    "__CipherVaultAntiforgery",
-                    token));
-        }
         return new FormUrlEncodedContent(values);
     }
 

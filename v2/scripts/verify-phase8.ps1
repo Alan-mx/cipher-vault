@@ -4,13 +4,18 @@ param(
     [string] $ArtifactRoot,
     [Parameter(Mandatory)]
     [string] $EvidenceRoot,
+    [Parameter(Mandatory)]
+    [string] $ReleaseVersion,
     [string] $ProbeProject = ""
 )
 
 $ErrorActionPreference = "Stop"
 $v2Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $artifact = (Resolve-Path -LiteralPath $ArtifactRoot).Path
-$version = "2.0.0-rc.1"
+$version = $ReleaseVersion
+if ($version -notmatch '^[0-9A-Za-z][0-9A-Za-z.-]*$') {
+    throw "release_version_invalid"
+}
 $platform = "windows"
 $policyMarker = "phase8-windows-acceptance-marker"
 $password = "phase8 windows acceptance password"

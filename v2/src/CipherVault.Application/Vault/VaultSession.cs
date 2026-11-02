@@ -1,10 +1,16 @@
 using CipherVault.Core.Crypto;
 using CipherVault.Core.Database;
+using CipherVault.Core.Errors;
 
 namespace CipherVault.Application.Vault;
 
 internal sealed class VaultSession
 {
+    private readonly object backupActivitySync = new();
+    private int activeBackupOperationCount;
+    private TaskCompletionSource? backupOperationsDrained;
+    private bool backupCleanupFailed;
+
     internal VaultSession(
         Guid sessionId,
         long generation,
@@ -37,8 +43,91 @@ internal sealed class VaultSession
 
     internal CancellationTokenSource OperationCancellation { get; } = new();
 
+    internal bool HasActiveBackupOperationsForTest
+    {
+        get
+        {
+            lock (backupActivitySync)
+            {
+                return activeBackupOperationCount > 0;
+            }
+        }
+    }
+
+    internal bool BackupCleanupFailed
+    {
+        get
+        {
+            lock (backupActivitySync)
+            {
+                return backupCleanupFailed;
+            }
+        }
+    }
+
+    internal Task BackupOperationsDrainedTask
+    {
+        get
+        {
+            lock (backupActivitySync)
+            {
+                return activeBackupOperationCount == 0
+                    ? Task.CompletedTask
+                    : backupOperationsDrained!.Task;
+            }
+        }
+    }
+
+    internal void RegisterBackupOperation()
+    {
+        lock (backupActivitySync)
+        {
+            if (activeBackupOperationCount == 0)
+            {
+                backupOperationsDrained = new TaskCompletionSource(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+
+            activeBackupOperationCount++;
+        }
+    }
+
+    internal void CompleteBackupOperation(bool cleanupSucceeded)
+    {
+        lock (backupActivitySync)
+        {
+            if (activeBackupOperationCount <= 0)
+            {
+                throw new VaultException(
+                    VaultErrorCode.VaultBusy,
+                    "There is no active backup operation to complete.");
+            }
+
+            if (!cleanupSucceeded)
+            {
+                backupCleanupFailed = true;
+            }
+
+            activeBackupOperationCount--;
+            if (activeBackupOperationCount == 0)
+            {
+                backupOperationsDrained!.TrySetResult();
+            }
+        }
+    }
+
     internal async ValueTask ReleaseAsync()
     {
+        lock (backupActivitySync)
+        {
+            if (activeBackupOperationCount != 0)
+            {
+                throw new VaultException(
+                    VaultErrorCode.VaultBusy,
+                    "Vault Session cannot be released while backup activity is active.");
+            }
+        }
+
         await Database.DisposeAsync();
         KeyMaterial.Dispose();
         OperationCancellation.Dispose();

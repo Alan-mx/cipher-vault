@@ -30,8 +30,15 @@ public sealed class HostOriginValidationMiddleware
         }
 
         var origins = context.Request.Headers.Origin;
+        var allowsNullOrigin = AllowsNullOrigin(context.Request);
         if (origins.Count > 1
-            || (origins.Count == 1 && !IsAllowedOrigin(origins[0])))
+            || (origins.Count == 1
+                && !(allowsNullOrigin
+                    && string.Equals(
+                        origins[0],
+                        "null",
+                        StringComparison.Ordinal))
+                && !IsAllowedOrigin(origins[0])))
         {
             await ApiResponseWriter.WriteErrorAsync(
                 context,
@@ -44,15 +51,52 @@ public sealed class HostOriginValidationMiddleware
         await next(context);
     }
 
+    private static bool AllowsNullOrigin(HttpRequest request) =>
+        HttpMethods.IsPost(request.Method)
+        && request.Path.Equals(
+            "/api/exports/plaintext/download",
+            StringComparison.Ordinal)
+        && request.HasFormContentType;
+
     private bool IsAllowedHost(HostString host)
     {
-        var port = host.Port ?? 80;
-        var portAllowed = options.ContainerMode
-            || options.ListenAddresses.Any(address => address.Port == port);
-        return portAllowed
-            && options.AllowedHosts.Contains(
-                host.Host,
-                StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var value = host.ToUriComponent();
+            if (string.IsNullOrWhiteSpace(value)
+                || !Uri.TryCreate(
+                    $"http://{value}",
+                    UriKind.Absolute,
+                    out var uri)
+                || !string.Equals(
+                    uri.Scheme,
+                    Uri.UriSchemeHttp,
+                    StringComparison.OrdinalIgnoreCase)
+                || !string.IsNullOrEmpty(uri.UserInfo)
+                || uri.AbsolutePath != "/"
+                || !string.IsNullOrEmpty(uri.Query)
+                || !string.IsNullOrEmpty(uri.Fragment))
+            {
+                return false;
+            }
+
+            var hostName = uri.Host;
+            var port = uri.IsDefaultPort ? 80 : uri.Port;
+            return !string.IsNullOrWhiteSpace(hostName)
+                && !hostName.EndsWith(".", StringComparison.Ordinal)
+                && port is >= 1 and <= 65535
+                && options.AllowedHttpPorts.Contains(port)
+                && options.AllowedHosts.Contains(
+                    hostName,
+                    StringComparer.OrdinalIgnoreCase);
+        }
+        catch (Exception exception) when (
+            exception is FormatException
+                or ArgumentException
+                or UriFormatException)
+        {
+            return false;
+        }
     }
 
     private bool IsAllowedOrigin(string? origin)
@@ -68,20 +112,42 @@ public sealed class HostOriginValidationMiddleware
             return false;
         }
 
+        var host = uri.Host;
+        var port = uri.IsDefaultPort ? 80 : uri.Port;
+        if (string.IsNullOrWhiteSpace(host)
+            || host.EndsWith(".", StringComparison.Ordinal)
+            || port is < 1 or > 65535)
+        {
+            return false;
+        }
+
         if (options.DevelopmentOrigins.Any(configured =>
-                string.Equals(
-                    configured.GetLeftPart(UriPartial.Authority),
-                    uri.GetLeftPart(UriPartial.Authority),
-                    StringComparison.OrdinalIgnoreCase)))
+                MatchesAuthority(configured, host, port)))
         {
             return true;
         }
 
-        var portAllowed = options.ContainerMode
-            || options.ListenAddresses.Any(address => address.Port == uri.Port);
-        return portAllowed
+        return options.AllowedHttpPorts.Contains(port)
             && options.AllowedHosts.Contains(
-                uri.Host,
+                host,
                 StringComparer.OrdinalIgnoreCase);
     }
+
+    private static bool MatchesAuthority(
+        Uri configured,
+        string host,
+        int port) =>
+        string.Equals(
+            configured.Scheme,
+            Uri.UriSchemeHttp,
+            StringComparison.OrdinalIgnoreCase)
+        && string.IsNullOrEmpty(configured.UserInfo)
+        && configured.AbsolutePath == "/"
+        && string.IsNullOrEmpty(configured.Query)
+        && string.IsNullOrEmpty(configured.Fragment)
+        && string.Equals(
+            configured.Host,
+            host,
+            StringComparison.OrdinalIgnoreCase)
+        && (configured.IsDefaultPort ? 80 : configured.Port) == port;
 }

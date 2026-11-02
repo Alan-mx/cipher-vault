@@ -111,18 +111,192 @@ public sealed class VaultSessionManager : IAsyncDisposable
         return status;
     }
 
+    internal Task<VaultBackupSessionLease> BeginBackupSessionAsync(
+        CancellationToken requestToken = default)
+    {
+        ThrowIfDisposed();
+        requestToken.ThrowIfCancellationRequested();
+        lock (transitionSync)
+        {
+            if ((VaultSessionState)state != VaultSessionState.Unlocked
+                || session is null)
+            {
+                throw CreateBusinessStateException((VaultSessionState)state);
+            }
+
+            if (session.OperationCancellation.IsCancellationRequested)
+            {
+                throw new VaultException(
+                    VaultErrorCode.VaultLocked,
+                    "Vault locked before backup activity could begin.");
+            }
+
+            var current = session;
+            current.RegisterBackupOperation();
+            try
+            {
+                return Task.FromResult(
+                    new VaultBackupSessionLease(
+                        this,
+                        current,
+                        requestToken));
+            }
+            catch
+            {
+                current.CompleteBackupOperation(cleanupSucceeded: true);
+                throw;
+            }
+        }
+    }
+
+    internal bool TryBeginPublishCommit(VaultBackupSessionLease lease)
+    {
+        ArgumentNullException.ThrowIfNull(lease);
+        lock (transitionSync)
+        {
+            if ((VaultSessionState)state != VaultSessionState.Unlocked
+                || session is null
+                || !ReferenceEquals(session, lease.Session))
+            {
+                return false;
+            }
+
+            return lease.TryBeginPublishCommitCore();
+        }
+    }
+
+    internal async ValueTask<T> ExecuteDownloadAdmissionAsync<T>(
+        Func<VaultOperationContext, CancellationToken, ValueTask<T>> operation,
+        CancellationToken requestToken)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        ThrowIfDisposed();
+        requestToken.ThrowIfCancellationRequested();
+        VaultSession current;
+        lock (transitionSync)
+        {
+            if ((VaultSessionState)state != VaultSessionState.Unlocked
+                || session is null)
+            {
+                throw CreateBusinessStateException((VaultSessionState)state);
+            }
+
+            current = session;
+        }
+
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            requestToken,
+            current.OperationCancellation.Token);
+        await operationGate.WaitAsync(cancellation.Token);
+        try
+        {
+            lock (transitionSync)
+            {
+                if ((VaultSessionState)state != VaultSessionState.Unlocked
+                    || !ReferenceEquals(session, current))
+                {
+                    throw new VaultException(
+                        VaultErrorCode.VaultLocked,
+                        "Vault locked before download admission.");
+                }
+
+                current.Activity.Refresh();
+            }
+
+            var context = current.Database.CreateOperationContext();
+            try
+            {
+                return await operation(context, requestToken);
+            }
+            finally
+            {
+                await context.DisposeAsync();
+            }
+        }
+        finally
+        {
+            operationGate.Release();
+        }
+    }
+
+    internal async Task<bool> TryExecuteAuditNoActivityAsync(
+        Func<VaultOperationContext, CancellationToken, ValueTask> operation,
+        TimeSpan timeout)
+    {
+        using var cancellation = new CancellationTokenSource(timeout);
+        var gateHeld = false;
+        try
+        {
+            await operationGate.WaitAsync(cancellation.Token);
+            gateHeld = true;
+            VaultSession current;
+            lock (transitionSync)
+            {
+                if ((VaultSessionState)state != VaultSessionState.Unlocked
+                    || session is null)
+                {
+                    return false;
+                }
+
+                current = session;
+            }
+
+            var context = current.Database.CreateOperationContext();
+            try
+            {
+                await operation(context, cancellation.Token);
+                return true;
+            }
+            finally
+            {
+                await context.DisposeAsync();
+            }
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            if (gateHeld)
+            {
+                operationGate.Release();
+            }
+        }
+    }
+
+    internal VaultException CreateBackupCancellationException(
+        VaultSession canceledSession)
+    {
+        lock (transitionSync)
+        {
+            return (VaultSessionState)state == VaultSessionState.LockFailed
+                ? new VaultException(
+                    VaultErrorCode.VaultLockFailed,
+                    "The Vault lock failed while backup activity was running.")
+                : new VaultException(
+                    VaultErrorCode.VaultLocked,
+                    ReferenceEquals(session, canceledSession)
+                        ? "The Vault locked while backup activity was running."
+                        : "The Vault locked while the backup Session was active.");
+        }
+    }
+
     internal async ValueTask<BackupSnapshotCapture>
         CaptureBackupSnapshotAsync(
+            VaultBackupSessionLease backupLease,
             string workingDirectory,
-            DateTimeOffset capturedAtUtc,
-            CancellationToken cancellationToken = default) =>
+            DateTimeOffset capturedAtUtc) =>
         await ExecuteAsync(
             async (context, token) =>
             {
+                ArgumentNullException.ThrowIfNull(backupLease);
                 var current = session
                     ?? throw new VaultException(
                         VaultErrorCode.VaultLocked,
                         "Vault locked before the backup snapshot could start.");
+                backupLease.EnsureMatches(current);
+                backupLease.ThrowIfCancellationRequested();
                 var directory = PathSafety.Canonicalize(
                     workingDirectory,
                     "Backup working directory");
@@ -148,10 +322,12 @@ public sealed class VaultSessionManager : IAsyncDisposable
                     directory,
                     databaseKey,
                     token);
+                backupLease.ThrowIfCancellationRequested();
                 await CopyProtectedFileAsync(
                     paths.KeyPath,
                     keyPath,
                     token);
+                backupLease.ThrowIfCancellationRequested();
                 var envelope = await VaultKeyEnvelopeSerializer.LoadAsync(
                     keyPath,
                     token);
@@ -170,10 +346,9 @@ public sealed class VaultSessionManager : IAsyncDisposable
                     databasePath,
                     keyPath,
                     databaseInfo.Length,
-                    keyInfo.Length,
-                    new SensitiveDatabaseKeyLease(databaseKey.Span));
+                    keyInfo.Length);
             },
-            cancellationToken).AsTask();
+            backupLease.CancellationToken).AsTask();
 
     public async Task<VaultSessionStatus> InitializeAsync(
         string password,
@@ -822,7 +997,9 @@ public sealed class VaultSessionManager : IAsyncDisposable
         VaultSession lockedSession,
         TaskCompletionSource<VaultSessionStatus> completion)
     {
+        var startedAt = timeProvider.GetTimestamp();
         var gateAcquired = false;
+        var backupDrained = false;
         try
         {
             var barrier = LockCleanupBarrierForTest;
@@ -832,15 +1009,37 @@ public sealed class VaultSessionManager : IAsyncDisposable
             }
 
             lockedSession.OperationCancellation.Cancel();
-            gateAcquired = await TryAcquireOperationGateAsync(timingOptions.CancelGrace);
-            if (!gateAcquired)
+            backupDrained = await WaitForBackupDrainAsync(
+                lockedSession,
+                GetRemainingTime(startedAt, timingOptions.CancelGrace));
+            if (backupDrained)
             {
-                lockedSession.Database.TryInterruptActiveCommand();
                 gateAcquired = await TryAcquireOperationGateAsync(
-                    timingOptions.InterruptGrace);
+                    GetRemainingTime(startedAt, timingOptions.CancelGrace));
             }
 
-            if (!gateAcquired)
+            if (!backupDrained || !gateAcquired)
+            {
+                lockedSession.Database.TryInterruptActiveCommand();
+                if (!backupDrained)
+                {
+                    backupDrained = await WaitForBackupDrainAsync(
+                        lockedSession,
+                        GetRemainingTime(
+                            startedAt,
+                            timingOptions.TotalLockDeadline));
+                }
+
+                if (backupDrained && !gateAcquired)
+                {
+                    gateAcquired = await TryAcquireOperationGateAsync(
+                        GetRemainingTime(
+                            startedAt,
+                            timingOptions.TotalLockDeadline));
+                }
+            }
+
+            if (!backupDrained || !gateAcquired)
             {
                 SetLockFailed();
                 var failedStatus = CreateStatus();
@@ -849,6 +1048,7 @@ public sealed class VaultSessionManager : IAsyncDisposable
                 return;
             }
 
+            var cleanupFailed = lockedSession.BackupCleanupFailed;
             await lockedSession.ReleaseAsync();
             VaultSessionStatus lockedStatus;
             lock (transitionSync)
@@ -858,7 +1058,9 @@ public sealed class VaultSessionManager : IAsyncDisposable
                     session = null;
                 }
 
-                state = (int)VaultSessionState.Locked;
+                state = cleanupFailed
+                    ? (int)VaultSessionState.LockFailed
+                    : (int)VaultSessionState.Locked;
                 lockedStatus = CreateStatus();
             }
 
@@ -883,6 +1085,11 @@ public sealed class VaultSessionManager : IAsyncDisposable
 
     private async Task<bool> TryAcquireOperationGateAsync(TimeSpan timeout)
     {
+        if (timeout <= TimeSpan.Zero)
+        {
+            return operationGate.Wait(0);
+        }
+
         using var timeoutCancellation = new CancellationTokenSource(timeout);
         try
         {
@@ -894,6 +1101,44 @@ public sealed class VaultSessionManager : IAsyncDisposable
         {
             return false;
         }
+    }
+
+    private async Task<bool> WaitForBackupDrainAsync(
+        VaultSession current,
+        TimeSpan timeout)
+    {
+        var drained = current.BackupOperationsDrainedTask;
+        if (drained.IsCompleted)
+        {
+            return true;
+        }
+
+        if (timeout <= TimeSpan.Zero)
+        {
+            return false;
+        }
+
+        try
+        {
+            await drained.WaitAsync(timeout);
+            return true;
+        }
+        catch (TimeoutException)
+        {
+            return false;
+        }
+    }
+
+    private TimeSpan GetRemainingTime(
+        long startedAt,
+        TimeSpan deadline)
+    {
+        var elapsed = timeProvider.GetElapsedTime(
+            startedAt,
+            timeProvider.GetTimestamp());
+        return elapsed >= deadline
+            ? TimeSpan.Zero
+            : deadline - elapsed;
     }
 
     private void SetLockFailed()
@@ -1126,6 +1371,11 @@ public sealed class VaultSessionManager : IAsyncDisposable
             return true;
         }
 
+        if (current.HasActiveBackupOperationsForTest)
+        {
+            return false;
+        }
+
         if (!operationGate.Wait(TimeSpan.FromMilliseconds(250)))
         {
             return false;
@@ -1134,6 +1384,7 @@ public sealed class VaultSessionManager : IAsyncDisposable
         try
         {
             current.OperationCancellation.Cancel();
+            var cleanupFailed = current.BackupCleanupFailed;
             await current.ReleaseAsync();
             lock (transitionSync)
             {
@@ -1141,8 +1392,13 @@ public sealed class VaultSessionManager : IAsyncDisposable
                 {
                     session = null;
                 }
+
+                state = cleanupFailed
+                    ? (int)VaultSessionState.LockFailed
+                    : (int)VaultSessionState.Locked;
             }
 
+            RaiseStateChanged(CreateStatus());
             return true;
         }
         catch

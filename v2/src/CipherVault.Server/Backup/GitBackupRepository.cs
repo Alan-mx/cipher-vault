@@ -48,8 +48,13 @@ internal sealed class GitBackupRepository : IGitBackupRepository
         CancellationToken cancellationToken)
     {
         var repository = RequireRepositoryPath(options);
+        await EnsureValidRefAsync(
+            repository,
+            options,
+            cancellationToken);
         var workTree = await RunRequiredAsync(
             repository,
+            options,
             ["rev-parse", "--is-inside-work-tree"],
             InspectTimeout,
             cancellationToken);
@@ -63,6 +68,7 @@ internal sealed class GitBackupRepository : IGitBackupRepository
 
         var topLevel = await RunRequiredAsync(
             repository,
+            options,
             ["rev-parse", "--show-toplevel"],
             InspectTimeout,
             cancellationToken);
@@ -79,6 +85,7 @@ internal sealed class GitBackupRepository : IGitBackupRepository
 
         var branchResult = await RunRequiredAsync(
             repository,
+            options,
             ["symbolic-ref", "--quiet", "--short", "HEAD"],
             InspectTimeout,
             cancellationToken);
@@ -88,16 +95,19 @@ internal sealed class GitBackupRepository : IGitBackupRepository
             throw InvalidRepository();
         }
 
-        await RunRequiredAsync(
+        await EnsureRemoteExistsAsync(
             repository,
-            ["remote", "get-url", options.Remote],
-            InspectTimeout,
+            options,
+            cancellationToken);
+        _ = await RequireSinglePushUrlAsync(
+            repository,
+            options,
             cancellationToken);
 
         var head = await runner.RunAsync(
             repository,
             ["rev-parse", "--verify", "HEAD"],
-            environment: null,
+            CreateEnvironment(options),
             InspectTimeout,
             cancellationToken);
         if (head.TimedOut)
@@ -114,12 +124,13 @@ internal sealed class GitBackupRepository : IGitBackupRepository
 
         var blockingState = await ReadBlockingStateAsync(
             repository,
+            options,
             cancellationToken);
 
         var ignored = await runner.RunAsync(
             repository,
             ["check-ignore", "-q", LatestBackupFileName],
-            environment: null,
+            CreateEnvironment(options),
             InspectTimeout,
             cancellationToken);
         if (ignored.TimedOut)
@@ -133,12 +144,13 @@ internal sealed class GitBackupRepository : IGitBackupRepository
 
         var objectBytes = await ReadObjectBytesAsync(
             repository,
+            options,
             cancellationToken);
         var firstCommitAtUtc = hasUnbornHead
             ? null
             : await ReadFirstCommitTimeAsync(
                 repository,
-                options.Branch,
+                options,
                 cancellationToken);
         return new GitRepositoryInspection(
             branch,
@@ -157,7 +169,14 @@ internal sealed class GitBackupRepository : IGitBackupRepository
         CancellationToken cancellationToken)
     {
         var repository = RequireRepositoryPath(options);
-        await EnsureNoBlockingOperationAsync(repository, cancellationToken);
+        await EnsureValidRefAsync(
+            repository,
+            options,
+            cancellationToken);
+        await EnsureNoBlockingOperationAsync(
+            repository,
+            options,
+            cancellationToken);
         var source = PathSafety.Canonicalize(
             sourceBackupPath,
             "Source backup");
@@ -167,65 +186,129 @@ internal sealed class GitBackupRepository : IGitBackupRepository
             throw new GitCommandException(GitBackupErrorCodes.SnapshotFailed);
         }
 
+        await EnsureNoCleanFilterAsync(
+            repository,
+            options,
+            cancellationToken);
         var target = Path.Combine(repository, LatestBackupFileName);
         PathSafety.EnsureNoLinkComponents(target);
         await CopyVerifiedAsync(source, target, cancellationToken);
-        await EnsureNoBlockingOperationAsync(repository, cancellationToken);
-
-        await RunRequiredAsync(
+        await EnsureNoBlockingOperationAsync(
             repository,
-            ["add", "--", LatestBackupFileName],
-            InspectTimeout,
+            options,
             cancellationToken);
-        var diff = await runner.RunAsync(
+
+        var hasHead = await HasHeadAsync(
             repository,
-            ["diff", "--cached", "--quiet", "--", LatestBackupFileName],
-            environment: null,
-            InspectTimeout,
+            options,
             cancellationToken);
-        if (diff.TimedOut)
+        var indexDirectory = CreateTemporaryIndexDirectory();
+        var indexPath = Path.Combine(indexDirectory, "index");
+        try
         {
-            throw new GitCommandException(GitBackupErrorCodes.Timeout);
-        }
-        if (diff.ExitCode == 0)
-        {
-            return new GitSnapshotPublishResult(Changed: false, CommitSha: null);
-        }
-        if (diff.ExitCode != 1)
-        {
-            throw new GitCommandException(GitBackupErrorCodes.CommitFailed);
-        }
+            await RunRequiredAsync(
+                repository,
+                options,
+                hasHead
+                    ? ["read-tree", "HEAD"]
+                    : ["read-tree", "--empty"],
+                InspectTimeout,
+                cancellationToken,
+                GitBackupErrorCodes.CommitFailed,
+                indexPath);
+            var blob = await RunRequiredAsync(
+                repository,
+                options,
+                ["hash-object", "-w", "--no-filters", "--", LatestBackupFileName],
+                CommitTimeout,
+                cancellationToken,
+                GitBackupErrorCodes.CommitFailed,
+                indexPath);
+            var blobSha = blob.StandardOutput.Trim();
+            if (!IsCommitSha(blobSha))
+            {
+                throw new GitCommandException(GitBackupErrorCodes.CommitFailed);
+            }
 
-        var message = $"backup: {committedAtUtc.ToUniversalTime():O}";
-        await RunRequiredAsync(
-            repository,
-            [
-                "-c", "user.name=CipherVault Backup",
-                "-c", "user.email=cipher-vault@localhost",
-                "commit",
-                "--only",
-                "--no-verify",
-                "-m", message,
-                "--", LatestBackupFileName
-            ],
-            CommitTimeout,
-            cancellationToken,
-            GitBackupErrorCodes.CommitFailed);
-        var head = await RunRequiredAsync(
-            repository,
-            ["rev-parse", "HEAD"],
-            InspectTimeout,
-            cancellationToken,
-            GitBackupErrorCodes.CommitFailed);
-        var commitSha = head.StandardOutput.Trim();
-        if (!IsCommitSha(commitSha))
-        {
-            throw new GitCommandException(GitBackupErrorCodes.CommitFailed);
-        }
+            await RunRequiredAsync(
+                repository,
+                options,
+                [
+                    "update-index",
+                    "--add",
+                    "--cacheinfo",
+                    $"100644,{blobSha},{LatestBackupFileName}"
+                ],
+                InspectTimeout,
+                cancellationToken,
+                GitBackupErrorCodes.CommitFailed,
+                indexPath);
 
-        return new GitSnapshotPublishResult(
-            Changed: true,
-            CommitSha: commitSha);
+            var diff = await runner.RunAsync(
+                repository,
+                [
+                    "diff",
+                    "--cached",
+                    "--quiet",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--",
+                    LatestBackupFileName
+                ],
+                CreateEnvironment(options, indexPath),
+                InspectTimeout,
+                cancellationToken);
+            if (diff.TimedOut)
+            {
+                throw new GitCommandException(GitBackupErrorCodes.Timeout);
+            }
+            if (diff.ExitCode == 0)
+            {
+                return new GitSnapshotPublishResult(
+                    Changed: false,
+                    CommitSha: null);
+            }
+            if (diff.ExitCode != 1)
+            {
+                throw new GitCommandException(GitBackupErrorCodes.CommitFailed);
+            }
+
+            var message = $"backup: {committedAtUtc.ToUniversalTime():O}";
+            await RunRequiredAsync(
+                repository,
+                options,
+                [
+                    "commit",
+                    "--no-verify",
+                    "--no-gpg-sign",
+                    "-m",
+                    message
+                ],
+                CommitTimeout,
+                cancellationToken,
+                GitBackupErrorCodes.CommitFailed,
+                indexPath);
+            var head = await RunRequiredAsync(
+                repository,
+                options,
+                ["rev-parse", "HEAD"],
+                InspectTimeout,
+                cancellationToken,
+                GitBackupErrorCodes.CommitFailed);
+            var commitSha = head.StandardOutput.Trim();
+            if (!IsCommitSha(commitSha))
+            {
+                throw new GitCommandException(GitBackupErrorCodes.CommitFailed);
+            }
+
+            return new GitSnapshotPublishResult(
+                Changed: true,
+                CommitSha: commitSha);
+        }
+        finally
+        {
+            DeleteIndexDirectoryBestEffort(indexDirectory);
+        }
     }
 
     public async Task<GitPushResult> PushAsync(
@@ -233,10 +316,28 @@ internal sealed class GitBackupRepository : IGitBackupRepository
         CancellationToken cancellationToken)
     {
         var repository = RequireRepositoryPath(options);
+        await EnsureValidRefAsync(
+            repository,
+            options,
+            cancellationToken);
+        var pushUrl = await RequireSinglePushUrlAsync(
+            repository,
+            options,
+            cancellationToken);
         var result = await runner.RunAsync(
             repository,
-            ["push", options.Remote, options.Branch],
-            environment: null,
+            [
+                "push",
+                "--porcelain",
+                "--no-verify",
+                "--no-follow-tags",
+                "--no-signed",
+                "--no-recurse-submodules",
+                "--",
+                pushUrl,
+                $"refs/heads/{options.Branch}:refs/heads/{options.Branch}"
+            ],
+            CreateEnvironment(options),
             PushTimeout,
             cancellationToken);
         if (result.TimedOut)
@@ -250,7 +351,7 @@ internal sealed class GitBackupRepository : IGitBackupRepository
             return new GitPushResult(Succeeded: true, ErrorCode: null);
         }
 
-        var error = result.StandardError;
+        var error = $"{result.StandardOutput}\n{result.StandardError}";
         var code = ContainsAny(
             error,
             "Authentication failed",
@@ -269,12 +370,184 @@ internal sealed class GitBackupRepository : IGitBackupRepository
         return new GitPushResult(Succeeded: false, code);
     }
 
-    private async Task<long> ReadObjectBytesAsync(
+    private async Task EnsureValidRefAsync(
         string repository,
+        GitBackupOptions options,
+        CancellationToken cancellationToken)
+    {
+        var result = await runner.RunAsync(
+            repository,
+            ["check-ref-format", $"refs/heads/{options.Branch}"],
+            CreateEnvironment(options),
+            InspectTimeout,
+            cancellationToken);
+        if (result.TimedOut)
+        {
+            throw new GitCommandException(GitBackupErrorCodes.Timeout);
+        }
+        if (result.ExitCode != 0)
+        {
+            throw new GitCommandException(
+                GitBackupErrorCodes.ConfigurationInvalid);
+        }
+    }
+
+    private async Task EnsureNoCleanFilterAsync(
+        string repository,
+        GitBackupOptions options,
+        CancellationToken cancellationToken)
+    {
+        var result = await runner.RunAsync(
+            repository,
+            ["check-attr", "-z", "filter", "--", LatestBackupFileName],
+            CreateEnvironment(options),
+            InspectTimeout,
+            cancellationToken);
+        if (result.TimedOut)
+        {
+            throw new GitCommandException(GitBackupErrorCodes.Timeout);
+        }
+        if (result.ExitCode != 0)
+        {
+            throw new GitCommandException(
+                GitBackupErrorCodes.ConfigurationInvalid);
+        }
+
+        var fields = result.StandardOutput.Split(
+            '\0',
+            StringSplitOptions.RemoveEmptyEntries);
+        if (fields.Length == 0 || fields.Length % 3 != 0)
+        {
+            throw new GitCommandException(
+                GitBackupErrorCodes.ConfigurationInvalid);
+        }
+
+        for (var index = 0; index < fields.Length; index += 3)
+        {
+            if (!string.Equals(
+                    fields[index + 2],
+                    "unspecified",
+                    StringComparison.Ordinal))
+            {
+                throw new GitCommandException(
+                    GitBackupErrorCodes.ConfigurationInvalid);
+            }
+        }
+    }
+
+    private async Task EnsureRemoteExistsAsync(
+        string repository,
+        GitBackupOptions options,
         CancellationToken cancellationToken)
     {
         var result = await RunRequiredAsync(
             repository,
+            options,
+            ["remote"],
+            InspectTimeout,
+            cancellationToken);
+        var remotes = result.StandardOutput
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim())
+            .ToArray();
+        if (!remotes.Contains(options.Remote, StringComparer.Ordinal))
+        {
+            throw new GitCommandException(
+                GitBackupErrorCodes.ConfigurationInvalid);
+        }
+    }
+
+    private async Task<string> RequireSinglePushUrlAsync(
+        string repository,
+        GitBackupOptions options,
+        CancellationToken cancellationToken)
+    {
+        var result = await RunRequiredAsync(
+            repository,
+            options,
+            [
+                "remote",
+                "get-url",
+                "--push",
+                "--all",
+                options.Remote
+            ],
+            InspectTimeout,
+            cancellationToken,
+            GitBackupErrorCodes.ConfigurationInvalid);
+        var urls = result.StandardOutput
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim())
+            .ToArray();
+        if (urls.Length != 1
+            || !IsAllowedPushUrl(urls[0], options))
+        {
+            throw new GitCommandException(
+                GitBackupErrorCodes.ConfigurationInvalid);
+        }
+
+        return urls[0];
+    }
+
+    private static bool IsAllowedPushUrl(
+        string value,
+        GitBackupOptions options)
+    {
+        if (string.IsNullOrWhiteSpace(value)
+            || value.Any(char.IsControl))
+        {
+            return false;
+        }
+
+        if (Path.IsPathFullyQualified(value))
+        {
+            return options.AllowFileRemote;
+        }
+
+        if (Uri.TryCreate(value, UriKind.Absolute, out var uri))
+        {
+            return uri.Scheme.ToLowerInvariant() switch
+            {
+                "https" or "ssh" => true,
+                "http" => options.AllowHttp,
+                "git" => options.AllowGitProtocol,
+                "file" => options.AllowFileRemote,
+                _ => false
+            };
+        }
+
+        return !value.Contains("::", StringComparison.Ordinal)
+            && value.Contains('@', StringComparison.Ordinal)
+            && value.Contains(':', StringComparison.Ordinal)
+            && !value.Any(char.IsWhiteSpace);
+    }
+
+    private async Task<bool> HasHeadAsync(
+        string repository,
+        GitBackupOptions options,
+        CancellationToken cancellationToken)
+    {
+        var result = await runner.RunAsync(
+            repository,
+            ["rev-parse", "--verify", "HEAD"],
+            CreateEnvironment(options),
+            InspectTimeout,
+            cancellationToken);
+        if (result.TimedOut)
+        {
+            throw new GitCommandException(GitBackupErrorCodes.Timeout);
+        }
+        return result.ExitCode == 0;
+    }
+
+    private async Task<long> ReadObjectBytesAsync(
+        string repository,
+        GitBackupOptions options,
+        CancellationToken cancellationToken)
+    {
+        var result = await RunRequiredAsync(
+            repository,
+            options,
             ["count-objects", "-v"],
             InspectTimeout,
             cancellationToken);
@@ -304,16 +577,23 @@ internal sealed class GitBackupRepository : IGitBackupRepository
 
     private async Task<DateTimeOffset?> ReadFirstCommitTimeAsync(
         string repository,
-        string branch,
+        GitBackupOptions options,
         CancellationToken cancellationToken)
     {
         var result = await runner.RunAsync(
             repository,
-            ["log", "--reverse", "--format=%cI", branch, "--max-count=1"],
-            environment: null,
+            [
+                "log",
+                "--reverse",
+                "--format=%cI",
+                $"refs/heads/{options.Branch}",
+                "--max-count=1"
+            ],
+            CreateEnvironment(options),
             InspectTimeout,
             cancellationToken);
-        if (result.ExitCode != 0 || string.IsNullOrWhiteSpace(result.StandardOutput))
+        if (result.ExitCode != 0
+            || string.IsNullOrWhiteSpace(result.StandardOutput))
         {
             return null;
         }
@@ -326,6 +606,7 @@ internal sealed class GitBackupRepository : IGitBackupRepository
 
     private async Task<bool> HasAnyReferenceAsync(
         string repository,
+        GitBackupOptions options,
         IReadOnlyList<string> references,
         CancellationToken cancellationToken)
     {
@@ -334,7 +615,7 @@ internal sealed class GitBackupRepository : IGitBackupRepository
             var result = await runner.RunAsync(
                 repository,
                 ["rev-parse", "-q", "--verify", reference],
-                environment: null,
+                CreateEnvironment(options),
                 InspectTimeout,
                 cancellationToken);
             if (result.TimedOut)
@@ -352,24 +633,35 @@ internal sealed class GitBackupRepository : IGitBackupRepository
 
     private async Task<GitBlockingState> ReadBlockingStateAsync(
         string repository,
+        GitBackupOptions options,
         CancellationToken cancellationToken)
     {
         var mergeState = await HasAnyReferenceAsync(
             repository,
+            options,
             ["MERGE_HEAD", "REBASE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"],
             cancellationToken)
             || await HasGitPathDirectoryAsync(
                 repository,
+                options,
                 "rebase-merge",
                 cancellationToken)
             || await HasGitPathDirectoryAsync(
                 repository,
+                options,
                 "rebase-apply",
                 cancellationToken);
         var conflicts = await runner.RunAsync(
             repository,
-            ["diff", "--name-only", "--diff-filter=U", "-z"],
-            environment: null,
+            [
+                "diff",
+                "--name-only",
+                "--diff-filter=U",
+                "--no-ext-diff",
+                "--no-textconv",
+                "-z"
+            ],
+            CreateEnvironment(options),
             InspectTimeout,
             cancellationToken);
         if (conflicts.TimedOut)
@@ -388,10 +680,12 @@ internal sealed class GitBackupRepository : IGitBackupRepository
 
     private async Task EnsureNoBlockingOperationAsync(
         string repository,
+        GitBackupOptions options,
         CancellationToken cancellationToken)
     {
         var state = await ReadBlockingStateAsync(
             repository,
+            options,
             cancellationToken);
         if (state.HasMergeOrRebaseState || state.HasConflicts)
         {
@@ -401,20 +695,22 @@ internal sealed class GitBackupRepository : IGitBackupRepository
 
     private async Task<bool> HasGitPathDirectoryAsync(
         string repository,
+        GitBackupOptions options,
         string gitPath,
         CancellationToken cancellationToken)
     {
         var result = await runner.RunAsync(
             repository,
             ["rev-parse", "--git-path", gitPath],
-            environment: null,
+            CreateEnvironment(options),
             InspectTimeout,
             cancellationToken);
         if (result.TimedOut)
         {
             throw new GitCommandException(GitBackupErrorCodes.Timeout);
         }
-        if (result.ExitCode != 0 || string.IsNullOrWhiteSpace(result.StandardOutput))
+        if (result.ExitCode != 0
+            || string.IsNullOrWhiteSpace(result.StandardOutput))
         {
             return false;
         }
@@ -430,15 +726,17 @@ internal sealed class GitBackupRepository : IGitBackupRepository
 
     private async Task<GitCommandResult> RunRequiredAsync(
         string repository,
+        GitBackupOptions options,
         IReadOnlyList<string> arguments,
         TimeSpan timeout,
         CancellationToken cancellationToken,
-        string? errorCode = null)
+        string? errorCode = null,
+        string? temporaryIndexPath = null)
     {
         var result = await runner.RunAsync(
             repository,
             arguments,
-            environment: null,
+            CreateEnvironment(options, temporaryIndexPath),
             timeout,
             cancellationToken);
         if (result.TimedOut)
@@ -454,15 +752,24 @@ internal sealed class GitBackupRepository : IGitBackupRepository
         return result;
     }
 
+    private static IReadOnlyDictionary<string, string> CreateEnvironment(
+        GitBackupOptions options,
+        string? temporaryIndexPath = null) =>
+        GitExecutionEnvironment.CreateEnvironment(
+            options,
+            temporaryIndexPath);
+
     private static string RequireRepositoryPath(GitBackupOptions options)
     {
         if (!options.Enabled
             || options.ConfigurationErrorCode is not null
             || string.IsNullOrWhiteSpace(options.RepositoryPath))
         {
-            throw new GitCommandException(GitBackupErrorCodes.ConfigurationInvalid);
+            throw new GitCommandException(
+                GitBackupErrorCodes.ConfigurationInvalid);
         }
 
+        GitExecutionEnvironment.ValidateConfiguration(options);
         var repository = PathSafety.Canonicalize(
             options.RepositoryPath,
             "Git backup repository");
@@ -473,6 +780,42 @@ internal sealed class GitBackupRepository : IGitBackupRepository
 
         PathSafety.EnsureNoLinkComponents(repository);
         return repository;
+    }
+
+    private static string CreateTemporaryIndexDirectory()
+    {
+        for (var attempt = 0; attempt < 8; attempt++)
+        {
+            var path = Path.Combine(
+                Path.GetTempPath(),
+                $"cipher-vault-git-index-{Guid.NewGuid():N}");
+            if (!Directory.Exists(path) && !File.Exists(path))
+            {
+                Directory.CreateDirectory(path);
+                VaultFilePermissions.ProtectDirectory(path);
+                return path;
+            }
+        }
+
+        throw new GitCommandException(GitBackupErrorCodes.CommitFailed);
+    }
+
+    private static void DeleteIndexDirectoryBestEffort(string directory)
+    {
+        try
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+        catch (Exception exception) when (
+            exception is IOException
+                or UnauthorizedAccessException
+                or System.Security.SecurityException)
+        {
+            // A unique temporary index is never used as a Git backup source.
+        }
     }
 
     private static async Task CopyVerifiedAsync(

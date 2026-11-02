@@ -20,7 +20,8 @@ public sealed record ServerOptions
         bool containerMode = false,
         IReadOnlyList<string>? allowedHosts = null,
         IReadOnlyList<Uri>? developmentOrigins = null,
-        GitBackupOptions? gitBackup = null)
+        GitBackupOptions? gitBackup = null,
+        IReadOnlyList<int>? allowedHttpPorts = null)
     {
         Paths = paths;
         ListenAddresses = listenAddresses;
@@ -30,6 +31,9 @@ public sealed record ServerOptions
         AllowedHosts = allowedHosts ?? ["127.0.0.1", "localhost"];
         DevelopmentOrigins = developmentOrigins ?? [];
         GitBackup = gitBackup ?? GitBackupOptions.Disabled;
+        AllowedHttpPorts = NormalizeAllowedHttpPorts(
+            allowedHttpPorts
+            ?? listenAddresses.Select(address => address.Port));
     }
 
     public ApplicationPaths Paths { get; }
@@ -48,6 +52,8 @@ public sealed record ServerOptions
 
     public GitBackupOptions GitBackup { get; }
 
+    public IReadOnlyList<int> AllowedHttpPorts { get; }
+
     public static ServerOptions Load(IConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(configuration);
@@ -64,6 +70,9 @@ public sealed record ServerOptions
         var addresses = ParseListenAddresses(
             configuration["ASPNETCORE_URLS"],
             containerMode);
+        var allowedHttpPorts = ParseAllowedHttpPorts(
+            configuration["CIPHERVAULT_PUBLIC_HTTP_PORTS"],
+            addresses);
         var gitBackup = GitBackupOptions.Load(configuration, paths);
         return new ServerOptions(
             paths,
@@ -73,7 +82,8 @@ public sealed record ServerOptions
             containerMode,
             allowedHosts,
             developmentOrigins,
-            gitBackup);
+            gitBackup,
+            allowedHttpPorts);
     }
 
     internal static ApplicationPaths ResolvePaths(
@@ -297,6 +307,64 @@ public sealed record ServerOptions
             }
         }
         return addresses;
+    }
+
+    private static IReadOnlyList<int> ParseAllowedHttpPorts(
+        string? value,
+        IReadOnlyList<ServerListenAddress> listenAddresses)
+    {
+        if (value is null)
+        {
+            return NormalizeAllowedHttpPorts(
+                listenAddresses.Select(address => address.Port));
+        }
+
+        if (value.Length == 0)
+        {
+            throw InvalidConfiguration(
+                "CIPHERVAULT_PUBLIC_HTTP_PORTS cannot be empty.");
+        }
+
+        var parts = value.Split(',');
+        if (parts.Any(part => string.IsNullOrWhiteSpace(part)))
+        {
+            throw InvalidConfiguration(
+                "CIPHERVAULT_PUBLIC_HTTP_PORTS contains an empty value.");
+        }
+
+        var ports = new List<int>(parts.Length);
+        foreach (var part in parts)
+        {
+            if (!int.TryParse(
+                    part.Trim(),
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out var port)
+                || port is < 1 or > 65535)
+            {
+                throw InvalidConfiguration(
+                    "CIPHERVAULT_PUBLIC_HTTP_PORTS contains an invalid port.");
+            }
+
+            ports.Add(port);
+        }
+
+        return NormalizeAllowedHttpPorts(ports);
+    }
+
+    private static IReadOnlyList<int> NormalizeAllowedHttpPorts(
+        IEnumerable<int> ports)
+    {
+        var normalized = ports.Distinct().Order().ToArray();
+        if (normalized.Length == 0
+            || normalized.Any(port => port is < 1 or > 65535))
+        {
+            throw new ArgumentException(
+                "Allowed HTTP ports must contain valid ports.",
+                nameof(ports));
+        }
+
+        return Array.AsReadOnly(normalized);
     }
 
     private static ServerStartupException InvalidConfiguration(string message) =>

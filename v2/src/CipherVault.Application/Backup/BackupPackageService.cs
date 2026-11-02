@@ -1,8 +1,23 @@
+using CipherVault.Application.Vault;
 using CipherVault.Core.Backup;
 using CipherVault.Core.Errors;
 using CipherVault.Core.Security;
 
 namespace CipherVault.Application.Backup;
+
+internal enum BackupPackageStage
+{
+    ZipStarted,
+    ZipCompleted,
+    VerificationStarted,
+    VerificationCompleted,
+    PublishCommitRequested,
+    PublishCommitted,
+    CleanupCompleted
+}
+
+internal delegate ValueTask BackupPackageStageObserver(
+    BackupPackageStage stage);
 
 internal sealed record BackupPackageBuildResult(
     BackupListItem Item,
@@ -11,13 +26,25 @@ internal sealed record BackupPackageBuildResult(
 
 internal sealed class BackupPackageService
 {
+    private readonly BackupPackageStageObserver? observer;
+
+    public BackupPackageService()
+    {
+    }
+
+    internal BackupPackageService(BackupPackageStageObserver? observer)
+    {
+        this.observer = observer;
+    }
+
     public async Task<BackupPackageBuildResult> BuildAndVerifyAsync(
         BackupSnapshotCapture snapshot,
+        VaultBackupSessionLease backupLease,
         string finalFileName,
-        string backupDirectory,
-        CancellationToken cancellationToken)
+        string backupDirectory)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(backupLease);
         _ = BackupFileName.Parse(finalFileName);
         var directory = PathSafety.Canonicalize(
             backupDirectory,
@@ -32,24 +59,37 @@ internal sealed class BackupPackageService
         var verifyDirectory = Path.Combine(
             snapshot.WorkingDirectory,
             $"verify-{Guid.NewGuid():N}");
+        Exception? operationException = null;
         try
         {
+            backupLease.ThrowIfCancellationRequested();
+            await NotifyObserverAsync(BackupPackageStage.ZipStarted);
             var written = await BackupPackageWriter.WriteAsync(
                 tempPath,
                 snapshot.VaultId,
                 snapshot.CapturedAtUtc,
                 snapshot.DatabasePath,
                 snapshot.KeyEnvelopePath,
-                cancellationToken);
-            using var credential = new SnapshotDatabaseKeyCredential(
-                snapshot.DatabaseKeyLease.DatabaseKey);
-            var verification = await BackupPackageVerifier.VerifyAsync(
-                new BackupVerificationRequest(
-                    tempPath,
-                    verifyDirectory,
-                    credential,
-                    RequireCurrentSchema: true),
-                cancellationToken);
+                backupLease.CancellationToken);
+            await NotifyObserverAsync(BackupPackageStage.ZipCompleted);
+            backupLease.ThrowIfCancellationRequested();
+
+            await NotifyObserverAsync(BackupPackageStage.VerificationStarted);
+            BackupVerificationResult verification;
+            using (var credential =
+                   backupLease.CreateDatabaseKeyCredential())
+            {
+                verification = await BackupPackageVerifier.VerifyAsync(
+                    new BackupVerificationRequest(
+                        tempPath,
+                        verifyDirectory,
+                        credential,
+                        RequireCurrentSchema: true),
+                    backupLease.CancellationToken);
+            }
+
+            backupLease.SealDatabaseKeyAccess();
+            await NotifyObserverAsync(BackupPackageStage.VerificationCompleted);
             if (verification.Manifest.VaultId != snapshot.VaultId
                 || !string.Equals(
                     verification.DatabaseSha256,
@@ -65,7 +105,18 @@ internal sealed class BackupPackageService
                     "Backup package verification result is inconsistent.");
             }
 
+            await NotifyObserverAsync(
+                BackupPackageStage.PublishCommitRequested);
+            if (!backupLease.TryBeginPublishCommit())
+            {
+                backupLease.ThrowIfCancellationRequested();
+                throw new VaultException(
+                    VaultErrorCode.VaultBusy,
+                    "Backup publish commit was not granted.");
+            }
+
             File.Move(tempPath, finalPath, overwrite: false);
+            await NotifyObserverAsync(BackupPackageStage.PublishCommitted);
             var identity = RegularFileIdentity.Read(finalPath);
             return new BackupPackageBuildResult(
                 new BackupListItem(
@@ -81,61 +132,130 @@ internal sealed class BackupPackageService
         }
         catch (BackupPackageValidationException exception)
         {
-            throw new VaultException(
+            operationException = new VaultException(
                 VaultErrorCode.DatabaseError,
                 "Backup package validation failed.",
                 exception);
+            throw operationException;
         }
         catch (Exception exception) when (
             exception is IOException
                 or UnauthorizedAccessException
                 or System.Security.SecurityException)
         {
-            throw new VaultException(
+            operationException = new VaultException(
                 VaultErrorCode.StorageError,
                 "Unable to publish the backup package.",
                 exception);
+            throw operationException;
+        }
+        catch (Exception exception)
+        {
+            operationException = exception;
+            throw;
         }
         finally
         {
-            DeleteFileBestEffort(tempPath);
-            DeleteDirectoryBestEffort(verifyDirectory);
+            var lifecycleFailures = new List<Exception>();
+            try
+            {
+                backupLease.SealDatabaseKeyAccess();
+            }
+            catch (Exception exception)
+            {
+                lifecycleFailures.Add(exception);
+            }
+
+            var cleanupFailures = new List<Exception>();
+            await DeleteFileStrictAsync(tempPath, cleanupFailures);
+            await DeleteDirectoryStrictAsync(
+                verifyDirectory,
+                cleanupFailures);
+            lifecycleFailures.AddRange(cleanupFailures);
+            if (lifecycleFailures.Count > 0)
+            {
+                var aggregate = new AggregateException(
+                    lifecycleFailures);
+                backupLease.MarkCleanupFailed(aggregate);
+                if (operationException is null)
+                {
+                    throw new VaultException(
+                        VaultErrorCode.StorageError,
+                        "Unable to clean backup package resources.",
+                        aggregate);
+                }
+
+                operationException.Data["CleanupFailures"] = aggregate;
+            }
+
+            await NotifyObserverAsync(BackupPackageStage.CleanupCompleted);
         }
     }
 
-    private static void DeleteFileBestEffort(string path)
+    private ValueTask NotifyObserverAsync(BackupPackageStage stage) =>
+        observer is null
+            ? ValueTask.CompletedTask
+            : observer(stage);
+
+    private static async Task DeleteFileStrictAsync(
+        string path,
+        ICollection<Exception> failures)
     {
-        try
+        for (var attempt = 0; attempt < 3; attempt++)
         {
-            if (File.Exists(path))
+            try
             {
-                File.Delete(path);
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+
+                return;
             }
-        }
-        catch (Exception exception) when (
-            exception is IOException
-                or UnauthorizedAccessException
-                or System.Security.SecurityException)
-        {
-            // A strict .partial file is never listed as a valid backup.
+            catch (Exception exception) when (
+                exception is IOException
+                    or UnauthorizedAccessException
+                    or System.Security.SecurityException)
+            {
+                if (attempt == 2)
+                {
+                    failures.Add(exception);
+                    return;
+                }
+
+                await Task.Delay(50);
+            }
         }
     }
 
-    private static void DeleteDirectoryBestEffort(string path)
+    private static async Task DeleteDirectoryStrictAsync(
+        string path,
+        ICollection<Exception> failures)
     {
-        try
+        for (var attempt = 0; attempt < 3; attempt++)
         {
-            if (Directory.Exists(path))
+            try
             {
-                Directory.Delete(path, recursive: true);
+                if (Directory.Exists(path))
+                {
+                    Directory.Delete(path, recursive: true);
+                }
+
+                return;
             }
-        }
-        catch (Exception exception) when (
-            exception is IOException
-                or UnauthorizedAccessException
-                or System.Security.SecurityException)
-        {
-            // Verification material remains encrypted and outside final names.
+            catch (Exception exception) when (
+                exception is IOException
+                    or UnauthorizedAccessException
+                    or System.Security.SecurityException)
+            {
+                if (attempt == 2)
+                {
+                    failures.Add(exception);
+                    return;
+                }
+
+                await Task.Delay(50);
+            }
         }
     }
 }

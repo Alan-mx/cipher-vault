@@ -31,13 +31,16 @@ public abstract class BackupVerificationCredential : IDisposable
     public abstract void Dispose();
 }
 
-public sealed class SnapshotDatabaseKeyCredential
+internal sealed class SnapshotDatabaseKeyCredential
     : BackupVerificationCredential
 {
-    private readonly ReadOnlyMemory<byte> databaseKey;
+    private ReadOnlyMemory<byte> databaseKey;
+    private Action? onDisposed;
+    private int disposed;
 
-    public SnapshotDatabaseKeyCredential(
-        ReadOnlyMemory<byte> databaseKey)
+    internal SnapshotDatabaseKeyCredential(
+        ReadOnlyMemory<byte> databaseKey,
+        Action? onDisposed = null)
     {
         if (databaseKey.Length != 32)
         {
@@ -47,16 +50,34 @@ public sealed class SnapshotDatabaseKeyCredential
         }
 
         this.databaseKey = databaseKey;
+        this.onDisposed = onDisposed;
     }
 
     public override BackupCredentialKind Kind =>
         BackupCredentialKind.SnapshotDatabaseKey;
 
-    internal ReadOnlyMemory<byte> DatabaseKey => databaseKey;
+    internal ReadOnlyMemory<byte> DatabaseKey
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(
+                Volatile.Read(ref disposed) != 0,
+                this);
+            return databaseKey;
+        }
+    }
 
     public override void Dispose()
     {
-        // The lease that owns the key is disposed by its caller.
+        if (Interlocked.Exchange(ref disposed, 1) != 0)
+        {
+            return;
+        }
+
+        databaseKey = default;
+        var callback = onDisposed;
+        onDisposed = null;
+        callback?.Invoke();
     }
 }
 

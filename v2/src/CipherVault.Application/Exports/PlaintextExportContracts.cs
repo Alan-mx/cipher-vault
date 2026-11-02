@@ -1,9 +1,28 @@
 namespace CipherVault.Application.Exports;
 
 public sealed record PlaintextExportMetadata(
+    Guid ExportId,
     string FileName,
     int DocumentCount,
     long TotalContentBytes);
+
+internal enum PlaintextExportAuditPhase
+{
+    Started,
+    Terminal
+}
+
+internal sealed record PlaintextExportAuditFailure(
+    Guid ExportId,
+    PlaintextExportAuditPhase Phase,
+    string Outcome,
+    string ErrorCode,
+    string ExceptionType);
+
+internal interface IPlaintextExportAuditFailureSink
+{
+    void Report(PlaintextExportAuditFailure failure);
+}
 
 public sealed record PlaintextExportManifest(
     string Format,

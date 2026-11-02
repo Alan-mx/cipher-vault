@@ -206,6 +206,7 @@ public sealed class ServerOptionsTests
         Assert.True(options.ContainerMode);
         Assert.Equal("0.0.0.0", options.ListenAddresses[0].Host);
         Assert.Equal(["127.0.0.1", "localhost"], options.AllowedHosts);
+        Assert.Equal([43127], options.AllowedHttpPorts);
         Assert.EndsWith(
             Path.Combine("config", "mcp-token.json"),
             options.Paths.McpTokenPath,
@@ -214,6 +215,56 @@ public sealed class ServerOptionsTests
             Path.Combine("config", "git-backup-state.json"),
             options.Paths.GitBackupStatePath,
             StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PublicHttpPortsAreNormalizedAndIndependent()
+    {
+        var parent = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-public-ports-{Guid.NewGuid():N}");
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["CIPHERVAULT_DATA_DIR"] = Path.Combine(parent, "data"),
+                ["CIPHERVAULT_CONFIG_DIR"] = Path.Combine(parent, "config"),
+                ["CIPHERVAULT_CONTAINER_MODE"] = "true",
+                ["ASPNETCORE_URLS"] = "http://0.0.0.0:8080",
+                ["CIPHERVAULT_PUBLIC_HTTP_PORTS"] = "18080, 8080,18080"
+            })
+            .Build();
+
+        var options = ServerOptions.Load(configuration);
+
+        Assert.Equal([8080, 18080], options.AllowedHttpPorts);
+        Assert.Equal(8080, options.ListenAddresses[0].Port);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("65536")]
+    [InlineData("abc")]
+    [InlineData("8080,,43127")]
+    public void InvalidPublicHttpPortsFailClosed(string ports)
+    {
+        var parent = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-public-ports-invalid-{Guid.NewGuid():N}");
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["CIPHERVAULT_DATA_DIR"] = Path.Combine(parent, "data"),
+                ["CIPHERVAULT_CONFIG_DIR"] = Path.Combine(parent, "config"),
+                ["CIPHERVAULT_PUBLIC_HTTP_PORTS"] = ports
+            })
+            .Build();
+
+        var exception = Assert.Throws<ServerStartupException>(
+            () => ServerOptions.Load(configuration));
+
+        Assert.Equal(ServerStartupCode.InvalidConfiguration, exception.Code);
     }
 
     [Fact]
@@ -267,6 +318,201 @@ public sealed class ServerOptionsTests
             Assert.Equal(209715200, options.GitBackup.RotationBytes);
             Assert.Equal(TimeSpan.FromDays(180), options.GitBackup.RotationAge);
             Assert.Null(options.GitBackup.ConfigurationErrorCode);
+            Assert.Equal(
+                Path.Combine(parent, "config", "git-hooks-empty"),
+                options.GitBackup.SecureHooksPath);
+            Assert.Equal(
+                Path.Combine(parent, "config", "git-attributes-empty"),
+                options.GitBackup.SecureAttributesPath);
+            Assert.Equal(
+                OperatingSystem.IsWindows()
+                    ? GitCredentialHelperMode.Manager
+                    : GitCredentialHelperMode.None,
+                options.GitBackup.CredentialHelper);
+            Assert.False(options.GitBackup.AllowHttp);
+            Assert.False(options.GitBackup.AllowGitProtocol);
+            Assert.False(options.GitBackup.AllowFileRemote);
+        }
+        finally
+        {
+            if (Directory.Exists(parent))
+            {
+                Directory.Delete(parent, recursive: true);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData("none", GitCredentialHelperMode.None)]
+    [InlineData("manager", GitCredentialHelperMode.Manager)]
+    [InlineData("manager-core", GitCredentialHelperMode.ManagerCore)]
+    [InlineData("libsecret", GitCredentialHelperMode.LibSecret)]
+    [InlineData("cache", GitCredentialHelperMode.Cache)]
+    public void GitCredentialHelperAcceptsOnlyApprovedAliases(
+        string helper,
+        GitCredentialHelperMode expected)
+    {
+        var parent = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-git-helper-{Guid.NewGuid():N}");
+        var repository = Path.Combine(parent, "backup-repo");
+        Directory.CreateDirectory(repository);
+        try
+        {
+            var options = ServerOptions.Load(
+                CreateConfiguration(
+                    parent,
+                    new Dictionary<string, string?>
+                    {
+                        ["CIPHERVAULT_GIT_BACKUP_ENABLED"] = "true",
+                        ["CIPHERVAULT_GIT_BACKUP_REPO"] = repository,
+                        ["CIPHERVAULT_GIT_CREDENTIAL_HELPER"] = helper
+                    }));
+
+            Assert.Equal(expected, options.GitBackup.CredentialHelper);
+        }
+        finally
+        {
+            if (Directory.Exists(parent))
+            {
+                Directory.Delete(parent, recursive: true);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData("store")]
+    [InlineData("!command")]
+    [InlineData("/usr/bin/helper")]
+    [InlineData("manager --option")]
+    public void InsecureGitCredentialHelperFailsClosed(string helper)
+    {
+        var parent = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-git-helper-invalid-{Guid.NewGuid():N}");
+        var repository = Path.Combine(parent, "backup-repo");
+        Directory.CreateDirectory(repository);
+        try
+        {
+            var options = ServerOptions.Load(
+                CreateConfiguration(
+                    parent,
+                    new Dictionary<string, string?>
+                    {
+                        ["CIPHERVAULT_GIT_BACKUP_ENABLED"] = "true",
+                        ["CIPHERVAULT_GIT_BACKUP_REPO"] = repository,
+                        ["CIPHERVAULT_GIT_CREDENTIAL_HELPER"] = helper
+                    }));
+
+            Assert.Equal(
+                GitBackupOptions.InvalidConfigurationCode,
+                options.GitBackup.ConfigurationErrorCode);
+        }
+        finally
+        {
+            if (Directory.Exists(parent))
+            {
+                Directory.Delete(parent, recursive: true);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData("-force")]
+    [InlineData("origin:evil")]
+    [InlineData("origin/evil")]
+    [InlineData("origin evil")]
+    [InlineData("origin..evil")]
+    public void InjectedGitRemoteFailsClosed(string remote)
+    {
+        var parent = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-git-remote-{Guid.NewGuid():N}");
+        var repository = Path.Combine(parent, "backup-repo");
+        Directory.CreateDirectory(repository);
+        try
+        {
+            var options = ServerOptions.Load(
+                CreateConfiguration(
+                    parent,
+                    new Dictionary<string, string?>
+                    {
+                        ["CIPHERVAULT_GIT_BACKUP_ENABLED"] = "true",
+                        ["CIPHERVAULT_GIT_BACKUP_REPO"] = repository,
+                        ["CIPHERVAULT_GIT_BACKUP_REMOTE"] = remote
+                    }));
+
+            Assert.Equal(
+                GitBackupOptions.InvalidConfigurationCode,
+                options.GitBackup.ConfigurationErrorCode);
+        }
+        finally
+        {
+            if (Directory.Exists(parent))
+            {
+                Directory.Delete(parent, recursive: true);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData("-main")]
+    [InlineData("main..backup")]
+    [InlineData("@{-1}")]
+    [InlineData("main}")]
+    [InlineData("main~1")]
+    [InlineData("main backup")]
+    public void InjectedGitBranchFailsClosed(string branch)
+    {
+        var parent = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-git-branch-{Guid.NewGuid():N}");
+        var repository = Path.Combine(parent, "backup-repo");
+        Directory.CreateDirectory(repository);
+        try
+        {
+            var options = ServerOptions.Load(
+                CreateConfiguration(
+                    parent,
+                    new Dictionary<string, string?>
+                    {
+                        ["CIPHERVAULT_GIT_BACKUP_ENABLED"] = "true",
+                        ["CIPHERVAULT_GIT_BACKUP_REPO"] = repository,
+                        ["CIPHERVAULT_GIT_BACKUP_BRANCH"] = branch
+                    }));
+
+            Assert.Equal(
+                GitBackupOptions.InvalidConfigurationCode,
+                options.GitBackup.ConfigurationErrorCode);
+        }
+        finally
+        {
+            if (Directory.Exists(parent))
+            {
+                Directory.Delete(parent, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void EnsureCreatedCreatesEmptyGitControlFiles()
+    {
+        var parent = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-git-control-{Guid.NewGuid():N}");
+        try
+        {
+            var paths = ApplicationPaths.Create(
+                Path.Combine(parent, "data"),
+                Path.Combine(parent, "config"));
+
+            paths.EnsureCreated();
+
+            Assert.True(Directory.Exists(paths.GitHooksDirectory));
+            Assert.Empty(Directory.EnumerateFileSystemEntries(
+                paths.GitHooksDirectory));
+            Assert.True(File.Exists(paths.GitAttributesFile));
+            Assert.Equal(0, new FileInfo(paths.GitAttributesFile).Length);
         }
         finally
         {

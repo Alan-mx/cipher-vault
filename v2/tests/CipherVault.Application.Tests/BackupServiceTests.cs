@@ -14,6 +14,8 @@ public sealed class BackupServiceTests
                 Path.Combine(fixture.Parent, "backups")),
             fixture.Manager,
             fixture.TimeProvider);
+        var activeSessions =
+            Core.Database.SqliteMcDatabaseSession.ActiveSessionCountForTest;
 
         var result = await service.CreateAsync(
             new VaultActorContext(VaultActorKind.UserUi));
@@ -26,5 +28,8 @@ public sealed class BackupServiceTests
             fixture.Parent,
             "backups",
             result.Item.FileName)));
+        Assert.Equal(
+            activeSessions,
+            Core.Database.SqliteMcDatabaseSession.ActiveSessionCountForTest);
     }
 }

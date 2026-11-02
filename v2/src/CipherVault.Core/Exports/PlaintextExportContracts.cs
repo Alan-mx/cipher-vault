@@ -21,4 +21,9 @@ public sealed record PlaintextExportDocument(
     string VirtualPath,
     VaultDocumentFormat Format,
     int Revision,
-    string Content);
+    string Content,
+    string PathKey = "");
+
+public sealed record PlaintextExportCursor(
+    string PathKey,
+    Guid DocumentId);

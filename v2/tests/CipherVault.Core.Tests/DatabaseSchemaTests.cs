@@ -18,7 +18,7 @@ public sealed class DatabaseSchemaTests
         var verified = await SqliteMcVaultStore.VerifyAsync(fixture.Root, fixture.Material);
 
         Assert.Equal(fixture.Material.VaultId, initialized.VaultId);
-        Assert.Equal(4, initialized.SchemaVersion);
+        Assert.Equal(5, initialized.SchemaVersion);
         Assert.Equal(initialized, verified);
     }
 
@@ -36,8 +36,8 @@ public sealed class DatabaseSchemaTests
             create: false);
         using var command = connection.Connection.CreateCommand();
         command.CommandText = "SELECT count(*) FROM schema_migrations;";
-        Assert.Equal(4, Convert.ToInt32(await command.ExecuteScalarAsync()));
-        Assert.Equal(4, second.SchemaVersion);
+        Assert.Equal(5, Convert.ToInt32(await command.ExecuteScalarAsync()));
+        Assert.Equal(5, second.SchemaVersion);
     }
 
     [Fact]
@@ -166,7 +166,7 @@ public sealed class DatabaseSchemaTests
                 migrations,
                 CancellationToken.None);
 
-            Assert.Equal(4, upgraded.SchemaVersion);
+            Assert.Equal(5, upgraded.SchemaVersion);
             using var command = session.Connection.CreateCommand();
             command.CommandText =
                 """
@@ -184,7 +184,7 @@ public sealed class DatabaseSchemaTests
                 """;
             Assert.Equal(7, Convert.ToInt32(await command.ExecuteScalarAsync()));
             command.CommandText = "SELECT count(*) FROM schema_migrations;";
-            Assert.Equal(4, Convert.ToInt32(await command.ExecuteScalarAsync()));
+            Assert.Equal(5, Convert.ToInt32(await command.ExecuteScalarAsync()));
         }
         finally
         {
@@ -243,7 +243,7 @@ public sealed class DatabaseSchemaTests
                 migrations,
                 CancellationToken.None);
 
-            Assert.Equal(4, upgraded.SchemaVersion);
+            Assert.Equal(5, upgraded.SchemaVersion);
             using (var selectHistorical = session.Connection.CreateCommand())
             {
                 selectHistorical.CommandText = """
@@ -273,7 +273,9 @@ public sealed class DatabaseSchemaTests
                         ($downloadId, '2026-11-01T00:00:02Z', 'user_ui',
                          'backup.download', NULL, NULL, NULL, 'success', '{}'),
                         ($exportId, '2026-11-01T00:00:03Z', 'user_ui',
-                         'export.plaintext', NULL, NULL, NULL, 'success', '{}');
+                         'export.plaintext', NULL, NULL, NULL, 'success', '{}'),
+                        ($startedId, '2026-11-01T00:00:04Z', 'user_ui',
+                         'export.plaintext', NULL, NULL, NULL, 'started', '{}');
                     """;
                 insertAudits.Parameters.AddWithValue(
                     "$createId",
@@ -283,6 +285,9 @@ public sealed class DatabaseSchemaTests
                     Guid.NewGuid().ToString("D"));
                 insertAudits.Parameters.AddWithValue(
                     "$exportId",
+                    Guid.NewGuid().ToString("D"));
+                insertAudits.Parameters.AddWithValue(
+                    "$startedId",
                     Guid.NewGuid().ToString("D"));
                 await insertAudits.ExecuteNonQueryAsync();
             }

@@ -1,9 +1,33 @@
-$CipherVaultReleaseVersion = "2.0.0-rc.1"
-$CipherVaultDotnetSdkVersion = "10.0.402"
-$CipherVaultDotnetRuntimeVersion = "10.0.13"
-$CipherVaultAspNetCoreVersion = "10.0.13"
-$CipherVaultSqlite3McVersion = "2.6.1"
-$CipherVaultDockerBaseImage = "mcr.microsoft.com/dotnet/runtime-deps:10.0.13-noble"
-$CipherVaultDockerBaseDigest = "sha256:1c20bc9ebda297198be069d82b6c5d1716faeeec8b8dca53ef963f9c92d3e2e3"
-$CipherVaultDockerSdkImage = "mcr.microsoft.com/dotnet/sdk:10.0.402-noble"
-$CipherVaultDockerSdkDigest = "sha256:747cbade5bfd918a175ac32f8f1d931edec2c7d0d5397a3de72eaef1ac1f66d2"
+$versionFile = Join-Path $PSScriptRoot "versions.env"
+if (-not (Test-Path -LiteralPath $versionFile -PathType Leaf)) {
+    throw "versions.env is required."
+}
+
+$versions = @{}
+foreach ($line in Get-Content -LiteralPath $versionFile) {
+    if ($line -match '^\s*#' -or [string]::IsNullOrWhiteSpace($line)) {
+        continue
+    }
+    if ($line -notmatch '^([A-Z0-9_]+)=([^\r\n]+)$') {
+        throw "versions.env contains an invalid line."
+    }
+    $versions[$Matches[1]] = $Matches[2]
+}
+
+function Get-RequiredVersionValue([string] $name) {
+    $value = $versions[$name]
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        throw "versions.env is missing $name."
+    }
+    return $value
+}
+
+$CipherVaultReleaseVersion = Get-RequiredVersionValue "RELEASE_VERSION"
+$CipherVaultDotnetSdkVersion = Get-RequiredVersionValue "DOTNET_SDK_VERSION"
+$CipherVaultDotnetRuntimeVersion = Get-RequiredVersionValue "DOTNET_RUNTIME_VERSION"
+$CipherVaultAspNetCoreVersion = Get-RequiredVersionValue "DOTNET_ASPNETCORE_VERSION"
+$CipherVaultSqlite3McVersion = Get-RequiredVersionValue "SQLITE3MC_VERSION"
+$CipherVaultDockerBaseImage = "mcr.microsoft.com/dotnet/runtime-deps:$(Get-RequiredVersionValue "DOTNET_RUNTIME_DEPS_TAG")"
+$CipherVaultDockerBaseDigest = Get-RequiredVersionValue "DOTNET_RUNTIME_DEPS_DIGEST"
+$CipherVaultDockerSdkImage = "mcr.microsoft.com/dotnet/sdk:$CipherVaultDotnetSdkVersion-noble"
+$CipherVaultDockerSdkDigest = Get-RequiredVersionValue "DOTNET_SDK_IMAGE_DIGEST"

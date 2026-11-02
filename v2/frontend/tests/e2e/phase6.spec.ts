@@ -1,6 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -31,6 +31,24 @@ const assertNoHorizontalOverflow = async (page: Page): Promise<void> => {
       document.documentElement.clientWidth,
   );
   expect(hasOverflow).toBe(false);
+};
+
+const ensureUnlocked = async (page: Page): Promise<void> => {
+  await page.goto("/documents");
+  await page.waitForLoadState("networkidle");
+  await page.waitForTimeout(500);
+  if (page.url().endsWith("/setup")) {
+    await page.getByPlaceholder("至少 12 个字符").fill(password);
+    await page.getByPlaceholder("再次输入密码").fill(password);
+    await page.getByRole("checkbox").check();
+    await page.getByRole("button", { name: "创建 Vault" }).click();
+    await expect(page).toHaveURL(/\/unlock$/);
+  }
+  if (page.url().endsWith("/unlock")) {
+    await page.getByPlaceholder("输入密码").fill(password);
+    await page.getByRole("button", { name: "解锁", exact: true }).click();
+  }
+  await expect(page).toHaveURL(/\/documents$/);
 };
 
 test("Phase 6 desktop flow, responsive layout and accessibility", async ({
@@ -212,4 +230,81 @@ test("Phase 6 desktop flow, responsive layout and accessibility", async ({
     fullPage: true,
   });
   await assertNoSeriousAxeViolations(page, "lock desktop");
+});
+
+test("M13 export ticket flow and M09 pageshow revalidation", async ({
+  page,
+}) => {
+  const lockRequests: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      request.url().endsWith("/api/vault/lock")
+    ) {
+      lockRequests.push(request.url());
+    }
+  });
+  await ensureUnlocked(page);
+  await page.goto("/settings");
+  await expect(page.getByRole("heading", { name: "导出明文" })).toBeVisible();
+  await page.getByPlaceholder("导出明文").fill("导出明文");
+
+  await page.route(
+    "**/api/exports/plaintext/preflight",
+    (route) =>
+      route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({
+          code: "export_too_large",
+          message: "导出预检失败：内容超过限制。",
+          details: {},
+          correlationId: "m14",
+        }),
+      }),
+    { times: 1 },
+  );
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "下载明文 ZIP" }).click();
+  await expect(page.getByText("导出预检失败：内容超过限制。")).toBeVisible();
+
+  const downloadResponsePromise = page.waitForResponse((response) =>
+    response.url().endsWith("/api/exports/plaintext/download"),
+  );
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "下载明文 ZIP" }).click();
+  const downloadResponse = await downloadResponsePromise;
+  if (!downloadResponse.ok()) {
+    throw new Error(
+      `Download response failed: ${downloadResponse.status()} ${await downloadResponse.text()}`,
+    );
+  }
+  const download = await page.waitForEvent("download");
+
+  expect(download.suggestedFilename()).toMatch(
+    /^cipher-vault-export-[0-9]{8}-[0-9]{6}-[0-9a-f]{8}\.zip$/,
+  );
+  const downloadPath = await download.path();
+  expect(downloadPath).not.toBeNull();
+  expect(statSync(downloadPath!).size).toBeGreaterThan(0);
+  await expect(
+    page.getByText(
+      "下载请求已提交，请查看浏览器下载列表；页面无法确认文件是否已完整下载。",
+    ),
+  ).toBeVisible();
+
+  const statusResponse = page.waitForResponse((response) =>
+    response.url().endsWith("/api/vault/status"),
+  );
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new PageTransitionEvent("pagehide", { persisted: false }),
+    );
+    window.dispatchEvent(
+      new PageTransitionEvent("pageshow", { persisted: true }),
+    );
+  });
+  expect((await statusResponse).ok()).toBe(true);
+  await expect(page).toHaveURL(/\/settings$/);
+  expect(lockRequests).toEqual([]);
 });

@@ -13,6 +13,7 @@ SHA-256 detects corrupted or modified files. It does not authenticate the publis
 
 ```bash
 docker load --input cipher-vault-2.0.0-rc.1-docker-linux-amd64.tar
+CIPHERVAULT_IMAGE=cipher-vault:2.0.0-rc.1 \
 docker compose up -d
 ```
 
@@ -23,6 +24,20 @@ http://127.0.0.1:8080
 ```
 
 Only the host loopback address is published. The container itself listens on port 8080.
+If the host mapping uses another port, set `CIPHERVAULT_PORT` to the same public port:
+
+```bash
+CIPHERVAULT_PORT=18080 docker compose up -d
+```
+
+`CIPHERVAULT_PUBLIC_HTTP_PORTS` follows that mapping and controls the accepted HTTP
+`Host` and `Origin` port. The container's internal port does not automatically grant
+access to the same public port.
+
+Host and Origin validation is not a network boundary. The Compose mapping must remain
+bound to `127.0.0.1`; do not attach the container to an untrusted shared network. Other
+containers on the same Docker network can still reach the container port. Authentication,
+authorization, TLS and network isolation remain separate deployment requirements.
 
 ## Persistence
 
