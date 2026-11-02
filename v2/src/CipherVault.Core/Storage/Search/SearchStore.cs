@@ -39,6 +39,12 @@ public static class SearchStore
                 VaultErrorCode.InvalidInput,
                 "Search query must contain 1 to 200 Unicode characters.");
         }
+        if (query.OrphanOnly && query.HasBacklinks == true)
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "orphanOnly and hasBacklinks=true cannot be combined.");
+        }
 
         var pageSize = NormalizePageSize(query.Page?.PageSize);
         var tags = TagNormalizer.NormalizeMany(query.Tags);
@@ -106,6 +112,14 @@ public static class SearchStore
         int totalActive,
         CancellationToken cancellationToken)
     {
+        var totalMatches = await CountFtsMatchesAsync(
+            context,
+            query,
+            tags,
+            format,
+            request,
+            snapshotAt,
+            cancellationToken);
         using var read = context.CreateCommand();
         var sql = new StringBuilder(
             """
@@ -161,7 +175,7 @@ public static class SearchStore
         read.Command.CommandText = sql.ToString();
         read.Command.Parameters.AddWithValue(
             "$match",
-            $"\"{query.Replace("\"", "\"\"", StringComparison.Ordinal)}\"");
+            FtsPhrase(query));
         read.Command.Parameters.AddWithValue("$snapshotAt", snapshotAt.ToString("O"));
         read.Command.Parameters.AddWithValue("$limit", pageSize + 1);
         var hits = new List<(SearchHit Hit, SearchCursor Cursor)>();
@@ -196,10 +210,47 @@ public static class SearchStore
             new SearchCoverage(
                 totalActive,
                 totalActive,
-                returned.Length,
+                totalMatches,
                 returned.Length,
                 false),
             nextCursor);
+    }
+
+    private static async Task<int> CountFtsMatchesAsync(
+        VaultOperationContext context,
+        string query,
+        IReadOnlyList<NormalizedTag> tags,
+        string? format,
+        SearchQuery request,
+        DateTimeOffset snapshotAt,
+        CancellationToken cancellationToken)
+    {
+        using var count = context.CreateCommand();
+        var sql = new StringBuilder(
+            """
+            SELECT count(*)
+            FROM document_fts
+            JOIN documents AS d ON d.document_id = document_fts.document_id
+            WHERE document_fts MATCH $match
+              AND d.deleted_at IS NULL
+              AND d.updated_at <= $snapshotAt
+            """);
+        var parameterIndex = 0;
+        AppendCommonFilters(
+            sql,
+            count,
+            request,
+            tags,
+            format,
+            ref parameterIndex);
+        count.Command.CommandText = sql.ToString();
+        count.Command.Parameters.AddWithValue("$match", FtsPhrase(query));
+        count.Command.Parameters.AddWithValue(
+            "$snapshotAt",
+            snapshotAt.ToString("O"));
+        return Convert.ToInt32(
+            await count.Command.ExecuteScalarAsync(cancellationToken),
+            System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private static async Task<SearchPage> SearchShortAsync(
@@ -355,16 +406,34 @@ public static class SearchStore
                  ) = {tags.Count}
                 """);
         }
-        if (query.HasBacklinks == true)
+        if (query.HasBacklinks is { } hasBacklinks)
         {
             sql.Append(
-                """
-                 AND EXISTS (
-                    SELECT 1 FROM document_links AS l
-                    WHERE l.target_document_id = d.document_id
-                      AND l.resolution_status = 'resolved'
-                 )
-                """);
+                hasBacklinks
+                    ? """
+                       AND EXISTS (
+                          SELECT 1
+                          FROM document_links AS l
+                          JOIN documents AS source
+                            ON source.document_id = l.source_document_id
+                          WHERE l.target_document_id = d.document_id
+                            AND l.resolution_status = 'resolved'
+                            AND source.deleted_at IS NULL
+                            AND source.revision = l.source_revision
+                       )
+                      """
+                    : """
+                       AND NOT EXISTS (
+                          SELECT 1
+                          FROM document_links AS l
+                          JOIN documents AS source
+                            ON source.document_id = l.source_document_id
+                          WHERE l.target_document_id = d.document_id
+                            AND l.resolution_status = 'resolved'
+                            AND source.deleted_at IS NULL
+                            AND source.revision = l.source_revision
+                       )
+                      """);
         }
         if (query.OrphanOnly)
         {
@@ -372,8 +441,21 @@ public static class SearchStore
                 """
                  AND NOT EXISTS (
                     SELECT 1 FROM document_links AS l
+                    JOIN documents AS source
+                      ON source.document_id = l.source_document_id
                     WHERE l.target_document_id = d.document_id
                       AND l.resolution_status = 'resolved'
+                      AND source.deleted_at IS NULL
+                      AND source.revision = l.source_revision
+                 )
+                 AND NOT EXISTS (
+                    SELECT 1 FROM document_links AS l
+                    JOIN documents AS target
+                      ON target.document_id = l.target_document_id
+                    WHERE l.source_document_id = d.document_id
+                      AND l.source_revision = d.revision
+                      AND l.resolution_status = 'resolved'
+                      AND target.deleted_at IS NULL
                  )
                 """);
         }
@@ -404,6 +486,9 @@ public static class SearchStore
 
     private static bool Contains(string value, string query) =>
         value.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0;
+
+    private static string FtsPhrase(string query) =>
+        $"\"{query.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
 
     private static string BuildSnippet(string content, string query)
     {

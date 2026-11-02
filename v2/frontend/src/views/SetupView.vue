@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import {
   NAlert,
@@ -12,6 +12,7 @@ import {
 } from "naive-ui";
 import AuthLayout from "../layouts/AuthLayout.vue";
 import { useSessionStore } from "../stores/session";
+import { registerSensitiveStore } from "../session/lifecycle";
 import { describeApiError } from "../utils/api-error";
 import { isValidNewPassword, passwordScalarLength } from "../utils/password";
 
@@ -63,6 +64,25 @@ const submit = async (): Promise<void> => {
     submitting.value = false;
   }
 };
+
+const resetSensitive = (): void => {
+  password.value = "";
+  confirmation.value = "";
+  errorMessage.value = "";
+  submitting.value = false;
+};
+
+let unregisterSensitiveStore: (() => void) | null = null;
+
+onMounted(() => {
+  unregisterSensitiveStore = registerSensitiveStore({ resetSensitive });
+});
+
+onBeforeUnmount(() => {
+  unregisterSensitiveStore?.();
+  unregisterSensitiveStore = null;
+  resetSensitive();
+});
 </script>
 
 <template>

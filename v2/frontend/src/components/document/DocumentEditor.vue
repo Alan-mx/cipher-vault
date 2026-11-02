@@ -124,6 +124,14 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleShortcut));
     >
       {{ documents.error.message }}
     </NAlert>
+    <NAlert
+      v-if="documents.refreshWarning"
+      class="save-error"
+      type="warning"
+      :show-icon="false"
+    >
+      {{ documents.refreshWarning }}
+    </NAlert>
 
     <div class="editor-toolbar">
       <NRadioGroup v-model:value="mode" size="small">

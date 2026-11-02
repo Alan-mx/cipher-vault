@@ -430,6 +430,7 @@ public sealed class VaultSessionManager : IAsyncDisposable
         CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
+        Task<VaultSessionStatus> lockTask;
         await operationGate.WaitAsync(cancellationToken);
         try
         {
@@ -447,15 +448,19 @@ public sealed class VaultSessionManager : IAsyncDisposable
                 newPassword,
                 cancellationToken);
             changed.KeyMaterial.Dispose();
+            if (PasswordChangeLockTransitionBarrierForTest is { } barrier)
+            {
+                await barrier();
+            }
+
+            lockTask = BeginLockTransition(VaultLockReason.UserRequested);
         }
         finally
         {
             operationGate.Release();
         }
 
-        return await LockCoreAsync(
-            VaultLockReason.UserRequested,
-            cancellationToken);
+        return await lockTask.WaitAsync(CancellationToken.None);
     }
 
     public async ValueTask TouchActivityAsync(
@@ -669,6 +674,8 @@ public sealed class VaultSessionManager : IAsyncDisposable
 
     internal Func<Task>? LockCleanupBarrierForTest { get; set; }
 
+    internal Func<Task>? PasswordChangeLockTransitionBarrierForTest { get; set; }
+
     internal VaultSessionState State =>
         (VaultSessionState)Volatile.Read(ref state);
 
@@ -762,38 +769,38 @@ public sealed class VaultSessionManager : IAsyncDisposable
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var task = BeginLockTransition(reason);
+        return await task.WaitAsync(cancellationToken);
+    }
 
-        Task<VaultSessionStatus> task;
-        VaultSession current;
+    private Task<VaultSessionStatus> BeginLockTransition(
+        VaultLockReason reason)
+    {
         lock (transitionSync)
         {
-            cancellationToken.ThrowIfCancellationRequested();
             switch ((VaultSessionState)state)
             {
                 case VaultSessionState.Locked:
-                    return CreateStatus();
+                    return Task.FromResult(CreateStatus());
                 case VaultSessionState.Locking:
-                    task = activeLockTask
-                        ?? throw new VaultException(
+                    return activeLockTask
+                           ?? throw new VaultException(
                             VaultErrorCode.VaultBusy,
                             "The Vault lock task is unavailable.");
-                    current = null!;
-                    break;
                 case VaultSessionState.Unlocked:
-                    current = session
-                        ?? throw new VaultException(
-                            VaultErrorCode.VaultBusy,
-                            "The unlocked Vault has no active session.");
+                    var current = session
+                                  ?? throw new VaultException(
+                                      VaultErrorCode.VaultBusy,
+                                      "The unlocked Vault has no active session.");
                     var completion = new TaskCompletionSource<VaultSessionStatus>(
                         TaskCreationOptions.RunContinuationsAsynchronously);
                     activeLockTask = completion.Task;
                     lockReason = reason;
                     state = (int)VaultSessionState.Locking;
-                    task = completion.Task;
                     _ = Task.Run(
                         () => RunLockCleanupAsync(current, completion),
                         CancellationToken.None);
-                    break;
+                    return completion.Task;
                 case VaultSessionState.Initializing:
                 case VaultSessionState.Unlocking:
                     throw new VaultException(
@@ -809,8 +816,6 @@ public sealed class VaultSessionManager : IAsyncDisposable
                         "The Vault requires a process restart.");
             }
         }
-
-        return await task.WaitAsync(cancellationToken);
     }
 
     private async Task RunLockCleanupAsync(

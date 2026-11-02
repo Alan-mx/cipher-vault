@@ -358,6 +358,14 @@ internal sealed class GitBackupCoordinator :
             inspection = await repository.InspectAsync(
                 options,
                 cancellationToken);
+            if (HasBlockingGitOperation(inspection))
+            {
+                await ScheduleRetryAsync(
+                    GitBackupErrorCodes.RepositoryBusy,
+                    cancellationToken);
+                return;
+            }
+
             var now = timeProvider.GetUtcNow().ToUniversalTime();
             var rotationRequired = IsRotationRequired(inspection, now);
             if (rotationRequired)
@@ -696,6 +704,10 @@ internal sealed class GitBackupCoordinator :
         return current.FirstCommitAtUtc is { } first
             && now - first >= options.RotationAge;
     }
+
+    private static bool HasBlockingGitOperation(
+        GitRepositoryInspection current) =>
+        current.HasMergeOrRebaseState || current.HasConflicts;
 
     internal static DateTimeOffset CalculateDueAt(
         GitBackupPersistedState current,

@@ -88,10 +88,11 @@ jobs:
       - name: Publish Windows
         run: |
           $root = Join-Path $env:GITHUB_WORKSPACE $env:CIPHERVAULT_ARTIFACT_ROOT
-          $publish = & .\v2\scripts\publish-phase8.ps1 `
+          & .\v2\scripts\publish-phase8.ps1 `
             -Rid win-x64 `
             -OutputRoot (Join-Path $root "work/windows") `
             -SkipFrontendBuild
+          $publish = Join-Path $root "work/windows/publish"
           & .\v2\scripts\package-phase8.ps1 `
             -Platform windows `
             -PublishRoot $publish `
@@ -135,10 +136,11 @@ jobs:
         shell: bash
         run: |
           root="$GITHUB_WORKSPACE/$CIPHERVAULT_ARTIFACT_ROOT"
-          publish_root="$(bash v2/scripts/publish-phase8.sh \
+          bash v2/scripts/publish-phase8.sh \
             --rid linux-x64 \
             --output-root "$root/work/linux" \
-            --skip-frontend-build)"
+            --skip-frontend-build
+          publish_root="$root/work/linux/publish"
           bash v2/scripts/package-phase8.sh \
             --platform linux \
             --publish-root "$publish_root" \

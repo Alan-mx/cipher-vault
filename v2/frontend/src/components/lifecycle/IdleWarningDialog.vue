@@ -7,6 +7,7 @@ import { useSessionStore } from "../../stores/session";
 const session = useSessionStore();
 const router = useRouter();
 const refreshing = ref(false);
+const locking = ref(false);
 
 const continueWorking = async (): Promise<void> => {
   refreshing.value = true;
@@ -20,8 +21,19 @@ const continueWorking = async (): Promise<void> => {
 };
 
 const lockNow = async (): Promise<void> => {
-  session.clearSensitive("idle_lock");
-  await router.replace({ name: "unlock" });
+  if (locking.value) {
+    return;
+  }
+
+  locking.value = true;
+  try {
+    await session.lock();
+    await router.replace({ name: "unlock" });
+  } catch {
+    await session.refreshStatus().catch(() => undefined);
+  } finally {
+    locking.value = false;
+  }
 };
 </script>
 
@@ -46,7 +58,7 @@ const lockNow = async (): Promise<void> => {
         锁定后当前页面中的正文、草稿和搜索结果会被清除。请先保存未完成的内容。
       </p>
       <div class="idle-actions">
-        <NButton @click="lockNow"> 立即锁定 </NButton>
+        <NButton :loading="locking" @click="lockNow"> 立即锁定 </NButton>
         <NButton type="primary" :loading="refreshing" @click="continueWorking">
           继续使用
         </NButton>

@@ -144,6 +144,35 @@ public sealed class GitBackupCoordinatorTests
             GitBackupCoordinator.CalculateDueAt(state, options));
     }
 
+    [Fact]
+    public async Task BlockedRepositoryDoesNotCreateOrCommitBackup()
+    {
+        await using var server = await ServerTestApplication.CreateAsync(
+            initializeVault: true,
+            unlockVault: true);
+        using var gitFixture = new GitFixture();
+        await gitFixture.InitializeAsync();
+        Directory.CreateDirectory(
+            Path.Combine(gitFixture.RepositoryPath, ".git", "rebase-merge"));
+        var coordinator = CreateCoordinator(
+            server,
+            gitFixture.Options,
+            new GitCommandRunner());
+
+        await coordinator.NotifyAsync(DocumentMutationKind.Update);
+        await coordinator.RunOnceForTestAsync(CancellationToken.None);
+
+        var status = await coordinator.GetStatusAsync();
+        Assert.Equal(GitBackupState.RetryWait, status.State);
+        Assert.Equal(GitBackupErrorCodes.RepositoryBusy, status.LastErrorCode);
+        Assert.True(status.Pending);
+        Assert.False(
+            File.Exists(
+                Path.Combine(
+                    gitFixture.RepositoryPath,
+                    "latest.cvbackup")));
+    }
+
     private static GitBackupCoordinator CreateCoordinator(
         ServerTestApplication server,
         GitBackupOptions options,

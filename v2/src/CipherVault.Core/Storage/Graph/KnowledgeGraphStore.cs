@@ -40,10 +40,19 @@ public static class KnowledgeGraphStore
         }
         var edges = await ReadEdgesAsync(context, cancellationToken);
         var adjacency = edges
-            .GroupBy(edge => edge.SourceDocumentId)
+            .SelectMany(edge => new[]
+            {
+                (Center: edge.SourceDocumentId, Neighbor: edge.TargetDocumentId),
+                (Center: edge.TargetDocumentId, Neighbor: edge.SourceDocumentId)
+            })
+            .GroupBy(pair => pair.Center)
             .ToDictionary(
                 group => group.Key,
-                group => group.Select(edge => edge.TargetDocumentId).ToArray());
+                group => group
+                    .Select(pair => pair.Neighbor)
+                    .Distinct()
+                    .OrderBy(id => id)
+                    .ToArray());
 
         var selected = new HashSet<Guid> { query.CenterDocumentId };
         var depths = new Dictionary<Guid, int>
@@ -198,7 +207,8 @@ public static class KnowledgeGraphStore
               AND source.deleted_at IS NULL
               AND target.deleted_at IS NULL
               AND source.revision = l.source_revision
-            GROUP BY source_document_id, target_document_id;
+            GROUP BY source_document_id, target_document_id
+            ORDER BY source_document_id, target_document_id;
             """;
         await using var reader = await read.Command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))

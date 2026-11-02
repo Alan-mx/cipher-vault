@@ -66,6 +66,20 @@ public sealed class McpToolsIntegrationTests
         });
         Assert.Single(search.GetProperty("hits").EnumerateArray());
 
+        var invalidSearchFilters = await CallToolAsync(
+            server.Client,
+            token,
+            "search_notes",
+            new
+            {
+                query = "Center",
+                hasBacklinks = true,
+                orphanOnly = true
+            });
+        Assert.Equal(
+            "invalid_input",
+            invalidSearchFilters.GetProperty("code").GetString());
+
         var tags = await CallToolAsync(server.Client, token, "list_tags", new
         {
             pageSize = 10

@@ -68,6 +68,57 @@ public sealed class GraphServiceTests
     }
 
     [Fact]
+    public async Task GraphIncludesIncomingAndOutgoingNeighbors()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+        var center = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "A",
+                null,
+                null,
+                VaultDocumentFormat.Markdown,
+                "[[B]]",
+                null),
+            actor);
+        _ = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "B",
+                null,
+                null,
+                VaultDocumentFormat.Markdown,
+                "B",
+                null),
+            actor);
+        _ = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "C",
+                null,
+                null,
+                VaultDocumentFormat.Markdown,
+                "[[A]]",
+                null),
+            actor);
+
+        var graph = await fixture.Graph.GetLocalGraphAsync(
+            new LocalGraphQuery(center.DocumentId, Depth: 1));
+
+        Assert.Equal(["A", "B", "C"], graph.Nodes.Select(node => node.Title));
+        Assert.Contains(
+            graph.Edges,
+            edge =>
+                edge.SourceDocumentId == center.DocumentId
+                && graph.Nodes.Single(node => node.Title == "B").DocumentId
+                    == edge.TargetDocumentId);
+        Assert.Contains(
+            graph.Edges,
+            edge =>
+                graph.Nodes.Single(node => node.Title == "C").DocumentId
+                    == edge.SourceDocumentId
+                && edge.TargetDocumentId == center.DocumentId);
+    }
+
+    [Fact]
     public async Task DeletedCenterReturnsNotFound()
     {
         await using var fixture = await VaultApplicationFixture.CreateAsync();

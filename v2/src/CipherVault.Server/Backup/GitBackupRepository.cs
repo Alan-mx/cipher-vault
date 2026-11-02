@@ -112,28 +112,9 @@ internal sealed class GitBackupRepository : IGitBackupRepository
             throw InvalidRepository();
         }
 
-        var mergeState = await HasAnyReferenceAsync(
+        var blockingState = await ReadBlockingStateAsync(
             repository,
-            ["MERGE_HEAD", "REBASE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"],
-            cancellationToken)
-            || await HasGitPathDirectoryAsync(
-                repository,
-                "rebase-merge",
-                cancellationToken)
-            || await HasGitPathDirectoryAsync(
-                repository,
-                "rebase-apply",
-                cancellationToken);
-        var conflicts = await runner.RunAsync(
-            repository,
-            ["diff", "--name-only", "--diff-filter=U", "-z"],
-            environment: null,
-            InspectTimeout,
             cancellationToken);
-        if (conflicts.TimedOut)
-        {
-            throw new GitCommandException(GitBackupErrorCodes.Timeout);
-        }
 
         var ignored = await runner.RunAsync(
             repository,
@@ -165,8 +146,8 @@ internal sealed class GitBackupRepository : IGitBackupRepository
             hasUnbornHead,
             objectBytes,
             firstCommitAtUtc,
-            mergeState,
-            conflicts.StandardOutput.Length > 0);
+            blockingState.HasMergeOrRebaseState,
+            blockingState.HasConflicts);
     }
 
     public async Task<GitSnapshotPublishResult> PublishSnapshotAsync(
@@ -176,6 +157,7 @@ internal sealed class GitBackupRepository : IGitBackupRepository
         CancellationToken cancellationToken)
     {
         var repository = RequireRepositoryPath(options);
+        await EnsureNoBlockingOperationAsync(repository, cancellationToken);
         var source = PathSafety.Canonicalize(
             sourceBackupPath,
             "Source backup");
@@ -188,6 +170,7 @@ internal sealed class GitBackupRepository : IGitBackupRepository
         var target = Path.Combine(repository, LatestBackupFileName);
         PathSafety.EnsureNoLinkComponents(target);
         await CopyVerifiedAsync(source, target, cancellationToken);
+        await EnsureNoBlockingOperationAsync(repository, cancellationToken);
 
         await RunRequiredAsync(
             repository,
@@ -365,6 +348,55 @@ internal sealed class GitBackupRepository : IGitBackupRepository
         }
 
         return false;
+    }
+
+    private async Task<GitBlockingState> ReadBlockingStateAsync(
+        string repository,
+        CancellationToken cancellationToken)
+    {
+        var mergeState = await HasAnyReferenceAsync(
+            repository,
+            ["MERGE_HEAD", "REBASE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"],
+            cancellationToken)
+            || await HasGitPathDirectoryAsync(
+                repository,
+                "rebase-merge",
+                cancellationToken)
+            || await HasGitPathDirectoryAsync(
+                repository,
+                "rebase-apply",
+                cancellationToken);
+        var conflicts = await runner.RunAsync(
+            repository,
+            ["diff", "--name-only", "--diff-filter=U", "-z"],
+            environment: null,
+            InspectTimeout,
+            cancellationToken);
+        if (conflicts.TimedOut)
+        {
+            throw new GitCommandException(GitBackupErrorCodes.Timeout);
+        }
+        if (conflicts.ExitCode != 0)
+        {
+            throw new GitCommandException(GitBackupErrorCodes.RepositoryInvalid);
+        }
+
+        return new GitBlockingState(
+            mergeState,
+            conflicts.StandardOutput.Length > 0);
+    }
+
+    private async Task EnsureNoBlockingOperationAsync(
+        string repository,
+        CancellationToken cancellationToken)
+    {
+        var state = await ReadBlockingStateAsync(
+            repository,
+            cancellationToken);
+        if (state.HasMergeOrRebaseState || state.HasConflicts)
+        {
+            throw new GitCommandException(GitBackupErrorCodes.RepositoryBusy);
+        }
     }
 
     private async Task<bool> HasGitPathDirectoryAsync(
@@ -577,4 +609,8 @@ internal sealed class GitBackupRepository : IGitBackupRepository
 
     private static GitCommandException InvalidRepository() =>
         new(GitBackupErrorCodes.RepositoryInvalid);
+
+    private sealed record GitBlockingState(
+        bool HasMergeOrRebaseState,
+        bool HasConflicts);
 }

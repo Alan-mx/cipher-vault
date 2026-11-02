@@ -1,15 +1,14 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref } from "vue";
 import { NAlert, NButton, NPopconfirm, NSpin, useMessage } from "naive-ui";
 import { useSettingsStore } from "../../stores/settings";
+import { registerSensitiveStore } from "../../session/lifecycle";
 import McpTokenDialog from "./McpTokenDialog.vue";
 
 const settings = useSettingsStore();
 const message = useMessage();
 const dialogOpen = ref(false);
 const rawToken = ref("");
-
-onMounted(() => settings.loadMcpStatus());
 
 const rotate = async (): Promise<void> => {
   try {
@@ -24,6 +23,24 @@ const rotate = async (): Promise<void> => {
 const clearToken = (): void => {
   rawToken.value = "";
 };
+
+const resetSensitive = (): void => {
+  dialogOpen.value = false;
+  clearToken();
+};
+
+let unregisterSensitiveStore: (() => void) | null = null;
+
+onMounted(() => {
+  unregisterSensitiveStore = registerSensitiveStore({ resetSensitive });
+  void settings.loadMcpStatus();
+});
+
+onBeforeUnmount(() => {
+  unregisterSensitiveStore?.();
+  unregisterSensitiveStore = null;
+  resetSensitive();
+});
 </script>
 
 <template>

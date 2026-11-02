@@ -89,6 +89,49 @@ public sealed class VaultSessionManagerLockTests
     }
 
     [Fact]
+    public async Task PasswordChangeStartsLockingBeforeReleasingOperationGate()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Manager.UnlockAsync(Password);
+        var transitionEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseTransition = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Manager.PasswordChangeLockTransitionBarrierForTest = () =>
+        {
+            transitionEntered.TrySetResult();
+            return releaseTransition.Task;
+        };
+
+        var changeTask = fixture.Manager.ChangePasswordAndLockAsync(
+            Password,
+            "new correct horse battery staple",
+            CancellationToken.None);
+        await transitionEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var operationExecuted = false;
+        var operation = Task.Run(async () =>
+            await fixture.Manager.ExecuteAsync(
+                (_, _) =>
+                {
+                    operationExecuted = true;
+                    return ValueTask.FromResult(1);
+                }));
+        await Task.Delay(100);
+        Assert.False(operation.IsCompleted);
+        Assert.False(operationExecuted);
+
+        releaseTransition.TrySetResult();
+        var locked = await changeTask.WaitAsync(TimeSpan.FromSeconds(5));
+        var operationException = await Assert.ThrowsAsync<VaultException>(
+            async () => await operation.WaitAsync(TimeSpan.FromSeconds(5)));
+
+        Assert.Equal(VaultSessionState.Locked, locked.State);
+        Assert.Equal(VaultErrorCode.VaultLocked, operationException.Code);
+        Assert.False(operationExecuted);
+    }
+
+    [Fact]
     public async Task LockFailsWhenActiveOperationIgnoresCancellation()
     {
         var timing = new VaultSessionTimingOptions(

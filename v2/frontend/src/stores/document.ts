@@ -53,8 +53,12 @@ export const useDocumentStore = defineStore("document", () => {
   const revisionCompareLoading = ref(false);
   const revisionCompareError = ref<ApiClientError | null>(null);
   const saveState = ref<"idle" | "saving" | "error">("idle");
+  const refreshWarning = ref<string | null>(null);
   const conflict = ref<SaveConflict | null>(null);
   let requestGeneration = 0;
+  let backlinkRequestGeneration = 0;
+  let mentionRequestGeneration = 0;
+  let revisionRequestGeneration = 0;
 
   const hasDocument = computed(() => documentId.value !== null);
 
@@ -83,6 +87,7 @@ export const useDocumentStore = defineStore("document", () => {
     const generation = ++requestGeneration;
     loading.value = true;
     error.value = null;
+    refreshWarning.value = null;
     try {
       const info = await documentApi.metadata(id);
       let offset = 0;
@@ -112,6 +117,9 @@ export const useDocumentStore = defineStore("document", () => {
       revisionCursor.value = null;
       selectedRevisionIds.value = [];
       revisionDiff.value = "";
+      saveState.value = "idle";
+      refreshWarning.value = null;
+      conflict.value = null;
     } catch (caught) {
       if (caught instanceof StaleSessionResponseError) {
         return;
@@ -195,6 +203,8 @@ export const useDocumentStore = defineStore("document", () => {
 
     saveState.value = "saving";
     error.value = null;
+    refreshWarning.value = null;
+    const documentGeneration = requestGeneration;
     try {
       const result = await documentApi.update(id, revision, {
         title: current.title,
@@ -203,39 +213,70 @@ export const useDocumentStore = defineStore("document", () => {
         ...(info.format === "txt" ? { tags: current.tags } : {}),
         updateBacklinks: false,
       });
-      const latestMetadata = await documentApi.metadata(id);
-      const latestMap = await documentApi.map(id);
-      metadata.value = latestMetadata;
-      loadedRevision.value = result.revision;
-      map.value = latestMap;
-      savedDraft.value = copyDraft(current);
-      draft.value = copyDraft(current);
-      dirty.value = false;
-      conflict.value = null;
-      saveState.value = "idle";
+      if (documentGeneration === requestGeneration && documentId.value === id) {
+        metadata.value = {
+          ...info,
+          title: current.title,
+          virtualPath: result.virtualPath,
+          revision: result.revision,
+          tags: [...current.tags],
+          updatedAt: result.committedAt,
+        };
+        loadedRevision.value = result.revision;
+        savedDraft.value = copyDraft(current);
+        draft.value = copyDraft(current);
+        dirty.value = false;
+        conflict.value = null;
+        saveState.value = "idle";
+      }
+
+      try {
+        const [latestMetadata, latestMap] = await Promise.all([
+          documentApi.metadata(id),
+          documentApi.map(id),
+        ]);
+        if (
+          documentGeneration === requestGeneration &&
+          documentId.value === id &&
+          loadedRevision.value === result.revision
+        ) {
+          metadata.value = latestMetadata;
+          map.value = latestMap;
+        }
+      } catch (caught) {
+        if (
+          documentGeneration === requestGeneration &&
+          documentId.value === id &&
+          !(caught instanceof StaleSessionResponseError)
+        ) {
+          refreshWarning.value = "文档已保存，但最新文档信息暂时无法刷新。";
+        }
+      }
       return result;
     } catch (caught) {
-      if (
-        caught instanceof ApiClientError &&
-        caught.code === "revision_conflict"
-      ) {
-        const value = caught.details.currentRevision;
-        conflict.value = {
-          currentRevision: typeof value === "number" ? value : 0,
-          mode: "notice",
-          latestMetadata: null,
-          latest: null,
-        };
-      } else {
-        error.value =
-          caught instanceof ApiClientError
-            ? caught
-            : new ApiClientError(0, {
-                code: "network_error",
-                message: "保存失败。",
-              });
+      if (documentGeneration === requestGeneration && documentId.value === id) {
+        if (
+          caught instanceof ApiClientError &&
+          caught.code === "revision_conflict"
+        ) {
+          const value = caught.details.currentRevision;
+          conflict.value = {
+            currentRevision: typeof value === "number" ? value : 0,
+            mode: "notice",
+            latestMetadata: null,
+            latest: null,
+          };
+        } else {
+          error.value =
+            caught instanceof ApiClientError
+              ? caught
+              : new ApiClientError(0, {
+                  code: "network_error",
+                  message: "保存失败。",
+                });
+        }
+        saveState.value = "error";
       }
-      saveState.value = "error";
       throw caught;
     }
   };
@@ -313,10 +354,19 @@ export const useDocumentStore = defineStore("document", () => {
     if (!id || (append && !backlinkCursor.value)) {
       return;
     }
+    const generation = ++backlinkRequestGeneration;
+    const documentGeneration = requestGeneration;
     const page = await documentApi.backlinks(
       id,
       append ? (backlinkCursor.value ?? undefined) : undefined,
     );
+    if (
+      generation !== backlinkRequestGeneration ||
+      documentGeneration !== requestGeneration ||
+      documentId.value !== id
+    ) {
+      return;
+    }
     backlinks.value = append ? [...backlinks.value, ...page.items] : page.items;
     backlinkCursor.value = page.nextCursor ?? null;
   };
@@ -326,10 +376,19 @@ export const useDocumentStore = defineStore("document", () => {
     if (!id || (append && !mentionCursor.value)) {
       return;
     }
+    const generation = ++mentionRequestGeneration;
+    const documentGeneration = requestGeneration;
     const page = await documentApi.unlinkedMentions(
       id,
       append ? (mentionCursor.value ?? undefined) : undefined,
     );
+    if (
+      generation !== mentionRequestGeneration ||
+      documentGeneration !== requestGeneration ||
+      documentId.value !== id
+    ) {
+      return;
+    }
     mentions.value = append ? [...mentions.value, ...page.items] : page.items;
     mentionCursor.value = page.nextCursor ?? null;
   };
@@ -339,10 +398,19 @@ export const useDocumentStore = defineStore("document", () => {
     if (!id || (append && !revisionCursor.value)) {
       return;
     }
+    const generation = ++revisionRequestGeneration;
+    const documentGeneration = requestGeneration;
     const page = await revisionApi.list(
       id,
       append ? (revisionCursor.value ?? undefined) : undefined,
     );
+    if (
+      generation !== revisionRequestGeneration ||
+      documentGeneration !== requestGeneration ||
+      documentId.value !== id
+    ) {
+      return;
+    }
     revisions.value = append ? [...revisions.value, ...page.items] : page.items;
     revisionCursor.value = page.nextCursor ?? null;
   };
@@ -425,6 +493,9 @@ export const useDocumentStore = defineStore("document", () => {
 
   const resetSensitive = (): void => {
     requestGeneration++;
+    backlinkRequestGeneration++;
+    mentionRequestGeneration++;
+    revisionRequestGeneration++;
     documentId.value = null;
     metadata.value = null;
     loadedRevision.value = null;
@@ -446,6 +517,7 @@ export const useDocumentStore = defineStore("document", () => {
     revisionCompareLoading.value = false;
     revisionCompareError.value = null;
     saveState.value = "idle";
+    refreshWarning.value = null;
     conflict.value = null;
   };
 
@@ -474,6 +546,7 @@ export const useDocumentStore = defineStore("document", () => {
     mentionCursor,
     revisionCursor,
     saveState,
+    refreshWarning,
     conflict,
     hasDocument,
     open,

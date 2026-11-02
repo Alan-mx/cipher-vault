@@ -146,6 +146,30 @@ public sealed class GitBackupRepositoryTests
         Assert.Equal(GitBackupErrorCodes.NonFastForward, push.ErrorCode);
     }
 
+    [Fact]
+    public async Task PublishRejectsRepositoryWithInProgressGitOperation()
+    {
+        using var fixture = new Fixture();
+        await fixture.InitializeBareRemoteAsync();
+        await fixture.InitializeLocalRepositoryAsync();
+        Directory.CreateDirectory(
+            Path.Combine(fixture.RepositoryPath, ".git", "rebase-merge"));
+        var source = Path.Combine(fixture.Root, "snapshot.cvbackup");
+        await File.WriteAllBytesAsync(source, RandomNumberGenerator.GetBytes(256));
+        var repository = new GitBackupRepository(fixture.Git);
+
+        var exception = await Assert.ThrowsAsync<GitCommandException>(
+            () => repository.PublishSnapshotAsync(
+                fixture.CreateOptions(),
+                source,
+                DateTimeOffset.Parse("2026-11-01T12:00:00Z"),
+                CancellationToken.None));
+
+        Assert.Equal(GitBackupErrorCodes.RepositoryBusy, exception.Code);
+        Assert.False(
+            File.Exists(Path.Combine(fixture.RepositoryPath, "latest.cvbackup")));
+    }
+
     private sealed class Fixture : IDisposable
     {
         public Fixture()

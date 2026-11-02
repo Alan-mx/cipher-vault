@@ -199,6 +199,10 @@ jobs:
           test -f v2/scripts/publish-phase8.sh
           test -f v2/scripts/package-phase8.ps1
           test -f v2/scripts/package-phase8.sh
+          grep -Fq -- '$publish = Join-Path $root "work/windows/publish"' .github/workflows/phase8-release.yml
+          grep -Fq -- 'publish_root="$root/work/linux/publish"' .github/workflows/phase8-release.yml
+          ! grep -Fq -- 'publish_root="$(bash v2/scripts/publish-phase8.sh' .github/workflows/phase8-release.yml
+          ! grep -Fq -- '$publish = & .\v2\scripts\publish-phase8.ps1' .github/workflows/phase8-release.yml
       - name: Reject tracked sensitive artifacts
         shell: bash
         run: |

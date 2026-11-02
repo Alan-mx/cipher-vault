@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import {
   NAlert,
@@ -14,6 +14,7 @@ import BackupPanel from "../components/settings/BackupPanel.vue";
 import PlaintextExportPanel from "../components/settings/PlaintextExportPanel.vue";
 import { useSessionStore } from "../stores/session";
 import { useSettingsStore } from "../stores/settings";
+import { registerSensitiveStore } from "../session/lifecycle";
 import { describeApiError } from "../utils/api-error";
 import { isValidNewPassword } from "../utils/password";
 
@@ -56,8 +57,24 @@ const changePassword = async (): Promise<void> => {
   }
 };
 
+const resetSensitive = (): void => {
+  oldPassword.value = "";
+  newPassword.value = "";
+  confirmation.value = "";
+  passwordError.value = "";
+};
+
+let unregisterSensitiveStore: (() => void) | null = null;
+
 onMounted(() => {
+  unregisterSensitiveStore = registerSensitiveStore({ resetSensitive });
   void settings.loadVersion();
+});
+
+onBeforeUnmount(() => {
+  unregisterSensitiveStore?.();
+  unregisterSensitiveStore = null;
+  resetSensitive();
 });
 </script>
 
