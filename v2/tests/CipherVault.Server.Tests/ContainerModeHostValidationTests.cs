@@ -202,6 +202,87 @@ public sealed class ContainerModeHostValidationTests
             ordinaryApi.Context.Response.StatusCode);
     }
 
+    [Fact]
+    public async Task TailscaleMagicDnsHostAndOriginAreAccepted()
+    {
+        var options = CreateOptions(
+            listenPort: 43127,
+            allowedPorts: [43127],
+            allowedHosts:
+            [
+                "127.0.0.1",
+                "localhost",
+                "oneplus6.tail8c2fc6.ts.net"
+            ]);
+        var result = await InvokeAsync(
+            options,
+            new HostString("oneplus6.tail8c2fc6.ts.net", 43127),
+            "http://oneplus6.tail8c2fc6.ts.net:43127");
+
+        Assert.True(result.Called);
+        Assert.Equal(StatusCodes.Status200OK, result.Context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task TailscaleIPv4HostAndOriginAreAccepted()
+    {
+        var options = CreateOptions(
+            listenPort: 43127,
+            allowedPorts: [43127],
+            allowedHosts:
+            [
+                "127.0.0.1",
+                "localhost",
+                "100.123.123.123"
+            ]);
+        var result = await InvokeAsync(
+            options,
+            new HostString("100.123.123.123", 43127),
+            "http://100.123.123.123:43127");
+
+        Assert.True(result.Called);
+        Assert.Equal(StatusCodes.Status200OK, result.Context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task TailscaleIPv6HostAndOriginAreAccepted()
+    {
+        var options = CreateOptions(
+            listenPort: 43127,
+            allowedPorts: [43127],
+            allowedHosts:
+            [
+                "127.0.0.1",
+                "localhost",
+                "fd7a:115c:a1e0::e634:ff1c"
+            ]);
+        var result = await InvokeAsync(
+            options,
+            HostString.FromUriComponent(
+                "[fd7a:115c:a1e0::e634:ff1c]:43127"),
+            "http://[fd7a:115c:a1e0::e634:ff1c]:43127");
+
+        Assert.True(result.Called);
+        Assert.Equal(StatusCodes.Status200OK, result.Context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task UnconfiguredTailscaleHostIsRejected()
+    {
+        var options = CreateOptions(
+            listenPort: 43127,
+            allowedPorts: [43127]);
+        var result = await InvokeAsync(
+            options,
+            new HostString("oneplus6.tail8c2fc6.ts.net", 43127),
+            "http://oneplus6.tail8c2fc6.ts.net:43127");
+
+        Assert.False(result.Called);
+        Assert.Equal(
+            StatusCodes.Status403Forbidden,
+            result.Context.Response.StatusCode);
+    }
+
     [Theory]
     [InlineData("localhost.")]
     [InlineData("")]
@@ -224,7 +305,8 @@ public sealed class ContainerModeHostValidationTests
         bool containerMode = false,
         int listenPort = 43127,
         IReadOnlyList<int>? allowedPorts = null,
-        IReadOnlyList<Uri>? developmentOrigins = null)
+        IReadOnlyList<Uri>? developmentOrigins = null,
+        IReadOnlyList<string>? allowedHosts = null)
     {
         var parent = Path.Combine(
             Path.GetTempPath(),
@@ -239,7 +321,7 @@ public sealed class ContainerModeHostValidationTests
             TimeSpan.FromMinutes(10),
             ServerOptions.DefaultMaxRequestBodyBytes,
             containerMode,
-            allowedHosts: ["127.0.0.1", "localhost"],
+            allowedHosts: allowedHosts ?? ["127.0.0.1", "localhost"],
             developmentOrigins: developmentOrigins,
             allowedHttpPorts: allowedPorts);
     }

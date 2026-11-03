@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using Microsoft.Extensions.Configuration;
 
 namespace CipherVault.Server.Hosting;
@@ -186,16 +187,113 @@ public sealed record ServerOptions
                 ',',
                 StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         var result = new List<string>();
-        foreach (var host in values.Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (var candidate in values)
         {
-            if (host is not ("127.0.0.1" or "localhost"))
+            if (!TryNormalizeAllowedHost(candidate, out var normalized))
             {
                 throw InvalidConfiguration(
-                    "Phase 5 allows only loopback host names.");
+                    "CIPHERVAULT_ALLOWED_HOSTS contains a host outside the "
+                    + "loopback or Tailscale ranges.");
             }
-            result.Add(host);
+            if (!result.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+            {
+                result.Add(normalized);
+            }
         }
-        return result;
+        if (result.Count == 0)
+        {
+            throw InvalidConfiguration(
+                "CIPHERVAULT_ALLOWED_HOSTS must contain at least one host.");
+        }
+        return result.AsReadOnly();
+    }
+
+    private static bool TryNormalizeAllowedHost(
+        string value,
+        out string normalized)
+    {
+        normalized = string.Empty;
+        if (string.IsNullOrWhiteSpace(value)
+            || !string.Equals(value, value.Trim(), StringComparison.Ordinal)
+            || value.EndsWith(".", StringComparison.Ordinal))
+        {
+            return false;
+        }
+        if (string.Equals(value, "localhost", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = "localhost";
+            return true;
+        }
+        if (IPAddress.TryParse(value, out var address))
+        {
+            if (address.Equals(IPAddress.Loopback)
+                || IsTailscaleIPv4(address)
+                || IsTailscaleIPv6(address))
+            {
+                normalized = address.ToString().ToLowerInvariant();
+                return true;
+            }
+            return false;
+        }
+        if (!IsTailscaleDnsName(value))
+        {
+            return false;
+        }
+        normalized = value.ToLowerInvariant();
+        return true;
+    }
+
+    private static bool IsTailscaleDnsName(string host)
+    {
+        if (host.Length > 253
+            || !host.EndsWith(".ts.net", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+        var labels = host.Split('.');
+        if (labels.Length < 4)
+        {
+            return false;
+        }
+        foreach (var label in labels)
+        {
+            if (label.Length is < 1 or > 63
+                || label[0] == '-'
+                || label[^1] == '-'
+                || label.Any(character =>
+                    !char.IsAsciiLetterOrDigit(character)
+                    && character != '-'))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static bool IsTailscaleIPv4(IPAddress address)
+    {
+        var bytes = address.GetAddressBytes();
+        return address.AddressFamily
+                == System.Net.Sockets.AddressFamily.InterNetwork
+            && bytes[0] == 100
+            && (bytes[1] & 0xC0) == 0x40;
+    }
+
+    private static bool IsTailscaleIPv6(IPAddress address)
+    {
+        if (address.AddressFamily
+                != System.Net.Sockets.AddressFamily.InterNetworkV6
+            || address.ScopeId != 0)
+        {
+            return false;
+        }
+        var bytes = address.GetAddressBytes();
+        return bytes[0] == 0xFD
+            && bytes[1] == 0x7A
+            && bytes[2] == 0x11
+            && bytes[3] == 0x5C
+            && bytes[4] == 0xA1
+            && bytes[5] == 0xE0;
     }
 
     private static IReadOnlyList<Uri> ParseDevelopmentOrigins(

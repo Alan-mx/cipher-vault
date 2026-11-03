@@ -595,7 +595,7 @@ public sealed class ServerOptionsTests
     }
 
     [Fact]
-    public void NonLoopbackAllowedHostIsRejected()
+    public void TailscaleAllowedHostsAreNormalized()
     {
         var parent = Path.Combine(
             Path.GetTempPath(),
@@ -605,7 +605,52 @@ public sealed class ServerOptionsTests
             {
                 ["CIPHERVAULT_DATA_DIR"] = Path.Combine(parent, "data"),
                 ["CIPHERVAULT_CONFIG_DIR"] = Path.Combine(parent, "config"),
-                ["CIPHERVAULT_ALLOWED_HOSTS"] = "example.com"
+                ["CIPHERVAULT_ALLOWED_HOSTS"] =
+                    "127.0.0.1, LOCALHOST, "
+                    + "OnePlus6.Tail8C2FC6.ts.net, "
+                    + "100.123.123.123, "
+                    + "FD7A:115C:A1E0:0:0:0:E634:FF1C, "
+                    + "100.123.123.123"
+            })
+            .Build();
+
+        var options = ServerOptions.Load(configuration);
+
+        Assert.Equal(
+            [
+                "127.0.0.1",
+                "localhost",
+                "oneplus6.tail8c2fc6.ts.net",
+                "100.123.123.123",
+                "fd7a:115c:a1e0::e634:ff1c"
+            ],
+            options.AllowedHosts);
+    }
+
+    [Theory]
+    [InlineData("example.com")]
+    [InlineData("*.ts.net")]
+    [InlineData("foo.ts.net")]
+    [InlineData("oneplus6.tail8c2fc6.ts.net.")]
+    [InlineData("100.63.255.255")]
+    [InlineData("100.128.0.1")]
+    [InlineData("fd00::1")]
+    [InlineData("::ffff:100.123.123.123")]
+    [InlineData("http://oneplus6.tail8c2fc6.ts.net")]
+    [InlineData("oneplus6.tail8c2fc6.ts.net:43127")]
+    [InlineData("oneplus6/other.ts.net")]
+    [InlineData("127.0.0.1,example.com")]
+    public void InvalidAllowedHostsFailClosed(string hosts)
+    {
+        var parent = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-host-invalid-{Guid.NewGuid():N}");
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["CIPHERVAULT_DATA_DIR"] = Path.Combine(parent, "data"),
+                ["CIPHERVAULT_CONFIG_DIR"] = Path.Combine(parent, "config"),
+                ["CIPHERVAULT_ALLOWED_HOSTS"] = hosts
             })
             .Build();
 

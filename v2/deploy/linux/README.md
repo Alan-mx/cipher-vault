@@ -70,6 +70,130 @@ The validated OnePlus 6T Ubuntu 26.04.1 device has `libbrotli1` installed, and
 the ARM64 archive's Server and SQLite native library report no missing `ldd`
 dependencies. Keep the full list above as the release dependency checklist.
 
+## Tailscale access
+
+The default service remains loopback-only. To expose CipherVault to the local
+tailnet through Tailscale Serve:
+
+```bash
+sudo ./enable-tailscale-serve.sh
+```
+
+The command reads the node's MagicDNS name and Tailscale IPv4/IPv6 addresses,
+writes an exact Host allowlist to a systemd drop-in, and enables Tailscale Serve
+TCP forwarding on port 43127. All of these URLs are available inside the tailnet:
+
+```text
+http://<magic-dns-name>:43127
+http://<tailscale-ipv4>:43127
+http://[<tailscale-ipv6>]:43127
+```
+
+It does not enable Tailscale Funnel, bind CipherVault to `0.0.0.0`, or replace
+Vault Password and MCP Token authentication.
+
+Check the Serve configuration:
+
+```bash
+tailscale serve status
+```
+
+Disable tailnet access and return to loopback-only mode:
+
+```bash
+sudo ./enable-tailscale-serve.sh --disable
+```
+
+## SSH tunnel access
+
+CipherVault remains bound to `127.0.0.1:43127`. An SSH tunnel lets a computer
+reach that loopback service without exposing CipherVault to the LAN or USB
+network directly.
+
+The local forwarded port must be `43127`. Using another local port changes the
+HTTP Host header and will be rejected by the Host/Origin allowlist.
+
+### Same LAN
+
+Find the phone's LAN address on the phone:
+
+```bash
+ip -4 addr show wlan0
+```
+
+From a computer on the same reachable LAN:
+
+```powershell
+ssh -N -L 43127:127.0.0.1:43127 orbital@<phone-lan-ip>
+```
+
+Then open:
+
+```text
+http://127.0.0.1:43127
+```
+
+An SSH config entry can keep the forwarding rule:
+
+```text
+Host oneplus6-lan
+    HostName <phone-lan-ip>
+    User orbital
+    LocalForward 43127 127.0.0.1:43127
+```
+
+```powershell
+ssh -N oneplus6-lan
+```
+
+The phone and computer must be in the same reachable subnet, or routing and
+firewall rules must explicitly allow computer access to the phone's SSH port.
+
+### USB
+
+Connecting a USB cable by itself does not expose the CipherVault web server.
+Use one of these methods:
+
+#### ADB port forwarding
+
+The phone must have USB debugging enabled and the computer must have ADB
+installed and authorized:
+
+```powershell
+adb devices -l
+adb forward tcp:43127 tcp:43127
+```
+
+Then open:
+
+```text
+http://127.0.0.1:43127
+```
+
+Remove the forwarding rule when finished:
+
+```powershell
+adb forward --remove tcp:43127
+```
+
+#### USB network plus SSH
+
+If USB networking is configured and the computer can reach SSH on the phone's
+USB-network address:
+
+```powershell
+ssh -N -L 43127:127.0.0.1:43127 orbital@<phone-usb-ip>
+```
+
+Then open:
+
+```text
+http://127.0.0.1:43127
+```
+
+MTP/storage mode does not provide access to the web server. Both USB methods
+still use the existing Vault Password and MCP Token authentication.
+
 ## Foreground
 
 ```bash

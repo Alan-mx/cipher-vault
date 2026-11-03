@@ -113,7 +113,10 @@ cp -a "${publish_root}/." "${wrapper}/publish/"
 cp -a "${v2_root}/deploy/linux/." "$wrapper/"
 find "${wrapper}/publish" -type f -exec chmod 0644 {} +
 chmod 0755 "${wrapper}/publish/CipherVault.Server"
-chmod 0755 "${wrapper}/install-systemd.sh" "${wrapper}/uninstall-systemd.sh"
+chmod 0755 \
+    "${wrapper}/install-systemd.sh" \
+    "${wrapper}/uninstall-systemd.sh" \
+    "${wrapper}/enable-tailscale-serve.sh"
 chmod 0644 "${wrapper}/cipher-vault.service" "${wrapper}/README.md"
 
 if find "$wrapper" -type f \

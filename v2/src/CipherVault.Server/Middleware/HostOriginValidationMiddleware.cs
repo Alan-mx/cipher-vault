@@ -80,7 +80,7 @@ public sealed class HostOriginValidationMiddleware
                 return false;
             }
 
-            var hostName = uri.Host;
+            var hostName = uri.DnsSafeHost;
             var port = uri.IsDefaultPort ? 80 : uri.Port;
             return !string.IsNullOrWhiteSpace(hostName)
                 && !hostName.EndsWith(".", StringComparison.Ordinal)
@@ -112,7 +112,7 @@ public sealed class HostOriginValidationMiddleware
             return false;
         }
 
-        var host = uri.Host;
+        var host = uri.DnsSafeHost;
         var port = uri.IsDefaultPort ? 80 : uri.Port;
         if (string.IsNullOrWhiteSpace(host)
             || host.EndsWith(".", StringComparison.Ordinal)

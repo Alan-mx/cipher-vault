@@ -259,6 +259,10 @@ jobs:
           test -f v2/scripts/publish-phase8.sh
           test -f v2/scripts/package-phase8.ps1
           test -f v2/scripts/package-phase8.sh
+          test -f v2/deploy/linux/enable-tailscale-serve.sh
+          bash -n v2/deploy/linux/enable-tailscale-serve.sh
+          grep -Fq -- 'tailscale serve' v2/deploy/linux/enable-tailscale-serve.sh
+          ! grep -Fq -- 'tailscale funnel' v2/deploy/linux/enable-tailscale-serve.sh
           grep -Fq -- '$publish = Join-Path $root "work/windows/publish"' .github/workflows/phase8-release.yml
           grep -Fq -- 'publish_root="$root/work/linux/publish"' .github/workflows/phase8-release.yml
           grep -Fq -- 'dotnet-linux-arm64:' .github/workflows/ci.yml
