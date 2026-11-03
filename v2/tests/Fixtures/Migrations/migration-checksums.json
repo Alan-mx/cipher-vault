@@ -1,0 +1,31 @@
+{
+  "format": "cipher-vault-migration-checksums",
+  "formatVersion": 1,
+  "migrations": [
+    {
+      "version": 1,
+      "name": "initial",
+      "sha256": "b0978acddba58dbd167556ec739456cdf76acb2f866ed04a4f653cc8cc9687ff"
+    },
+    {
+      "version": 2,
+      "name": "documents",
+      "sha256": "1568de5cb2899bf7ef6e0506e543fdfa67e2480d0102da0cb30bd53a0c29511c"
+    },
+    {
+      "version": 3,
+      "name": "backup_audit_actions",
+      "sha256": "fc94e1c0f2784f7387979815778cb42cf04b5caf4a550557480e281b1438c42e"
+    },
+    {
+      "version": 4,
+      "name": "plaintext_export_audit",
+      "sha256": "b06c0ca2bcc04591007291639af7f244b18472aca56edbde2073666429387eb0"
+    },
+    {
+      "version": 5,
+      "name": "plaintext_export_audit_phase",
+      "sha256": "dbaa9573aebb09e0b4c3d08613f916bf34c57029e0ccc59545830e0008ddf886"
+    }
+  ]
+}

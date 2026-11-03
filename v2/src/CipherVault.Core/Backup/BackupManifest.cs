@@ -105,7 +105,7 @@ public sealed record BackupVerificationRequest(
     string PackagePath,
     string WorkingDirectory,
     BackupVerificationCredential Credential,
-    bool RequireCurrentSchema);
+    BackupSchemaPolicy SchemaPolicy);
 
 public sealed record VerifiedBackupCacheEntry(
     RegularFileIdentity Identity,
@@ -127,4 +127,13 @@ public sealed record RestoreVerificationResult(
     int SchemaVersion,
     int FormatVersion,
     long DatabaseBytes,
-    long KeyEnvelopeBytes);
+    long KeyEnvelopeBytes,
+    int SourceSchemaVersion,
+    int CurrentSchemaVersion,
+    bool SchemaMigrationPending,
+    string? MigrationTrigger);
+
+public static class BackupMigrationTriggers
+{
+    public const string FirstUnlock = "first_unlock";
+}

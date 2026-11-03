@@ -20,4 +20,10 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\CipherVault.Core\CipherVault.Core.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\Fixtures\Migrations\**\*"
+             Link="Fixtures\Migrations\%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

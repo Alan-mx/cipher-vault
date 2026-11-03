@@ -76,9 +76,12 @@ internal sealed class InteractiveConsoleTerminal : IInteractiveConsole
 
     public void WriteSafeSuccess(RestoreVerificationResult result)
     {
-        Console.Out.WriteLine(
-            $"restore_completed formatVersion={result.FormatVersion} schemaVersion={result.SchemaVersion} databaseBytes={result.DatabaseBytes} keyEnvelopeBytes={result.KeyEnvelopeBytes}");
+        Console.Out.WriteLine(FormatSafeSuccess(result));
     }
+
+    internal static string FormatSafeSuccess(
+        RestoreVerificationResult result) =>
+        $"restore_completed formatVersion={result.FormatVersion} schemaVersion={result.SchemaVersion} sourceSchemaVersion={result.SourceSchemaVersion} currentSchemaVersion={result.CurrentSchemaVersion} schemaMigrationPending={result.SchemaMigrationPending.ToString().ToLowerInvariant()} migrationTrigger={result.MigrationTrigger ?? "null"} databaseBytes={result.DatabaseBytes} keyEnvelopeBytes={result.KeyEnvelopeBytes}";
 
     [SupportedOSPlatform("windows")]
     private static class WindowsConsole

@@ -89,6 +89,171 @@ public sealed class DatabaseSchemaTests
     }
 
     [Fact]
+    public async Task InconsistentSchemaVersionIsRejectedBeforePendingMigration()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-inconsistent-schema-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        VaultFilePermissions.ProtectDirectory(root);
+        using var material = new VaultKeyMaterial(
+            Guid.NewGuid(),
+            RandomNumberGenerator.GetBytes(32),
+            RandomNumberGenerator.GetBytes(32));
+
+        try
+        {
+            await using var session =
+                await SqliteMcDatabaseFactory.OpenUninitializedSessionAsync(
+                    root,
+                    material,
+                    create: true);
+            var migrations = DatabaseMigrationCatalog.Load();
+            _ = await DatabaseInitializer.EnsureSchemaAsync(
+                session.Connection,
+                material.VaultId,
+                DateTimeOffset.UtcNow,
+                migrations,
+                CancellationToken.None);
+            await SqliteMcDatabaseFactory.ExecuteNonQueryAsync(
+                session.Connection,
+                "UPDATE vault_meta SET value = '6' WHERE key = 'schema_version';",
+                CancellationToken.None);
+
+            var migration6 = new DatabaseMigration(
+                6,
+                "must_not_apply",
+                "CREATE TABLE must_not_apply(id INTEGER PRIMARY KEY) STRICT;",
+                new string('a', 64));
+            var exception = await Assert.ThrowsAsync<VaultException>(() =>
+                DatabaseInitializer.EnsureSchemaAsync(
+                    session.Connection,
+                    material.VaultId,
+                    DateTimeOffset.UtcNow,
+                    [.. migrations, migration6],
+                    CancellationToken.None));
+
+            Assert.Equal(VaultErrorCode.CorruptVault, exception.Code);
+            using var command = session.Connection.CreateCommand();
+            command.CommandText = """
+                SELECT count(*) FROM schema_migrations WHERE version = 6;
+                """;
+            Assert.Equal(0, Convert.ToInt32(await command.ExecuteScalarAsync()));
+            command.CommandText = """
+                SELECT count(*) FROM sqlite_master
+                WHERE name = 'must_not_apply';
+                """;
+            Assert.Equal(0, Convert.ToInt32(await command.ExecuteScalarAsync()));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task MetadataWithoutMigrationHistoryIsRejected()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-missing-history-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        VaultFilePermissions.ProtectDirectory(root);
+        using var material = new VaultKeyMaterial(
+            Guid.NewGuid(),
+            RandomNumberGenerator.GetBytes(32),
+            RandomNumberGenerator.GetBytes(32));
+
+        try
+        {
+            await using var session =
+                await SqliteMcDatabaseFactory.OpenUninitializedSessionAsync(
+                    root,
+                    material,
+                    create: true);
+            await SqliteMcDatabaseFactory.ExecuteNonQueryAsync(
+                session.Connection,
+                """
+                CREATE TABLE vault_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                ) STRICT;
+                INSERT INTO vault_meta(key, value)
+                VALUES ('schema_version', '5');
+                """,
+                CancellationToken.None);
+
+            var exception = await Assert.ThrowsAsync<VaultException>(() =>
+                DatabaseInitializer.EnsureSchemaAsync(
+                    session.Connection,
+                    material.VaultId,
+                    DateTimeOffset.UtcNow,
+                    DatabaseMigrationCatalog.Load(),
+                    CancellationToken.None));
+
+            Assert.Equal(VaultErrorCode.CorruptVault, exception.Code);
+            using var command = session.Connection.CreateCommand();
+            command.CommandText = """
+                SELECT count(*) FROM sqlite_master
+                WHERE name = 'schema_migrations';
+                """;
+            Assert.Equal(0, Convert.ToInt32(await command.ExecuteScalarAsync()));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    public async Task LocalVaultSchemasUpgradeToCurrentWithoutBackupBaseline(
+        int initialVersion)
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-local-upgrade-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        VaultFilePermissions.ProtectDirectory(root);
+        using var material = new VaultKeyMaterial(
+            Guid.NewGuid(),
+            RandomNumberGenerator.GetBytes(32),
+            RandomNumberGenerator.GetBytes(32));
+
+        try
+        {
+            await using var session =
+                await SqliteMcDatabaseFactory.OpenUninitializedSessionAsync(
+                    root,
+                    material,
+                    create: true);
+            var migrations = DatabaseMigrationCatalog.Load();
+            _ = await DatabaseInitializer.EnsureSchemaAsync(
+                session.Connection,
+                material.VaultId,
+                DateTimeOffset.UtcNow,
+                migrations.Take(initialVersion).ToArray(),
+                CancellationToken.None);
+
+            var upgraded = await DatabaseInitializer.EnsureSchemaAsync(
+                session.Connection,
+                material.VaultId,
+                DateTimeOffset.UtcNow,
+                migrations,
+                CancellationToken.None);
+
+            Assert.Equal(5, upgraded.SchemaVersion);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task FailedMigrationRollsBackAllSchemaChanges()
     {
         var root = Path.Combine(Path.GetTempPath(), $"cipher-vault-migration-{Guid.NewGuid():N}");
@@ -185,6 +350,115 @@ public sealed class DatabaseSchemaTests
             Assert.Equal(7, Convert.ToInt32(await command.ExecuteScalarAsync()));
             command.CommandText = "SELECT count(*) FROM schema_migrations;";
             Assert.Equal(5, Convert.ToInt32(await command.ExecuteScalarAsync()));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task MigrationFiveToSixPreservesDataAndRollsBackFailure()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-five-to-six-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        VaultFilePermissions.ProtectDirectory(root);
+        using var material = new VaultKeyMaterial(
+            Guid.NewGuid(),
+            RandomNumberGenerator.GetBytes(32),
+            RandomNumberGenerator.GetBytes(32));
+        var migrations = DatabaseMigrationCatalog.Load();
+        var documentId = Guid.NewGuid().ToString("D");
+
+        try
+        {
+            await using var session =
+                await SqliteMcDatabaseFactory.OpenUninitializedSessionAsync(
+                    root,
+                    material,
+                    create: true);
+            _ = await DatabaseInitializer.EnsureSchemaAsync(
+                session.Connection,
+                material.VaultId,
+                DateTimeOffset.UtcNow,
+                migrations,
+                CancellationToken.None);
+            await SqliteMcDatabaseFactory.ExecuteNonQueryAsync(
+                session.Connection,
+                $"""
+                INSERT INTO documents(
+                    document_id, title, title_key, path, path_key, format,
+                    content, frontmatter_json, headings_json, revision,
+                    created_at, updated_at)
+                VALUES(
+                    '{documentId}',
+                    'Migration Probe',
+                    'migration probe',
+                    '/migration-probe.md',
+                    '/migration-probe.md',
+                    'md',
+                    '# Migration Probe',
+                    json_object(),
+                    '[]',
+                    1,
+                    '2026-11-03T00:00:00Z',
+                    '2026-11-03T00:00:00Z');
+                """,
+                CancellationToken.None);
+
+            var failedMigration6 = new DatabaseMigration(
+                6,
+                "five_to_six_failure",
+                "CREATE TABLE five_to_six_rollback_probe(id INTEGER); INSERT INTO missing_table VALUES(1);",
+                new string('b', 64));
+            await Assert.ThrowsAnyAsync<SqliteException>(() =>
+                DatabaseInitializer.EnsureSchemaAsync(
+                    session.Connection,
+                    material.VaultId,
+                    DateTimeOffset.UtcNow,
+                    [.. migrations, failedMigration6],
+                    CancellationToken.None));
+
+            using (var verification = session.Connection.CreateCommand())
+            {
+                verification.CommandText = """
+                    SELECT value FROM vault_meta WHERE key = 'schema_version';
+                    """;
+                Assert.Equal(
+                    "5",
+                    Convert.ToString(await verification.ExecuteScalarAsync()));
+                verification.CommandText =
+                    "SELECT count(*) FROM schema_migrations WHERE version = 6;";
+                Assert.Equal(0, Convert.ToInt32(await verification.ExecuteScalarAsync()));
+                verification.CommandText = """
+                    SELECT count(*) FROM sqlite_master
+                    WHERE name = 'five_to_six_rollback_probe';
+                    """;
+                Assert.Equal(0, Convert.ToInt32(await verification.ExecuteScalarAsync()));
+                verification.CommandText =
+                    $"SELECT count(*) FROM documents WHERE document_id = '{documentId}';";
+                Assert.Equal(1, Convert.ToInt32(await verification.ExecuteScalarAsync()));
+            }
+
+            var successfulMigration6 = new DatabaseMigration(
+                6,
+                "five_to_six_success",
+                "CREATE TABLE five_to_six_success(id INTEGER PRIMARY KEY) STRICT;",
+                new string('c', 64));
+            var upgraded = await DatabaseInitializer.EnsureSchemaAsync(
+                session.Connection,
+                material.VaultId,
+                DateTimeOffset.UtcNow,
+                [.. migrations, successfulMigration6],
+                CancellationToken.None);
+
+            Assert.Equal(6, upgraded.SchemaVersion);
+            using var finalCheck = session.Connection.CreateCommand();
+            finalCheck.CommandText =
+                $"SELECT count(*) FROM documents WHERE document_id = '{documentId}';";
+            Assert.Equal(1, Convert.ToInt32(await finalCheck.ExecuteScalarAsync()));
         }
         finally
         {

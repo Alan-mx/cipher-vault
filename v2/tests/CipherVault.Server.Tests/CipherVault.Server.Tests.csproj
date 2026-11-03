@@ -31,5 +31,8 @@
     <Content Include="..\..\src\CipherVault.Server\wwwroot\**\*"
              Link="wwwroot\%(RecursiveDir)%(Filename)%(Extension)"
              CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\Fixtures\BackupCompatibility\**\*"
+             Link="Fixtures\BackupCompatibility\%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

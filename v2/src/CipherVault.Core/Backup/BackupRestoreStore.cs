@@ -1,3 +1,5 @@
+using CipherVault.Core.Database;
+
 namespace CipherVault.Core.Backup;
 
 public static class BackupRestoreStore
@@ -30,14 +32,25 @@ public static class BackupRestoreStore
                     packagePath,
                     stagingDirectory,
                     credential,
-                    RequireCurrentSchema: true),
+                    SchemaPolicy:
+                        BackupSchemaPolicy.AllowSupportedOlderVersions),
                 cancellationToken);
+            var currentSchemaVersion =
+                DatabaseMigrationCatalog.CurrentVersion;
+            var migrationPending =
+                verified.SchemaVersion < currentSchemaVersion;
             return new RestoreVerificationResult(
                 verified.Manifest.VaultId,
                 verified.SchemaVersion,
                 verified.Manifest.FormatVersion,
                 verified.Manifest.Files[0].Bytes,
-                verified.Manifest.Files[1].Bytes);
+                verified.Manifest.Files[1].Bytes,
+                verified.SchemaVersion,
+                currentSchemaVersion,
+                migrationPending,
+                migrationPending
+                    ? BackupMigrationTriggers.FirstUnlock
+                    : null);
         }
     }
 }
