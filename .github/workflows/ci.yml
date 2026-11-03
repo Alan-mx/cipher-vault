@@ -279,9 +279,11 @@ jobs:
       - name: Reject tracked sensitive artifacts
         shell: bash
         run: |
+          allowed_backup_fixture="v2/tests/Fixtures/BackupCompatibility/schema-5-format-1.cvbackup"
           candidates="$(
             git ls-files |
-              grep -E '(^|/)(appsettings\.Development\.json|.*\.(pdb|cvbackup|db|db-shm|db-wal))$' ||
+              grep -E '(^|/)(appsettings\.Development\.json|.*\.(pdb|cvbackup|db|db-shm|db-wal))$' |
+              grep -v -F "$allowed_backup_fixture" ||
               true
           )"
           if [[ -n "$candidates" ]]; then
