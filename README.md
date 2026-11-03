@@ -321,8 +321,11 @@ Docker 镜像已包含 Git 与 OpenSSH client。启用时需把独立备份仓�
 - Linux：重新执行 `install-systemd.sh`，保留 `/var/lib/cipher-vault`。
 - Docker：加载新镜像并重建容器，保留 `cipher-vault-data`。
 - 不提供自动更新器。
-- 不兼容旧 SQLCipher 数据库、旧 Recovery Key、旧 `.cvbackup` 或旧配置文件。
-- 当前数据库 Schema 为 `4`；更早 Schema 的备份按精确版本策略不能由当前 Server 恢复。
+- 不兼容旧 SQLCipher 数据库、旧 Recovery Key、旧配置文件，以及 Schema 低于 `5` 的 `.cvbackup`。
+- 当前数据库 Schema 为 `5`，备份包 FormatVersion 为 `1`，最低备份兼容 Schema 为 `5`。
+- 软件版本和数据库 Schema 版本相互独立；普通软件升级不要求 Schema 升级，只有结构或持久化格式确实变化时才追加 Migration。
+- 本次版本及以后生成的、Schema 在兼容范围内的有效 `.cvbackup` 可由后续软件版本恢复，并在首次解锁时通过现有 Migration 升级。
+- 已有本地 Schema 1~4 Vault 仍可通过正常升级和 Migration 链路升级到当前 Schema；该本地升级能力与备份最低兼容基线相互独立。
 
 ## 安全边界
 
