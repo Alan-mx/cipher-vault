@@ -110,7 +110,7 @@ public static class BackupPackageVerifier
                     workingDirectory,
                     databaseKey,
                     manifest.VaultId,
-                    request.RequireCurrentSchema,
+                    request.SchemaPolicy,
                     cancellationToken);
                 return new BackupVerificationResult(
                     manifest,
@@ -253,7 +253,7 @@ public static class BackupPackageVerifier
         string directory,
         ReadOnlyMemory<byte> databaseKey,
         Guid expectedVaultId,
-        bool requireCurrentSchema,
+        BackupSchemaPolicy schemaPolicy,
         CancellationToken cancellationToken)
     {
         try
@@ -287,9 +287,17 @@ public static class BackupPackageVerifier
                     "restore_database_invalid",
                     "Backup database VaultId does not match the manifest.");
             }
-            if (requireCurrentSchema
-                && info.SchemaVersion
-                    != DatabaseMigrationCatalog.CurrentVersion)
+            var schemaSupported = schemaPolicy switch
+            {
+                BackupSchemaPolicy.CurrentOnly =>
+                    info.SchemaVersion == DatabaseMigrationCatalog.CurrentVersion,
+                BackupSchemaPolicy.AllowSupportedOlderVersions =>
+                    BackupCompatibilityPolicy.IsSupported(info.SchemaVersion),
+                _ => throw new VaultException(
+                    VaultErrorCode.InvalidInput,
+                    "Backup Schema policy is not supported.")
+            };
+            if (!schemaSupported)
             {
                 throw Invalid(
                     "restore_schema_unsupported",
@@ -307,6 +315,14 @@ public static class BackupPackageVerifier
             throw Invalid(
                 "restore_unlock_failed",
                 "Backup password could not unlock the database.",
+                exception);
+        }
+        catch (VaultException exception)
+            when (exception.Code == VaultErrorCode.UnsupportedVersion)
+        {
+            throw Invalid(
+                "restore_schema_unsupported",
+                "Backup database Schema is not supported.",
                 exception);
         }
         catch (OperationCanceledException)

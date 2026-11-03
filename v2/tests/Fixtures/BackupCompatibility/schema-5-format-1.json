@@ -1,0 +1,26 @@
+{
+  "format": "cipher-vault-backup-compatibility-fixture",
+  "formatVersion": 1,
+  "fixtureFileName": "schema-5-format-1.cvbackup",
+  "fixtureBytes": 193452,
+  "fixtureSha256": "87c81f63ba68cb4836b87d4c59217b49934a1d3e639900d0fde46e91f8a4e29a",
+  "softwareVersion": "2.0.0-rc.1",
+  "gitCommit": "c83b3cf3b7c085c9601e823a3e6b89c579b6c16d",
+  "generatedAtUtc": "2026-11-03T12:31:39.613574+00:00",
+  "databaseSchemaVersion": 5,
+  "backupFormatVersion": 1,
+  "testPassword": "correct horse battery staple",
+  "documents": [
+    {
+      "title": "Compatibility Fixture",
+      "path": "fixtures/compatibility-fixture.md",
+      "format": "md",
+      "revision": 1,
+      "tags": [
+        "compatibility",
+        "fixture"
+      ],
+      "contentSha256": "fe1905017039a8ab9537083e658c35171e6c6253785da01b32d302dfe3a54d8f"
+    }
+  ]
+}

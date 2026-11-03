@@ -69,6 +69,12 @@ internal static class DatabaseInitializer
         {
             ValidateKnownVersion(appliedVersion.Value, targetVersion);
             await ValidateMigrationHistoryAsync(connection, transaction, migrations, cancellationToken);
+            await ValidateExistingStateBeforeMigrationAsync(
+                connection,
+                transaction,
+                vaultId,
+                appliedVersion.Value,
+                cancellationToken);
         }
 
         var nextVersion = (appliedVersion ?? 0) + 1;
@@ -242,6 +248,31 @@ internal static class DatabaseInitializer
                     VaultErrorCode.CorruptVault,
                     "Vault migration history is incomplete.");
             }
+        }
+    }
+
+    private static async Task ValidateExistingStateBeforeMigrationAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid expectedVaultId,
+        int appliedVersion,
+        CancellationToken cancellationToken)
+    {
+        var info = await ReadInfoAsync(
+            connection,
+            transaction,
+            cancellationToken);
+        if (info.SchemaVersion != appliedVersion)
+        {
+            throw new VaultException(
+                VaultErrorCode.CorruptVault,
+                "Vault schema version is inconsistent with migration history.");
+        }
+        if (info.VaultId != expectedVaultId)
+        {
+            throw new VaultException(
+                VaultErrorCode.CorruptVault,
+                "Vault key does not belong to this database.");
         }
     }
 

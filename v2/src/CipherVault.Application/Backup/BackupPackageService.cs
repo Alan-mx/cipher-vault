@@ -84,7 +84,7 @@ internal sealed class BackupPackageService
                         tempPath,
                         verifyDirectory,
                         credential,
-                        RequireCurrentSchema: true),
+                        SchemaPolicy: BackupSchemaPolicy.CurrentOnly),
                     backupLease.CancellationToken);
             }
 
