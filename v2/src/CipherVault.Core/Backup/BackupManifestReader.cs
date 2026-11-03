@@ -40,6 +40,19 @@ internal static class BackupManifestReader
             FileShare.Read,
             bufferSize: 64 * 1024,
             FileOptions.Asynchronous | FileOptions.RandomAccess);
+        return await ReadAsync(stream, preflight, cancellationToken);
+    }
+
+    internal static async Task<BackupManifest> ReadAsync(
+        Stream stream,
+        BackupZipPreflightResult preflight,
+        CancellationToken cancellationToken)
+    {
+        if (!stream.CanRead || !stream.CanSeek)
+        {
+            throw Invalid("Manifest stream is not readable.");
+        }
+
         using var archive = new ZipArchive(
             stream,
             ZipArchiveMode.Read,

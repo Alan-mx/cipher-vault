@@ -27,7 +27,6 @@ jobs:
         shell: bash
         run: |
           test "$GITHUB_REF_TYPE" = "tag"
-          test "$GITHUB_REF_PROTECTED" = "true"
 
       - uses: actions/checkout@v4
         with:

@@ -206,50 +206,76 @@ public static class BackupFileStore
         }
     }
 
-    private static async Task<BackupListEntry?> InspectFileAsync(
+    private static Task<BackupListEntry?> InspectFileAsync(
         string path,
         string fileName,
         VerifiedBackupCache cache,
-        CancellationToken cancellationToken)
-    {
-        RegularFileIdentity identity;
-        try
-        {
-            identity = RegularFileIdentity.Read(path);
-        }
-        catch (Exception exception) when (
-            exception is IOException
-                or UnauthorizedAccessException
-                or System.Security.SecurityException)
-        {
-            return null;
-        }
+        CancellationToken cancellationToken) =>
+        InspectFileAsync(
+            path,
+            fileName,
+            cache,
+            cancellationToken,
+            afterPreflight: null);
 
+    internal static async Task<BackupListEntry?> InspectFileAsync(
+        string path,
+        string fileName,
+        VerifiedBackupCache cache,
+        CancellationToken cancellationToken,
+        Func<CancellationToken, Task>? afterPreflight)
+    {
+        RegularFileIdentity? identity = null;
         try
         {
+            PathSafety.EnsureNoLinkComponents(path);
+            await using var stream = new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete,
+                bufferSize: 64 * 1024,
+                FileOptions.Asynchronous | FileOptions.RandomAccess);
+            identity = RegularFileIdentity.Read(stream.SafeFileHandle, path);
+
             var preflight = await BackupZipPreflight.InspectAsync(
-                path,
+                stream,
                 cancellationToken);
-            var manifest = await BackupManifestReader.ReadAsync(
-                path,
-                preflight,
-                cancellationToken);
-            var after = RegularFileIdentity.Read(path);
-            if (after != identity)
+            if (afterPreflight is not null)
             {
-                return InvalidEntry(
-                    path,
-                    fileName,
-                    identity,
-                    "restore_archive_invalid");
+                await afterPreflight(cancellationToken);
             }
 
-            var status = cache.TryGet(
-                identity.CanonicalPath,
-                identity,
-                out _)
-                ? BackupFileStatus.Verified
-                : BackupFileStatus.ManifestReadable;
+            var manifest = await BackupManifestReader.ReadAsync(
+                stream,
+                preflight,
+                cancellationToken);
+            var after = RegularFileIdentity.Read(stream.SafeFileHandle, path);
+
+            RegularFileIdentity? currentPathIdentity = null;
+            try
+            {
+                currentPathIdentity = RegularFileIdentity.Read(path);
+            }
+            catch (Exception exception) when (
+                exception is IOException
+                    or UnauthorizedAccessException
+                    or System.Security.SecurityException
+                    or VaultException)
+            {
+                currentPathIdentity = null;
+            }
+
+            var identityIsStable = identity.IsReliable
+                && identity == after
+                && identity == currentPathIdentity;
+            var status = identityIsStable
+                && cache.TryGet(
+                    identity.CanonicalPath,
+                    identity,
+                    out _)
+                    ? BackupFileStatus.Verified
+                    : BackupFileStatus.ManifestReadable;
             var item = new BackupListItem(
                 fileName,
                 identity.Bytes,
@@ -264,6 +290,11 @@ public static class BackupFileStore
         }
         catch (BackupPackageValidationException exception)
         {
+            if (identity is null)
+            {
+                return null;
+            }
+
             return InvalidEntry(
                 path,
                 fileName,
@@ -279,8 +310,14 @@ public static class BackupFileStore
                 or InvalidDataException
                 or OverflowException
                 or UnauthorizedAccessException
-                or System.Security.SecurityException)
+                or System.Security.SecurityException
+                or VaultException)
         {
+            if (identity is null)
+            {
+                return null;
+            }
+
             return InvalidEntry(
                 path,
                 fileName,
@@ -318,7 +355,7 @@ public static class BackupFileStore
         return pageSize;
     }
 
-    private sealed record BackupListEntry(
+    internal sealed record BackupListEntry(
         BackupListItem Item,
         DateTimeOffset EffectiveCreatedAtUtc);
 }

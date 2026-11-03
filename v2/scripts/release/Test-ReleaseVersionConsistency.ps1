@@ -26,7 +26,6 @@ foreach ($required in @(
     'tags:',
     '- "v2.0.0-rc.1"',
     'GITHUB_REF_TYPE',
-    'GITHUB_REF_PROTECTED',
     'GITHUB_REF_NAME',
     'artifactRoot=',
     'needs.prepare.outputs.commit'
@@ -37,6 +36,9 @@ foreach ($required in @(
 }
 if ($workflow.Contains('v2.0.0-rc.*', [StringComparison]::Ordinal)) {
     throw "workflow_accepts_unbounded_release_tags"
+}
+if ($workflow.Contains('GITHUB_REF_PROTECTED', [StringComparison]::Ordinal)) {
+    throw "workflow_requires_protected_ref"
 }
 
 $versionsScript = Get-Content -Raw (

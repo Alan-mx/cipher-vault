@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Security;
+using Microsoft.Win32.SafeHandles;
 
 namespace CipherVault.Core.Backup;
 
@@ -53,28 +54,40 @@ public sealed record RegularFileIdentity(
     public static RegularFileIdentity Read(string path)
     {
         PathSafety.EnsureNoLinkComponents(path);
-        var info = new FileInfo(path);
-        info.Refresh();
-        if (!info.Exists
-            || (info.Attributes & FileAttributes.ReparsePoint) != 0)
+        using var handle = File.OpenHandle(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        return Read(handle, path);
+    }
+
+    internal static RegularFileIdentity Read(
+        SafeFileHandle handle,
+        string path)
+    {
+        var attributes = File.GetAttributes(handle);
+        if ((attributes & FileAttributes.Directory) != 0
+            || (attributes & FileAttributes.ReparsePoint) != 0)
         {
             throw new IOException("File is not a regular file.");
         }
 
         var canonical = PathSafety.Canonicalize(
-            info.FullName,
+            path,
             "Backup file");
-        var created = info.CreationTimeUtc.ToUniversalTime();
-        var modified = info.LastWriteTimeUtc.ToUniversalTime();
-        var platform = PlatformFileIdentityReader.Read(path);
+        var created = File.GetCreationTimeUtc(handle).ToUniversalTime();
+        var modified = File.GetLastWriteTimeUtc(handle).ToUniversalTime();
+        var bytes = RandomAccess.GetLength(handle);
+        var platform = PlatformFileIdentityReader.Read(handle);
         return new RegularFileIdentity(
             canonical,
-            info.Length,
+            bytes,
             created,
             modified,
             ComputeIdentityStamp(
                 canonical,
-                info.Length,
+                bytes,
                 created,
                 modified),
             platform.Kind,

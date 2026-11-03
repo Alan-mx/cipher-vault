@@ -10,6 +10,74 @@ namespace CipherVault.Core.Tests;
 public sealed class BackupFileStoreTests
 {
     [Fact]
+    public async Task ReplacingPathAfterPreflightDoesNotReturnVerified()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-replace-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            const string fileName =
+                "cipher-vault-20261101-010000-aaaaaaaa.cvbackup";
+            var path = Path.Combine(root, fileName);
+            var originalCreatedAt = new DateTimeOffset(
+                2026,
+                11,
+                1,
+                1,
+                0,
+                0,
+                TimeSpan.Zero);
+            var replacementCreatedAt = originalCreatedAt.AddHours(1);
+            await CreatePackageAsync(root, fileName, originalCreatedAt);
+            var replacementPath = Path.Combine(root, "replacement.cvbackup");
+            await CreatePackageAsync(
+                root,
+                "replacement.cvbackup",
+                replacementCreatedAt);
+            var displacedPath = Path.Combine(root, "displaced.cvbackup");
+
+            var cache = new VerifiedBackupCache();
+            var identity = RegularFileIdentity.Read(path);
+            if (!identity.IsReliable)
+            {
+                return;
+            }
+
+            cache.Set(
+                identity.CanonicalPath,
+                new VerifiedBackupCacheEntry(
+                    identity,
+                    Guid.Parse("11111111-1111-1111-1111-111111111111"),
+                    new string('a', 64),
+                    originalCreatedAt));
+
+            var entry = await BackupFileStore.InspectFileAsync(
+                path,
+                fileName,
+                cache,
+                CancellationToken.None,
+                _ =>
+                {
+                    File.Move(path, displacedPath);
+                    File.Move(replacementPath, path);
+                    return Task.CompletedTask;
+                });
+
+            Assert.NotNull(entry);
+            Assert.Equal(
+                BackupFileStatus.ManifestReadable,
+                entry.Item.Status);
+            Assert.Equal(originalCreatedAt, entry.Item.CreatedAtUtc);
+        }
+        finally
+        {
+            DeleteTree(root);
+        }
+    }
+
+    [Fact]
     public async Task ListReturnsManifestReadableAndInvalidEntriesWithStableCursor()
     {
         var root = Path.Combine(

@@ -21,15 +21,10 @@ internal static class PlatformFileIdentityReader
         0,
         0);
 
-    internal static PlatformFileIdentity Read(string path)
+    internal static PlatformFileIdentity Read(SafeFileHandle handle)
     {
         try
         {
-            using var handle = File.OpenHandle(
-                path,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.ReadWrite | FileShare.Delete);
             if (OperatingSystem.IsWindows())
             {
                 return ReadWindows(handle);

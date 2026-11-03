@@ -67,6 +67,20 @@ internal static class BackupZipPreflight
             FileShare.Read,
             bufferSize: 64 * 1024,
             FileOptions.Asynchronous | FileOptions.RandomAccess);
+        return await InspectAsync(stream, cancellationToken);
+    }
+
+    internal static async Task<BackupZipPreflightResult> InspectAsync(
+        Stream stream,
+        CancellationToken cancellationToken)
+    {
+        if (!stream.CanRead || !stream.CanSeek)
+        {
+            throw Invalid(
+                "restore_archive_invalid",
+                "Backup ZIP stream is not readable.");
+        }
+
         if (stream.Length is <= 0 or > BackupConstants.MaxPackageBytes)
         {
             throw Invalid(
@@ -245,7 +259,7 @@ internal static class BackupZipPreflight
     }
 
     private static async Task<EndOfCentralDirectory> FindEndOfCentralDirectoryAsync(
-        FileStream stream,
+        Stream stream,
         CancellationToken cancellationToken)
     {
         var length = (int)Math.Min(stream.Length, MaximumCommentSearch);
@@ -286,7 +300,7 @@ internal static class BackupZipPreflight
     }
 
     private static async Task<CentralDirectoryLocation> ReadCentralDirectoryLocationAsync(
-        FileStream stream,
+        Stream stream,
         EndOfCentralDirectory eocd,
         CancellationToken cancellationToken)
     {
@@ -321,7 +335,7 @@ internal static class BackupZipPreflight
     }
 
     private static async Task<CentralDirectoryLocation> ReadZip64CentralDirectoryLocationAsync(
-        FileStream stream,
+        Stream stream,
         long eocdOffset,
         CancellationToken cancellationToken)
     {
@@ -400,7 +414,7 @@ internal static class BackupZipPreflight
     }
 
     private static async Task ValidateLocalHeaderAsync(
-        FileStream stream,
+        Stream stream,
         long offset,
         byte[] centralName,
         ushort centralFlags,
