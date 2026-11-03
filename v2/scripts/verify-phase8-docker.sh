@@ -115,7 +115,7 @@ start_container() {
         --tmpfs /tmp \
         --security-opt no-new-privileges \
         --cap-drop ALL \
-        --env "CIPHERVAULT_PUBLIC_HTTP_PORTS=${port}" \
+        --env "CIPHERVAULT_PUBLIC_HTTP_PORTS=${port},8080" \
         --volume "${data_volume}:/data" \
         "$image" >/dev/null
 }
@@ -335,7 +335,7 @@ docker run -d \
     --tmpfs /tmp \
     --security-opt no-new-privileges \
     --cap-drop ALL \
-    --env "CIPHERVAULT_PUBLIC_HTTP_PORTS=${port}" \
+    --env "CIPHERVAULT_PUBLIC_HTTP_PORTS=${port},8080" \
     --env CIPHERVAULT_DATA_DIR=/restore/restored \
     --volume "${target_volume}:/restore" \
     --volume "${data_volume}:/data" \
@@ -402,6 +402,7 @@ python3 - \
     "$health_status" \
     "$compose_validation" <<'PY'
 import json
+import os
 import sys
 
 path, image_id, architecture, image_user, archive_sha, health, compose_validation = sys.argv[1:]
