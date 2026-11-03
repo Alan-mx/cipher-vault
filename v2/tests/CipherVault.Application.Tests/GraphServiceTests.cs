@@ -119,6 +119,47 @@ public sealed class GraphServiceTests
     }
 
     [Fact]
+    public async Task GraphIgnoresTagsFromDeletedDocuments()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+        var center = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "A",
+                null,
+                null,
+                VaultDocumentFormat.Markdown,
+                "[[B]]",
+                null),
+            actor);
+        _ = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "B",
+                null,
+                null,
+                VaultDocumentFormat.Markdown,
+                "B",
+                null),
+            actor);
+        var deleted = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Deleted",
+                null,
+                null,
+                VaultDocumentFormat.Markdown,
+                "Deleted",
+                ["Archived"]),
+            actor);
+        await fixture.Documents.DeleteAsync(deleted.DocumentId, 1, actor);
+
+        var graph = await fixture.Graph.GetLocalGraphAsync(
+            new LocalGraphQuery(center.DocumentId, Depth: 1));
+
+        Assert.Equal(["A", "B"], graph.Nodes.Select(node => node.Title));
+        Assert.Single(graph.Edges);
+    }
+
+    [Fact]
     public async Task DeletedCenterReturnsNotFound()
     {
         await using var fixture = await VaultApplicationFixture.CreateAsync();

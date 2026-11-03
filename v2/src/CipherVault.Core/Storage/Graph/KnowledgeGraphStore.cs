@@ -173,6 +173,8 @@ public static class KnowledgeGraphStore
                 SELECT dt.document_id, t.normalized_key
                 FROM document_tags AS dt
                 JOIN tags AS t ON t.tag_id = dt.tag_id
+                JOIN documents AS d ON d.document_id = dt.document_id
+                WHERE d.deleted_at IS NULL
                 ORDER BY dt.document_id, t.normalized_key;
                 """;
             await using var reader = await tagsRead.Command.ExecuteReaderAsync(cancellationToken);
@@ -181,7 +183,12 @@ public static class KnowledgeGraphStore
                 pair => new List<string>());
             while (await reader.ReadAsync(cancellationToken))
             {
-                tagMap[Guid.Parse(reader.GetString(0))].Add(reader.GetString(1));
+                if (tagMap.TryGetValue(
+                        Guid.Parse(reader.GetString(0)),
+                        out var nodeTags))
+                {
+                    nodeTags.Add(reader.GetString(1));
+                }
             }
             foreach (var pair in tagMap)
             {
