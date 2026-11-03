@@ -79,6 +79,7 @@ function Scan-MetadataTree {
     $archiveNames = @(
         "CipherVault-$Version-win-x64.zip",
         "CipherVault-$Version-linux-x64.tar.gz",
+        "CipherVault-$Version-linux-arm64.tar.gz",
         "cipher-vault-$Version-docker-linux-amd64.tar"
     )
     foreach ($file in Get-ChildItem -LiteralPath $TreeRoot -Recurse -File |
@@ -90,10 +91,12 @@ function Scan-MetadataTree {
 try {
     $zip = Join-Path $root "CipherVault-$Version-win-x64.zip"
     $tar = Join-Path $root "CipherVault-$Version-linux-x64.tar.gz"
+    $arm64Tar = Join-Path $root "CipherVault-$Version-linux-arm64.tar.gz"
     $dockerTar = Join-Path $root "cipher-vault-$Version-docker-linux-amd64.tar"
     $allowedTopLevel = @(
         [IO.Path]::GetFileName($zip),
         [IO.Path]::GetFileName($tar),
+        [IO.Path]::GetFileName($arm64Tar),
         [IO.Path]::GetFileName($dockerTar),
         "release-manifest.json",
         "SHA256SUMS",
@@ -105,7 +108,7 @@ try {
             Add-Finding "unexpected_release_entry" $entry.FullName
         }
     }
-    foreach ($path in @($zip, $tar, $dockerTar)) {
+    foreach ($path in @($zip, $tar, $arm64Tar, $dockerTar)) {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             Add-Finding "artifact_missing" $path
         }
@@ -130,6 +133,20 @@ try {
         }
         else {
             Scan-Tree $tarRoot "linux-targz"
+        }
+    }
+    if (Test-Path -LiteralPath $arm64Tar) {
+        $arm64Root = Join-Path $temporaryRoot "linux-arm64"
+        Microsoft.PowerShell.Management\New-Item `
+            -ItemType Directory `
+            -Path $arm64Root `
+            -Force | Out-Null
+        & tar -xzf $arm64Tar -C $arm64Root
+        if ($LASTEXITCODE -ne 0) {
+            Add-Finding "archive_extract_failed" $arm64Tar
+        }
+        else {
+            Scan-Tree $arm64Root "linux-arm64-targz"
         }
     }
     if (Test-Path -LiteralPath $dockerTar) {

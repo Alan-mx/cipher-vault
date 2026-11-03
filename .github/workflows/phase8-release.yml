@@ -189,7 +189,7 @@ jobs:
               apt-get update &&
               DEBIAN_FRONTEND=noninteractive apt-get install -y \
                 --no-install-recommends \
-                ca-certificates curl python3 util-linux binutils \
+                ca-certificates curl file python3 util-linux binutils \
                 libicu-dev libssl3 zlib1g systemd &&
               bash /repo/v2/scripts/verify-phase8.sh \
                 --artifact-root "/repo/$CIPHERVAULT_ARTIFACT_ROOT" \
@@ -208,7 +208,7 @@ jobs:
               apt-get update &&
               DEBIAN_FRONTEND=noninteractive apt-get install -y \
                 --no-install-recommends \
-                ca-certificates curl python3 util-linux binutils \
+                ca-certificates curl file python3 util-linux binutils \
                 libicu-dev libssl3 zlib1g systemd &&
               bash /repo/v2/scripts/verify-phase8.sh \
                 --artifact-root "/repo/$CIPHERVAULT_ARTIFACT_ROOT" \
@@ -223,6 +223,74 @@ jobs:
             ${{ needs.prepare.outputs.artifactRoot }}/CipherVault-${{ needs.prepare.outputs.version }}-linux-x64.tar.gz
             ${{ needs.prepare.outputs.artifactRoot }}/evidence/linux-ubuntu-22.04.json
             ${{ needs.prepare.outputs.artifactRoot }}/evidence/linux-debian-12.json
+          retention-days: 14
+
+  linux-arm64-package:
+    needs: [prepare, frontend]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    env:
+      CIPHERVAULT_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      CIPHERVAULT_ARTIFACT_ROOT: ${{ needs.prepare.outputs.artifactRoot }}
+      CIPHERVAULT_BUILD_COMMIT: ${{ needs.prepare.outputs.commit }}
+      CIPHERVAULT_BUILD_TIMESTAMP_UTC: ${{ needs.prepare.outputs.builtAtUtc }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.402
+      - uses: actions/download-artifact@v4
+        with:
+          name: phase8-frontend
+          path: v2/src/CipherVault.Server/wwwroot
+      - name: Install native verification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils file util-linux
+      - name: Restore and test
+        run: |
+          dotnet restore CipherVault.slnx --locked-mode -p:NuGetAudit=false
+          dotnet build CipherVault.slnx -c Release --no-restore -warnaserror
+          dotnet test CipherVault.slnx -c Release --no-build --no-restore
+      - name: Cross-platform backup probe
+        shell: bash
+        run: |
+          root="$RUNNER_TEMP/phase8-linux-arm64"
+          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- create "$root/source" "$root/backups" "$root/backup.cvbackup" "phase8 arm64 release password"
+          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- restore "$root/backup.cvbackup" "$root/restored" "phase8 arm64 release password"
+          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- verify "$root/restored" "phase8 arm64 release password"
+      - name: Publish, package, and verify Linux ARM64
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/$CIPHERVAULT_ARTIFACT_ROOT"
+          publish_root="$root/work/linux-arm64/publish"
+          bash v2/scripts/publish-phase8.sh \
+            --rid linux-arm64 \
+            --output-root "$root/work/linux-arm64" \
+            --skip-frontend-build
+          bash v2/scripts/package-phase8.sh \
+            --platform linux \
+            --rid linux-arm64 \
+            --publish-root "$publish_root" \
+            --output-root "$root"
+          mkdir -p "$root/evidence"
+          bash v2/scripts/verify-phase8.sh \
+            --artifact-root "$root" \
+            --evidence-root "$root/evidence" \
+            --rid linux-arm64 \
+            --allow-preinstalled-dotnet \
+            --distribution ubuntu \
+            --distribution-version 24.04
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phase8-linux-arm64
+          path: |
+            ${{ needs.prepare.outputs.artifactRoot }}/CipherVault-${{ needs.prepare.outputs.version }}-linux-arm64.tar.gz
+            ${{ needs.prepare.outputs.artifactRoot }}/evidence/linux-arm64-ubuntu-24.04.json
           retention-days: 14
 
   docker-package:
@@ -268,7 +336,13 @@ jobs:
           retention-days: 14
 
   release-aggregate:
-    needs: [prepare, windows-package, linux-package, docker-package]
+    needs: [
+      prepare,
+      windows-package,
+      linux-package,
+      linux-arm64-package,
+      docker-package
+    ]
     runs-on: ubuntu-latest
     env:
       CIPHERVAULT_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
@@ -287,6 +361,10 @@ jobs:
           path: ${{ needs.prepare.outputs.artifactRoot }}
       - uses: actions/download-artifact@v4
         with:
+          name: phase8-linux-arm64
+          path: ${{ needs.prepare.outputs.artifactRoot }}
+      - uses: actions/download-artifact@v4
+        with:
           name: phase8-docker
           path: ${{ needs.prepare.outputs.artifactRoot }}
       - name: Verify evidence presence
@@ -294,7 +372,26 @@ jobs:
           test -s "$CIPHERVAULT_ARTIFACT_ROOT/evidence/windows.json"
           test -s "$CIPHERVAULT_ARTIFACT_ROOT/evidence/linux-ubuntu-22.04.json"
           test -s "$CIPHERVAULT_ARTIFACT_ROOT/evidence/linux-debian-12.json"
+          test -s "$CIPHERVAULT_ARTIFACT_ROOT/evidence/linux-arm64-ubuntu-24.04.json"
           test -s "$CIPHERVAULT_ARTIFACT_ROOT/evidence/docker.json"
+      - name: Verify ARM64 evidence
+        shell: pwsh
+        run: |
+          $path = Join-Path `
+            $env:GITHUB_WORKSPACE `
+            "$env:CIPHERVAULT_ARTIFACT_ROOT/evidence/linux-arm64-ubuntu-24.04.json"
+          $evidence = Get-Content -LiteralPath $path -Raw |
+            ConvertFrom-Json -Depth 12
+          if ($evidence.passed -ne $true -or
+              $evidence.rid -ne "linux-arm64" -or
+              $evidence.architecture -ne "aarch64" -or
+              $evidence.serverElfMachine -ne "AArch64" -or
+              $evidence.nativeElfMachine -ne "AArch64" -or
+              $evidence.elfFileCount -lt 1 -or
+              $evidence.selfContainedChildPath -ne $true -or
+              $evidence.lddMissingDependencies -ne $false) {
+            throw "linux_arm64_evidence_invalid"
+          }
       - name: Generate manifest and checksums
         shell: pwsh
         run: |

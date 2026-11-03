@@ -123,6 +123,65 @@ jobs:
           dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- restore "$root/backup.cvbackup" "$root/restored" "v2 ci password"
           dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- verify "$root/restored" "v2 ci password"
 
+  dotnet-linux-arm64:
+    needs: frontend
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: v2-frontend-wwwroot
+          path: v2/src/CipherVault.Server/wwwroot
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.402
+      - name: Install native verification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils file util-linux
+      - name: Restore
+        run: dotnet restore CipherVault.slnx --locked-mode -p:NuGetAudit=false
+      - name: Verify formatting
+        run: dotnet format CipherVault.slnx --verify-no-changes --no-restore
+      - name: Build
+        run: dotnet build CipherVault.slnx -c Release --no-restore -warnaserror
+      - name: Test
+        run: dotnet test CipherVault.slnx -c Release --no-build --no-restore
+      - name: Cross-platform backup probe
+        shell: bash
+        run: |
+          root="$RUNNER_TEMP/v2-linux-arm64"
+          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- create "$root/source" "$root/backups" "$root/backup.cvbackup" "v2 ci password"
+          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- restore "$root/backup.cvbackup" "$root/restored" "v2 ci password"
+          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- verify "$root/restored" "v2 ci password"
+      - name: Publish, package, and verify Linux ARM64
+        shell: bash
+        run: |
+          set -euo pipefail
+          source v2/deploy/versions.env
+          export CIPHERVAULT_RELEASE_VERSION="$RELEASE_VERSION"
+          release_root="$GITHUB_WORKSPACE/v2/artifacts/release/$RELEASE_VERSION"
+          publish_root="$release_root/work/ci-linux-arm64/publish"
+          bash v2/scripts/publish-phase8.sh \
+            --rid linux-arm64 \
+            --output-root "$release_root/work/ci-linux-arm64" \
+            --skip-frontend-build
+          bash v2/scripts/package-phase8.sh \
+            --platform linux \
+            --rid linux-arm64 \
+            --publish-root "$publish_root" \
+            --output-root "$release_root"
+          mkdir -p "$release_root/evidence"
+          bash v2/scripts/verify-phase8.sh \
+            --artifact-root "$release_root" \
+            --evidence-root "$release_root/evidence" \
+            --rid linux-arm64 \
+            --allow-preinstalled-dotnet \
+            --distribution ubuntu \
+            --distribution-version 24.04
+
   docker:
     needs: frontend
     runs-on: ubuntu-latest
@@ -202,6 +261,15 @@ jobs:
           test -f v2/scripts/package-phase8.sh
           grep -Fq -- '$publish = Join-Path $root "work/windows/publish"' .github/workflows/phase8-release.yml
           grep -Fq -- 'publish_root="$root/work/linux/publish"' .github/workflows/phase8-release.yml
+          grep -Fq -- 'dotnet-linux-arm64:' .github/workflows/ci.yml
+          grep -Fq -- 'runs-on: ubuntu-24.04-arm' .github/workflows/ci.yml
+          grep -Fq -- '--rid linux-arm64' .github/workflows/ci.yml
+          grep -Fq -- 'linux-arm64-package:' .github/workflows/phase8-release.yml
+          grep -Fq -- 'name: phase8-linux-arm64' .github/workflows/phase8-release.yml
+          grep -Fq -- '--rid linux-arm64' .github/workflows/phase8-release.yml
+          grep -Fq -- 'net10.0/linux-arm64' v2/src/CipherVault.Server/packages.lock.json
+          grep -Fq -- 'CipherVault-$Version-linux-arm64.tar.gz' v2/scripts/release/New-ReleaseManifest.ps1
+          grep -Fq -- 'CipherVault-$Version-linux-arm64.tar.gz' v2/scripts/release/Scan-ReleaseArtifacts.ps1
           ! grep -Fq -- 'publish_root="$(bash v2/scripts/publish-phase8.sh' .github/workflows/phase8-release.yml
           ! grep -Fq -- '$publish = & .\v2\scripts\publish-phase8.ps1' .github/workflows/phase8-release.yml
       - name: Reject tracked sensitive artifacts

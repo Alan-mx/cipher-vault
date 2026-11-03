@@ -36,6 +36,11 @@ $artifacts = @(
         Rid = "linux-x64"
     },
     @{
+        Kind = "linux-targz"
+        FileName = "CipherVault-$Version-linux-arm64.tar.gz"
+        Rid = "linux-arm64"
+    },
+    @{
         Kind = "docker-image-tar"
         FileName = "cipher-vault-$Version-docker-linux-amd64.tar"
         Rid = $null
@@ -111,8 +116,34 @@ $parsed = Get-Content -LiteralPath $manifestPath -Raw |
 if ($parsed.Product -ne "CipherVault" -or
     $parsed.Version -ne $Version -or
     $parsed.Commit -ne $Commit -or
-    @($parsed.Artifacts).Count -ne 3) {
+    @($parsed.Artifacts).Count -ne 4) {
     throw "release_manifest_validation_failed"
+}
+$expectedArtifactIdentity = @(
+    @(
+        "CipherVault-$Version-win-x64.zip",
+        "win-x64"
+    ),
+    @(
+        "CipherVault-$Version-linux-x64.tar.gz",
+        "linux-x64"
+    ),
+    @(
+        "CipherVault-$Version-linux-arm64.tar.gz",
+        "linux-arm64"
+    ),
+    @(
+        "cipher-vault-$Version-docker-linux-amd64.tar",
+        $null
+    )
+)
+for ($index = 0; $index -lt $expectedArtifactIdentity.Count; $index++) {
+    $expected = $expectedArtifactIdentity[$index]
+    $actual = $parsed.Artifacts[$index]
+    if ($actual.fileName -ne $expected[0] -or
+        $actual.rid -ne $expected[1]) {
+        throw "release_manifest_artifact_identity_invalid:$index"
+    }
 }
 foreach ($artifact in $parsed.Artifacts) {
     $path = Join-Path $root $artifact.fileName

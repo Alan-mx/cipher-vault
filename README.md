@@ -9,10 +9,10 @@ SQLite3MC 数据库。
 当前支持：
 
 - Windows 11 x64，self-contained ZIP。
-- glibc Linux x64，tar.gz 与 systemd。
+- glibc Linux x64 与 ARM64，tar.gz 与 systemd。
 - linux/amd64 Docker 镜像与 Compose。
 
-当前不支持 ARM64、musl/Alpine、MSI、deb、rpm、AppImage、自动更新或公网直连。
+当前不支持 musl/Alpine、MSI、deb、rpm、AppImage、自动更新或公网直连。
 
 ## Windows
 
@@ -60,12 +60,23 @@ http://127.0.0.1:43127
 
 ## Linux
 
-解压：
+按机器架构选择对应压缩包。x64：
 
 ```bash
 tar -xzf CipherVault-2.0.0-rc.1-linux-x64.tar.gz
 cd CipherVault-2.0.0-rc.1-linux-x64
 ```
+
+ARM64：
+
+```bash
+tar -xzf CipherVault-2.0.0-rc.1-linux-arm64.tar.gz
+cd CipherVault-2.0.0-rc.1-linux-arm64
+```
+
+Linux x64 基线为 Ubuntu 22.04 和 Debian 12。Linux ARM64 的自动化基线为
+Ubuntu 24.04，OnePlus 6T 上的 Ubuntu 26.04.1 为待补实机目标；其他 ARM64
+发行版暂不承诺支持。
 
 systemd 安装需要 root：
 
@@ -321,7 +332,7 @@ Docker 镜像已包含 Git 与 OpenSSH client。启用时需把独立备份仓�
 - 远程使用时由用户自行配置 Tailscale、SSH 隧道或启用 HTTPS 的反向代理。
 - 日志仅使用 Windows 控制台、systemd journal 或 Docker logs，不写文件日志。
 - 当前 RC 不提供 Authenticode、Linux 包签名或 Docker 镜像签名。
-- 不支持多用户、OAuth、自动更新、ARM64 或 Alpine/musl。
+- 不支持多用户、OAuth、自动更新或 Alpine/musl。
 
 ## 发布完整性
 
@@ -332,6 +343,7 @@ release-manifest.json
 SHA256SUMS
 CipherVault-2.0.0-rc.1-win-x64.zip
 CipherVault-2.0.0-rc.1-linux-x64.tar.gz
+CipherVault-2.0.0-rc.1-linux-arm64.tar.gz
 cipher-vault-2.0.0-rc.1-docker-linux-amd64.tar
 ```
 

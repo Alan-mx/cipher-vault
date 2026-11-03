@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet("win-x64", "linux-x64")]
+    [ValidateSet("win-x64", "linux-x64", "linux-arm64")]
     [string] $Rid,
     [Parameter(Mandatory)]
     [string] $OutputRoot,
