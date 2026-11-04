@@ -63,6 +63,35 @@ public sealed class DatabaseFactoryTests
     }
 
     [Fact]
+    public async Task OrdinalIgnoreCaseEqualsIsRegisteredForOrdinaryAndReadOnlyConnections()
+    {
+        using var fixture = await DatabaseFixture.CreateAsync();
+        await using var ordinary = await SqliteMcDatabaseFactory.OpenConnectionAsync(
+            new DatabaseOpenRequest(
+                fixture.Root,
+                fixture.Material.DatabaseKey,
+                CreateIfMissing: false));
+        await using var readOnly =
+            await SqliteMcDatabaseFactory.OpenReadOnlyConnectionAsync(
+                fixture.Root,
+                fixture.Material.DatabaseKey);
+
+        foreach (var connection in new[] { ordinary, readOnly })
+        {
+            Assert.Equal(
+                "1",
+                await ScalarAsync(
+                    connection,
+                    "SELECT cv_ordinal_ignore_case_equals('Ä', 'ä');"));
+            Assert.Equal(
+                "0",
+                await ScalarAsync(
+                    connection,
+                    "SELECT cv_ordinal_ignore_case_equals('a', 'b');"));
+        }
+    }
+
+    [Fact]
     public async Task OrdinarySqliteProcessCannotOpenDatabase()
     {
         using var fixture = await DatabaseFixture.CreateAsync();

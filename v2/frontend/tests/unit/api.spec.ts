@@ -4,6 +4,7 @@ import {
   buildQueryString,
   configureApiClient,
 } from "../../src/api/client";
+import { documentApi } from "../../src/api";
 import {
   ApiClientError,
   StaleSessionResponseError,
@@ -280,5 +281,39 @@ describe("ApiClient", () => {
         sessionGeneration: 1,
       }),
     ).rejects.toBeInstanceOf(StaleSessionResponseError);
+  });
+});
+
+describe("document related API", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("uses the read-only related endpoint with a bounded default limit", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ items: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    configureApiClient({
+      getCsrfToken: () => null,
+      refreshCsrfToken: async () => "",
+      currentSessionGeneration: () => 0,
+      onSessionInvalid: () => false,
+    });
+
+    await expect(documentApi.related("doc-1")).resolves.toEqual({
+      items: [],
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "/api/documents/doc-1/related?limit=10",
+    );
+    const request = fetchMock.mock.calls[0]?.[1];
+    expect(request?.method ?? "GET").toBe("GET");
+    const headers = request?.headers as Headers;
+    expect(headers.get("X-CSRF-TOKEN")).toBeNull();
   });
 });

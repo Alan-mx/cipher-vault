@@ -6,6 +6,7 @@ using CipherVault.Application.Documents;
 using CipherVault.Application.Exports;
 using CipherVault.Application.Graph;
 using CipherVault.Application.Import;
+using CipherVault.Application.RelatedKnowledge;
 using CipherVault.Application.Search;
 using CipherVault.Server.Api;
 using CipherVault.Server.Api.Endpoints;
@@ -71,6 +72,7 @@ public static class ServerWebApplication
         builder.Services.AddSingleton<TrashService>();
         builder.Services.AddSingleton<SearchService>();
         builder.Services.AddSingleton<GraphService>();
+        builder.Services.AddSingleton<RelatedKnowledgeService>();
         builder.Services.AddSingleton<ImportService>();
         builder.Services.AddSingleton<AuditQueryService>();
         builder.Services.AddSingleton<UnlockAttemptLimiter>();

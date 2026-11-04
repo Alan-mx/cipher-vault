@@ -1,4 +1,5 @@
 using CipherVault.Application.Documents;
+using CipherVault.Application.RelatedKnowledge;
 using CipherVault.Server.Api.Contracts;
 using CipherVault.Core.Documents;
 using CipherVault.Server.Security;
@@ -258,6 +259,23 @@ public static class DocumentEndpoints
                 })
             .RequireAuthorization()
             .WithName("ListDocumentUnlinkedMentions");
+
+        group.MapGet(
+                "/{id}/related",
+                async (
+                    string id,
+                    int? limit,
+                    RelatedKnowledgeService related,
+                    CancellationToken cancellationToken) =>
+                {
+                    var items = await related.GetAsync(
+                        ApiQueryBinding.ParseGuid(id, "id"),
+                        limit ?? 10,
+                        cancellationToken);
+                    return Results.Ok(new RelatedDocumentsResponse(items));
+                })
+            .RequireAuthorization()
+            .WithName("ListRelatedDocuments");
         return endpoints;
     }
 }

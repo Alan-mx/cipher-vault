@@ -127,6 +127,34 @@ export interface BacklinkItem {
 
 export type BacklinkPage = CursorPage<BacklinkItem>;
 
+export type RelatedReasonCode =
+  | "same_project"
+  | "same_type"
+  | "shared_tags"
+  | "shared_properties"
+  | "two_hop_link"
+  | "similar_title";
+
+export interface RelatedReason {
+  code: RelatedReasonCode;
+  label: string;
+}
+
+export interface RelatedDocumentItem {
+  documentId: GuidString;
+  title: string;
+  virtualPath: string;
+  revision: number;
+  tags: string[];
+  score: number;
+  reasons: RelatedReason[];
+  updatedAt: UtcTimestamp;
+}
+
+export interface RelatedDocumentsResponse {
+  items: RelatedDocumentItem[];
+}
+
 export interface UnlinkedMentionOccurrence {
   startOffset: number;
   endOffset: number;

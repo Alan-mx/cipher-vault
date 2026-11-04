@@ -6,6 +6,7 @@ import type {
   DocumentMap,
   DocumentMetadata,
   DocumentWriteResult,
+  RelatedDocumentsResponse,
   TrashDeleteResult,
   UnlinkedMentionPage,
   UpdateDocumentRequest,
@@ -77,5 +78,11 @@ export const documentApi = {
     apiClient.request<UnlinkedMentionPage>(
       `${documentPath(documentId)}/unlinked-mentions`,
       { query: { cursor, pageSize } },
+    ),
+
+  related: (documentId: string, limit = 10) =>
+    apiClient.request<RelatedDocumentsResponse>(
+      `${documentPath(documentId)}/related`,
+      { query: { limit } },
     ),
 };

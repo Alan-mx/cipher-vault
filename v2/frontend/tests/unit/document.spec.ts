@@ -384,6 +384,95 @@ describe("document operation generation guards", () => {
   });
 });
 
+describe("document related knowledge", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("loads once per document and resets with sensitive state", async () => {
+    setActivePinia(createPinia());
+    const store = useDocumentStore();
+    setDocument(store, "doc-a", "A");
+    const pending = deferred({
+      items: [relatedItem("related-a", "Related A")],
+    });
+    vi.spyOn(documentApi, "related").mockReturnValue(pending.promise);
+
+    const first = store.loadRelated();
+    const second = store.loadRelated();
+
+    expect(documentApi.related).toHaveBeenCalledOnce();
+    expect(store.relatedStatus).toBe("loading");
+    pending.resolve({
+      items: [relatedItem("related-a", "Related A")],
+    });
+    await Promise.all([first, second]);
+
+    expect(store.relatedStatus).toBe("loaded");
+    expect(store.relatedItems).toHaveLength(1);
+    expect(store.relatedLoadedDocumentId).toBe("doc-a");
+
+    store.resetSensitive();
+
+    expect(store.relatedStatus).toBe("idle");
+    expect(store.relatedItems).toEqual([]);
+    expect(store.relatedError).toBeNull();
+    expect(store.relatedLoadedDocumentId).toBeNull();
+  });
+
+  it("clears immediately and drops a late response after switching documents", async () => {
+    setActivePinia(createPinia());
+    const store = useDocumentStore();
+    setDocument(store, "doc-a", "A");
+    const pending = deferred({
+      items: [relatedItem("old-related", "Old related")],
+    });
+    vi.spyOn(documentApi, "related").mockReturnValue(pending.promise);
+    vi.spyOn(documentApi, "metadata").mockImplementation((id) =>
+      Promise.resolve(metadata(id, id === "doc-a" ? "A" : "B")),
+    );
+    vi.spyOn(documentApi, "content").mockImplementation((id) =>
+      Promise.resolve(content(id, id)),
+    );
+    vi.spyOn(documentApi, "map").mockImplementation((id) =>
+      Promise.resolve(map(id, id === "doc-a" ? "A" : "B")),
+    );
+
+    const loading = store.loadRelated();
+    await store.open("doc-b");
+    expect(store.relatedStatus).toBe("idle");
+    expect(store.relatedItems).toEqual([]);
+
+    pending.resolve({
+      items: [relatedItem("old-related", "Old related")],
+    });
+    await loading;
+
+    expect(store.documentId).toBe("doc-b");
+    expect(store.relatedStatus).toBe("idle");
+    expect(store.relatedItems).toEqual([]);
+  });
+
+  it("force refresh replaces a loaded result", async () => {
+    setActivePinia(createPinia());
+    const store = useDocumentStore();
+    setDocument(store, "doc-a", "A");
+    vi.spyOn(documentApi, "related")
+      .mockResolvedValueOnce({
+        items: [relatedItem("related-a", "Related A")],
+      })
+      .mockResolvedValueOnce({
+        items: [relatedItem("related-b", "Related B")],
+      });
+
+    await store.loadRelated();
+    await store.loadRelated(true);
+
+    expect(documentApi.related).toHaveBeenCalledTimes(2);
+    expect(store.relatedItems[0]?.title).toBe("Related B");
+  });
+});
+
 const deferred = <T>(initial?: T) => {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((resolvePromise) => {
@@ -445,6 +534,22 @@ const map = (documentId: string, title: string) => ({
   headingsTruncated: false,
   frontMatterTruncated: false,
   linksTruncated: false,
+});
+
+const relatedItem = (documentId: string, title: string) => ({
+  documentId,
+  title,
+  virtualPath: `${title}.md`,
+  revision: 1,
+  tags: ["Work"],
+  score: 40,
+  reasons: [
+    {
+      code: "same_project" as const,
+      label: "同一项目",
+    },
+  ],
+  updatedAt: "2026-11-02T00:00:00Z",
 });
 
 const setDocument = (

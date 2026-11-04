@@ -12,6 +12,7 @@ import type {
   DocumentMap,
   DocumentMetadata,
   DocumentWriteResult,
+  RelatedDocumentItem,
   RevisionContent,
   RevisionItem,
   UnlinkedMentionItem,
@@ -47,6 +48,8 @@ export interface SaveConflict {
   latest: DocumentDraft | null;
 }
 
+export type RelatedStatus = "idle" | "loading" | "loaded" | "empty" | "error";
+
 export const useDocumentStore = defineStore("document", () => {
   const documentId = ref<string | null>(null);
   const metadata = ref<DocumentMetadata | null>(null);
@@ -59,6 +62,10 @@ export const useDocumentStore = defineStore("document", () => {
   const map = ref<DocumentMap | null>(null);
   const backlinks = ref<BacklinkItem[]>([]);
   const mentions = ref<UnlinkedMentionItem[]>([]);
+  const relatedItems = ref<RelatedDocumentItem[]>([]);
+  const relatedStatus = ref<RelatedStatus>("idle");
+  const relatedError = ref<ApiClientError | null>(null);
+  const relatedLoadedDocumentId = ref<string | null>(null);
   const revisions = ref<RevisionItem[]>([]);
   const revisionContents = ref<Record<string, RevisionContent>>({});
   const backlinkCursor = ref<string | null>(null);
@@ -74,6 +81,7 @@ export const useDocumentStore = defineStore("document", () => {
   let requestGeneration = 0;
   let backlinkRequestGeneration = 0;
   let mentionRequestGeneration = 0;
+  let relatedRequestGeneration = 0;
   let revisionRequestGeneration = 0;
   let conflictRequestGeneration = 0;
   let reloadRequestGeneration = 0;
@@ -106,6 +114,23 @@ export const useDocumentStore = defineStore("document", () => {
     !documentSwitchInProgress &&
     documentId.value === context.documentId &&
     requestGeneration === context.documentGeneration;
+
+  const isCurrentRelated = (
+    id: string,
+    documentGeneration: number,
+    relatedGeneration: number,
+  ): boolean =>
+    documentId.value === id &&
+    requestGeneration === documentGeneration &&
+    relatedRequestGeneration === relatedGeneration;
+
+  const resetRelated = (): void => {
+    relatedRequestGeneration++;
+    relatedItems.value = [];
+    relatedStatus.value = "idle";
+    relatedError.value = null;
+    relatedLoadedDocumentId.value = null;
+  };
 
   const operationCounter = (
     kind: DocumentOperationContext["operationKind"],
@@ -202,6 +227,7 @@ export const useDocumentStore = defineStore("document", () => {
   const open = async (id: string): Promise<void> => {
     const generation = ++requestGeneration;
     invalidateDocumentOperations();
+    resetRelated();
     documentSwitchInProgress = true;
     loading.value = true;
     error.value = null;
@@ -621,6 +647,52 @@ export const useDocumentStore = defineStore("document", () => {
     ]);
   };
 
+  const loadRelated = async (force = false): Promise<void> => {
+    const id = documentId.value;
+    if (!id) {
+      return;
+    }
+    if (
+      !force &&
+      relatedLoadedDocumentId.value === id &&
+      (relatedStatus.value === "loading" ||
+        relatedStatus.value === "loaded" ||
+        relatedStatus.value === "empty")
+    ) {
+      return;
+    }
+
+    const documentGeneration = requestGeneration;
+    const generation = ++relatedRequestGeneration;
+    relatedLoadedDocumentId.value = id;
+    relatedStatus.value = "loading";
+    relatedError.value = null;
+    try {
+      const response = await documentApi.related(id);
+      if (!isCurrentRelated(id, documentGeneration, generation)) {
+        return;
+      }
+      relatedItems.value = response.items;
+      relatedStatus.value = response.items.length === 0 ? "empty" : "loaded";
+    } catch (caught) {
+      if (
+        caught instanceof StaleSessionResponseError ||
+        !isCurrentRelated(id, documentGeneration, generation)
+      ) {
+        return;
+      }
+      relatedItems.value = [];
+      relatedError.value =
+        caught instanceof ApiClientError
+          ? caught
+          : new ApiClientError(0, {
+              code: "network_error",
+              message: "无法读取相关文档。",
+            });
+      relatedStatus.value = "error";
+    }
+  };
+
   const toggleRevisionSelection = (revisionId: string): void => {
     revisionCompareRequestGeneration++;
     revisionDiff.value = "";
@@ -742,6 +814,7 @@ export const useDocumentStore = defineStore("document", () => {
   const resetSensitive = (): void => {
     requestGeneration++;
     invalidateDocumentOperations();
+    resetRelated();
     documentSwitchInProgress = false;
     documentId.value = null;
     metadata.value = null;
@@ -783,6 +856,10 @@ export const useDocumentStore = defineStore("document", () => {
     map,
     backlinks,
     mentions,
+    relatedItems,
+    relatedStatus,
+    relatedError,
+    relatedLoadedDocumentId,
     revisions,
     revisionContents,
     selectedRevisionIds,
@@ -809,6 +886,7 @@ export const useDocumentStore = defineStore("document", () => {
     loadMentions,
     loadRevisions,
     loadInspector,
+    loadRelated,
     toggleRevisionSelection,
     compareSelectedRevisions,
     restoreRevision,

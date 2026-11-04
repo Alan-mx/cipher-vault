@@ -338,6 +338,18 @@ public static class SqliteMcDatabaseFactory
     private static void RegisterSearchFunctions(SqliteConnection connection)
     {
         connection.CreateFunction<string?, string?, long?>(
+            "cv_ordinal_ignore_case_equals",
+            (left, right) =>
+                left is null || right is null
+                    ? null
+                    : string.Equals(
+                        left,
+                        right,
+                        StringComparison.OrdinalIgnoreCase)
+                        ? 1L
+                        : 0L,
+            isDeterministic: true);
+        connection.CreateFunction<string?, string?, long?>(
             "cv_ordinal_ignore_case_contains",
             (value, search) =>
                 value is null || search is null

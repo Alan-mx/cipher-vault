@@ -199,6 +199,48 @@ test("Phase 6 desktop flow, responsive layout and accessibility", async ({
     });
     return { targetId: target.documentId, sourceId: source.documentId };
   });
+  const relatedDocuments = await page.evaluate(async () => {
+    const token = await fetch("/api/vault/antiforgery")
+      .then((response) => response.json())
+      .then((body: { token: string }) => body.token);
+    const create = async (body: object) => {
+      const response = await fetch("/api/documents", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-TOKEN": token,
+        },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        throw new Error(`Related document create failed: ${response.status}`);
+      }
+      return response.json() as Promise<{ documentId: string }>;
+    };
+    const candidate = await create({
+      title: "Related Candidate",
+      virtualPath: "related/candidate.md",
+      format: "md",
+      content: "---\nproject: CipherVault\n---\n\nCandidate body",
+    });
+    const direct = await create({
+      title: "Related Direct",
+      virtualPath: "related/direct.md",
+      format: "md",
+      content: "---\nproject: CipherVault\n---\n\nDirect body",
+    });
+    const source = await create({
+      title: "Related Source",
+      virtualPath: "related/source.md",
+      format: "md",
+      content: "---\nproject: CipherVault\n---\n\n[[Related Direct]]",
+    });
+    return {
+      candidateId: candidate.documentId,
+      directId: direct.documentId,
+      sourceId: source.documentId,
+    };
+  });
   await page.goto(`/documents/${linkedDocuments.sourceId}`);
   await page.getByText("预览", { exact: true }).click();
   const markdownLink = page.locator("a.document-link", { hasText: "Jump" });
@@ -216,6 +258,33 @@ test("Phase 6 desktop flow, responsive layout and accessibility", async ({
   await expect(
     page.locator('[id="cv-heading-REDIS%20%E7%BC%93%E5%AD%98"]'),
   ).toBeVisible();
+  await page.goto(`/documents/${relatedDocuments.sourceId}`);
+  await expect(page.locator(".cm-content")).toBeVisible();
+  await page.getByText("相关", { exact: true }).click();
+  await expect(
+    page.locator(".related-panel").getByRole("button", {
+      name: /Related Candidate/,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.locator(".related-panel").getByText("Related Direct", {
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "刷新相关推荐" }).click();
+  await expect(
+    page.locator(".related-panel").getByRole("button", {
+      name: /Related Candidate/,
+    }),
+  ).toBeVisible();
+  await page
+    .locator(".related-panel")
+    .getByRole("button", { name: /Related Candidate/ })
+    .click();
+  await expect(page).toHaveURL(
+    new RegExp(`/documents/${relatedDocuments.candidateId}$`),
+  );
+  await page.goto(`/documents/${relatedDocuments.sourceId}`);
   await page.getByRole("button", { name: "搜索文档" }).click();
   await page.getByPlaceholder("输入全文搜索词…").fill("Needle");
   await expect(
@@ -391,6 +460,17 @@ test("Phase 6 desktop flow, responsive layout and accessibility", async ({
   });
   await assertNoHorizontalOverflow(page);
   await assertNoSeriousAxeViolations(page, "editor mobile");
+
+  await page.goto(`/documents/${relatedDocuments.sourceId}`);
+  await page.getByRole("button", { name: "文档信息" }).click();
+  const inspectorDrawer = page.getByRole("dialog");
+  await inspectorDrawer.getByText("相关", { exact: true }).click();
+  await expect(
+    inspectorDrawer.locator(".related-panel").getByRole("button", {
+      name: /Related Candidate/,
+    }),
+  ).toBeVisible();
+  await assertNoHorizontalOverflow(page);
 
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(documentUrl);

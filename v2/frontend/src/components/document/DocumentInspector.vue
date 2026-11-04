@@ -1,20 +1,44 @@
 <script setup lang="ts">
+import { ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { NButton, NEmpty, NTabPane, NTabs, NTag } from "naive-ui";
 import { useDocumentStore } from "../../stores/document";
+import RelatedPanel from "./RelatedPanel.vue";
 import RevisionPanel from "./RevisionPanel.vue";
 
 const documents = useDocumentStore();
 const router = useRouter();
+const activeTab = ref("outline");
 
 const openDocument = async (documentId: string): Promise<void> => {
   await router.push({ name: "document", params: { id: documentId } });
 };
+
+const handleTabChange = (value: string): void => {
+  if (value === "related") {
+    void documents.loadRelated();
+  }
+};
+
+watch(
+  () => documents.documentId,
+  (documentId) => {
+    if (documentId && activeTab.value === "related") {
+      void documents.loadRelated();
+    }
+  },
+);
 </script>
 
 <template>
   <aside class="document-inspector" aria-label="文档知识信息">
-    <NTabs type="line" animated size="small" default-value="outline">
+    <NTabs
+      v-model:value="activeTab"
+      type="line"
+      animated
+      size="small"
+      @update:value="handleTabChange"
+    >
       <NTabPane name="outline" tab="大纲">
         <div v-if="documents.map?.headings.length" class="inspector-list">
           <div
@@ -152,6 +176,10 @@ const openDocument = async (documentId: string): Promise<void> => {
         >
           加载更多
         </NButton>
+      </NTabPane>
+
+      <NTabPane name="related" tab="相关">
+        <RelatedPanel />
       </NTabPane>
 
       <NTabPane name="revisions" tab="版本">
