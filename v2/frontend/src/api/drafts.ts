@@ -5,6 +5,7 @@ import type {
   DocumentDraftMutationResult,
   DocumentDraftPage,
   DocumentDraftQuery,
+  DocumentDraftQueueSummary,
   DocumentDraftStatus,
   UpdateDocumentDraftRequest,
 } from "../types/api";
@@ -14,12 +15,19 @@ const draftPath = (draftId: string): string =>
   `/api/drafts/${encodeURIComponent(draftId)}`;
 
 export const draftsApi = {
+  summary: () =>
+    apiClient.request<DocumentDraftQueueSummary>("/api/drafts/summary"),
+
   list: (query: DocumentDraftQuery = {}) =>
     apiClient.request<DocumentDraftPage>("/api/drafts", {
       query: {
+        queue: query.queue,
         status: query.status,
         type: query.type,
+        sourceActor: query.sourceActor,
         targetDocumentId: query.targetDocumentId,
+        updatedAfter: query.updatedAfter,
+        updatedBefore: query.updatedBefore,
         pageSize: query.pageSize,
         cursor: query.cursor,
       },

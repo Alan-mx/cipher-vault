@@ -753,6 +753,174 @@ public sealed class DocumentDraftServiceTests
             item => item.DocumentId == document.DocumentId);
     }
 
+    [Fact]
+    public async Task ReviewContextPersistsAcrossDraftUpdatesAndAuditStaysRedacted()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var user = new VaultActorContext(VaultActorKind.UserUi);
+        var mcp = new VaultActorContext(VaultActorKind.Mcp);
+        var document = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Context target",
+                "notes/context-target.md",
+                null,
+                VaultDocumentFormat.Markdown,
+                "# Context target\n",
+                []),
+            user);
+        var created = await fixture.Drafts.CreateAsync(
+            new CreateDocumentDraftRequest(
+                DocumentDraftType.Create,
+                null,
+                null,
+                Parse(
+                    """
+                    {
+                      "title": "Context draft",
+                      "virtualPath": "notes/context-draft.md",
+                      "format": "md",
+                      "content": "# Context draft\n",
+                      "tags": [],
+                      "reviewContext": {
+                        "summary": "Secret summary",
+                        "sources": [
+                          {
+                            "title": "Source",
+                            "excerpt": "Secret excerpt"
+                          }
+                        ]
+                      }
+                    }
+                    """)),
+            mcp,
+            Guid.NewGuid());
+        var createdDetail = await fixture.Drafts.GetAsync(created.DraftId);
+        Assert.Equal(
+            "Secret summary",
+            createdDetail.ReviewContext?.Summary);
+
+        var preserved = await fixture.Drafts.UpdateAsync(
+            created.DraftId,
+            created.DraftRevision,
+            Parse(
+                """
+                {
+                  "title": "Context draft",
+                  "virtualPath": "notes/context-draft.md",
+                  "format": "md",
+                  "content": "# Context draft updated\n",
+                  "tags": []
+                }
+                """),
+            mcp,
+            Guid.NewGuid());
+        var preservedDetail = await fixture.Drafts.GetAsync(created.DraftId);
+        Assert.Equal(
+            "Secret summary",
+            preservedDetail.ReviewContext?.Summary);
+
+        var replaced = await fixture.Drafts.UpdateAsync(
+            created.DraftId,
+            preserved.DraftRevision,
+            Parse(
+                """
+                {
+                  "title": "Context draft",
+                  "virtualPath": "notes/context-draft.md",
+                  "format": "md",
+                  "content": "# Context draft updated\n",
+                  "tags": [],
+                  "reviewContext": {
+                    "summary": "Replacement",
+                    "sources": []
+                  }
+                }
+                """),
+            mcp,
+            Guid.NewGuid());
+        var replacedDetail = await fixture.Drafts.GetAsync(created.DraftId);
+        Assert.Equal("Replacement", replacedDetail.ReviewContext?.Summary);
+
+        _ = await fixture.Drafts.UpdateAsync(
+            created.DraftId,
+            replaced.DraftRevision,
+            Parse(
+                """
+                {
+                  "title": "Context draft",
+                  "virtualPath": "notes/context-draft.md",
+                  "format": "md",
+                  "content": "# Context draft updated\n",
+                  "tags": [],
+                  "reviewContext": null
+                }
+                """),
+            mcp,
+            Guid.NewGuid());
+        var clearedDetail = await fixture.Drafts.GetAsync(created.DraftId);
+        Assert.Null(clearedDetail.ReviewContext);
+
+        var trash = await fixture.Drafts.CreateAsync(
+            new CreateDocumentDraftRequest(
+                DocumentDraftType.Trash,
+                document.DocumentId,
+                document.Revision,
+                Parse(
+                    """
+                    {
+                      "reviewContext": {
+                        "summary": "Trash context",
+                        "sources": []
+                      }
+                    }
+                    """)),
+            mcp,
+            Guid.NewGuid());
+        var trashDetail = await fixture.Drafts.GetAsync(trash.DraftId);
+        Assert.Equal("Trash context", trashDetail.ReviewContext?.Summary);
+        Assert.Equal(
+            ["reviewContext"],
+            trashDetail.Payload.EnumerateObject()
+                .Select(property => property.Name)
+                .ToArray());
+
+        var totalAudit = 0;
+        var withContext = 0;
+        var withSecret = 0;
+        _ = await fixture.QueryAsync(
+            async context =>
+            {
+                using var command = context.CreateCommand();
+                command.Command.CommandText =
+                    """
+                    SELECT
+                        count(*),
+                        sum(
+                            CASE WHEN json_extract(
+                                details_json,
+                                '$.hasReviewContext'
+                            ) = 1 THEN 1 ELSE 0 END
+                        ),
+                        sum(
+                            CASE WHEN details_json LIKE '%Secret%'
+                                THEN 1 ELSE 0 END
+                        )
+                    FROM audit_events
+                    WHERE action LIKE 'draft.%';
+                    """;
+                await using var reader =
+                    await command.Command.ExecuteReaderAsync();
+                Assert.True(await reader.ReadAsync());
+                totalAudit = reader.GetInt32(0);
+                withContext = reader.GetInt32(1);
+                withSecret = reader.GetInt32(2);
+                return 1;
+            });
+        Assert.True(totalAudit >= 5);
+        Assert.True(withContext >= 3);
+        Assert.Equal(0, withSecret);
+    }
+
     private static JsonElement Parse(string json)
     {
         using var document = JsonDocument.Parse(json);

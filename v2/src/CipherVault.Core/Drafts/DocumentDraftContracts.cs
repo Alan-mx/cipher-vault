@@ -21,9 +21,25 @@ public enum DocumentDraftStatus
     Expired
 }
 
+public enum DocumentDraftQueue
+{
+    PendingReview,
+    Working,
+    History
+}
+
+public sealed record DocumentDraftQueueSummary(
+    int PendingReview,
+    int Working,
+    int History);
+
 public sealed record DocumentDraftQuery(
+    DocumentDraftQueue Queue,
     DocumentDraftStatus? Status,
     DocumentDraftType? Type,
+    VaultActorKind? SourceActor,
+    DateTimeOffset? UpdatedAfter,
+    DateTimeOffset? UpdatedBefore,
     Guid? TargetDocumentId,
     CursorPageRequest Page);
 
@@ -50,11 +66,55 @@ public sealed record DocumentDraftPreview(
     IReadOnlyList<string> Tags,
     string UnifiedDiff,
     bool DiffTruncated,
-    int OperationCount);
+    int OperationCount,
+    DocumentDraftStructuredChanges StructuredChanges,
+    DocumentDraftOperationSummary OperationSummary,
+    DocumentDraftBodyEditCapability BodyEdit);
+
+public sealed record DocumentDraftReviewSource(
+    Guid? DocumentId,
+    string? Title,
+    string? VirtualPath,
+    string? Reference,
+    string Excerpt);
+
+public sealed record DocumentDraftReviewContext(
+    string? Summary,
+    IReadOnlyList<DocumentDraftReviewSource> Sources);
+
+public sealed record DocumentDraftFieldChange(
+    string FieldKind,
+    string? Key,
+    bool BeforeExists,
+    string? BeforeValueType,
+    string? Before,
+    bool BeforeTruncated,
+    bool AfterExists,
+    string? AfterValueType,
+    string? After,
+    bool AfterTruncated);
+
+public sealed record DocumentDraftStructuredChanges(
+    IReadOnlyList<DocumentDraftFieldChange> Changes,
+    int TotalChangeCount,
+    bool Truncated);
+
+public sealed record DocumentDraftOperationCount(
+    string Type,
+    int Count);
+
+public sealed record DocumentDraftOperationSummary(
+    int Total,
+    IReadOnlyList<DocumentDraftOperationCount> Items);
+
+public sealed record DocumentDraftBodyEditCapability(
+    bool CanSave,
+    string? Reason);
 
 public sealed record DocumentDraftDetail(
     DocumentDraftMetadata Metadata,
     JsonElement Payload,
+    DocumentDraftReviewContext? ReviewContext,
     DocumentDraftPreview Preview);
 
 public sealed record DocumentDraftPage(
@@ -101,7 +161,8 @@ public sealed record DocumentDraftPreviewComputation(
     DocumentDraftWorkingCopy WorkingCopy,
     string UnifiedDiff,
     bool DiffTruncated,
-    int OperationCount);
+    int OperationCount,
+    DocumentDraftOperationSummary OperationSummary);
 
 public sealed record DocumentDraftRecord(
     Guid DraftId,

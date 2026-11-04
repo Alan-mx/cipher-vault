@@ -40,7 +40,7 @@ public sealed class McpDraftToolsTests
             server.Client,
             token,
             "list_drafts",
-            new { status = "draft" });
+            new { queue = "working", status = "draft" });
         Assert.Contains(
             page.GetProperty("items").EnumerateArray(),
             item => item.GetProperty("draftId").GetGuid() == draftId);

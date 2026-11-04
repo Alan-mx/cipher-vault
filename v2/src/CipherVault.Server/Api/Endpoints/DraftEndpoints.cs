@@ -13,25 +13,52 @@ public static class DraftEndpoints
     {
         var group = endpoints.MapGroup("/api/drafts");
         group.MapGet(
+                "/summary",
+                async (
+                    DocumentDraftService drafts,
+                    CancellationToken cancellationToken) =>
+                {
+                    var summary =
+                        await drafts.GetSummaryAsync(cancellationToken);
+                    return Results.Ok(summary.ToApiResponse());
+                })
+            .RequireAuthorization()
+            .WithName("GetDocumentDraftSummary");
+
+        group.MapGet(
                 "",
                 async (
+                    string? queue,
                     string? status,
                     string? type,
+                    string? sourceActor,
                     string? targetDocumentId,
-                    int? pageSize,
+                    string? updatedAfter,
+                    string? updatedBefore,
+                    string? pageSize,
                     string? cursor,
                     DocumentDraftService drafts,
                     CancellationToken cancellationToken) =>
                 {
                     var query = new DocumentDraftQuery(
+                        DocumentDraftApiMapper.ParseQueue(queue),
                         DocumentDraftApiMapper.ParseStatus(status),
                         DocumentDraftApiMapper.ParseType(type),
+                        DocumentDraftApiMapper.ParseDraftSourceActor(sourceActor),
+                        DocumentDraftApiMapper.ParseTimestamp(
+                            updatedAfter,
+                            "updatedAfter"),
+                        DocumentDraftApiMapper.ParseTimestamp(
+                            updatedBefore,
+                            "updatedBefore"),
                         targetDocumentId is null
                             ? null
                             : ApiQueryBinding.ParseGuid(
                                 targetDocumentId,
                                 "targetDocumentId"),
-                        new CursorPageRequest(pageSize, cursor));
+                        new CursorPageRequest(
+                            DocumentDraftApiMapper.ParsePageSize(pageSize),
+                            cursor));
                     var page = await drafts.ListAsync(query, cancellationToken);
                     return Results.Ok(page.ToApiResponse());
                 })

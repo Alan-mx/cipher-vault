@@ -522,6 +522,8 @@ export interface McpWriteModeStatus {
 
 export type DocumentDraftType = "create" | "update" | "trash";
 
+export type DocumentDraftQueue = "pending_review" | "working" | "history";
+
 export type DocumentDraftStatus =
   | "draft"
   | "pending_review"
@@ -530,6 +532,12 @@ export type DocumentDraftStatus =
   | "rejected"
   | "discarded"
   | "expired";
+
+export interface DocumentDraftQueueSummary {
+  pendingReview: number;
+  working: number;
+  history: number;
+}
 
 export interface DocumentDraftItem {
   draftId: GuidString;
@@ -552,17 +560,81 @@ export interface DocumentDraftItem {
 
 export type DocumentDraftPage = CursorPage<DocumentDraftItem>;
 
+export interface DocumentDraftReviewSource {
+  documentId?: GuidString | null;
+  title?: string | null;
+  virtualPath?: string | null;
+  reference?: string | null;
+  excerpt: string;
+}
+
+export interface DocumentDraftReviewContext {
+  summary?: string | null;
+  sources: DocumentDraftReviewSource[];
+}
+
+export interface DocumentDraftFieldChange {
+  fieldKind:
+    | "title"
+    | "virtual_path"
+    | "format"
+    | "tags"
+    | "frontmatter"
+    | "body"
+    | "trash";
+  key?: string | null;
+  beforeExists: boolean;
+  beforeValueType?: string | null;
+  before?: string | null;
+  beforeTruncated: boolean;
+  afterExists: boolean;
+  afterValueType?: string | null;
+  after?: string | null;
+  afterTruncated: boolean;
+}
+
+export interface DocumentDraftStructuredChanges {
+  changes: DocumentDraftFieldChange[];
+  totalChangeCount: number;
+  truncated: boolean;
+}
+
+export interface DocumentDraftOperationCount {
+  type:
+    | "replace_body"
+    | "append_body"
+    | "set_property"
+    | "remove_property"
+    | "add_tag"
+    | "remove_tag";
+  count: number;
+}
+
+export interface DocumentDraftOperationSummary {
+  total: number;
+  items: DocumentDraftOperationCount[];
+}
+
+export interface DocumentDraftBodyEditCapability {
+  canSave: boolean;
+  reason?: string | null;
+}
+
 export interface DocumentDraftPreview {
   content: string;
   tags: string[];
   unifiedDiff: string;
   diffTruncated: boolean;
   operationCount: number;
+  structuredChanges: DocumentDraftStructuredChanges;
+  operationSummary: DocumentDraftOperationSummary;
+  bodyEdit: DocumentDraftBodyEditCapability;
 }
 
 export interface DocumentDraftDetail {
   metadata: DocumentDraftItem;
   payload: Record<string, unknown>;
+  reviewContext?: DocumentDraftReviewContext | null;
   preview: DocumentDraftPreview;
 }
 
@@ -594,9 +666,26 @@ export interface UpdateDocumentDraftRequest {
 }
 
 export interface DocumentDraftQuery {
-  status?: DocumentDraftStatus;
-  type?: DocumentDraftType;
-  targetDocumentId?: GuidString;
-  pageSize?: number;
-  cursor?: string;
+  queue?: DocumentDraftQueue | undefined;
+  status?: DocumentDraftStatus | undefined;
+  type?: DocumentDraftType | undefined;
+  sourceActor?: "user_ui" | "mcp" | undefined;
+  targetDocumentId?: GuidString | undefined;
+  updatedAfter?: UtcTimestamp | undefined;
+  updatedBefore?: UtcTimestamp | undefined;
+  pageSize?: number | undefined;
+  cursor?: string | undefined;
+}
+
+export type DraftBatchAction = "submit_review" | "reject" | "discard";
+
+export type DraftBatchResultKind =
+  "success" | "revision_conflict" | "not_editable" | "failed";
+
+export interface DraftBatchItemResult {
+  draftId: GuidString;
+  action: DraftBatchAction;
+  kind: DraftBatchResultKind;
+  errorCode?: string;
+  message?: string;
 }

@@ -28,7 +28,7 @@ const searchOpen = ref(false);
 const items = [
   { name: "documents", label: "知识库", icon: BookOpenText },
   { name: "knowledge-views", label: "知识视图", icon: LayoutGrid },
-  { name: "review", label: "待审核", icon: ClipboardCheck },
+  { name: "review", label: "AI 工作区", icon: ClipboardCheck },
   { name: "graph", label: "知识网络", icon: Network },
   { name: "trash", label: "回收站", icon: Trash2 },
   { name: "import", label: "导入", icon: FileInput },

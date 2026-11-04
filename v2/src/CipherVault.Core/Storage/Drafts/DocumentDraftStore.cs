@@ -117,6 +117,44 @@ public static class DocumentDraftStore
         }
     }
 
+    public static async Task<IReadOnlySet<Guid>> ReadAvailableDocumentIdsAsync(
+        VaultOperationContext context,
+        IReadOnlyCollection<Guid> documentIds,
+        CancellationToken cancellationToken)
+    {
+        var ids = documentIds.Distinct().ToArray();
+        if (ids.Length == 0)
+        {
+            return new HashSet<Guid>();
+        }
+
+        using var command = context.CreateCommand();
+        var parameters = string.Join(
+            ", ",
+            ids.Select((_, index) => $"$id{index}"));
+        command.Command.CommandText =
+            $"""
+             SELECT document_id
+             FROM documents
+             WHERE deleted_at IS NULL
+               AND document_id IN ({parameters});
+             """;
+        for (var index = 0; index < ids.Length; index++)
+        {
+            command.Command.Parameters.AddWithValue(
+                $"$id{index}",
+                ids[index].ToString("D"));
+        }
+        var available = new HashSet<Guid>();
+        await using var reader =
+            await command.Command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            available.Add(Guid.Parse(reader.GetString(0)));
+        }
+        return available;
+    }
+
     public static async Task<DocumentDraftRecord> UpdateAsync(
         VaultOperationContext context,
         int expectedDraftRevision,
@@ -166,6 +204,43 @@ public static class DocumentDraftStore
         throw DraftRevisionConflict(current.DraftRevision);
     }
 
+    public static async Task<DocumentDraftQueueSummary> GetSummaryAsync(
+        VaultOperationContext context,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        using var command = context.CreateCommand();
+        command.Command.CommandText =
+            """
+            SELECT
+                coalesce(sum(
+                    CASE WHEN status = 'pending_review' THEN 1 ELSE 0 END
+                ), 0),
+                coalesce(sum(
+                    CASE WHEN status IN ('draft', 'conflict') THEN 1 ELSE 0 END
+                ), 0),
+                coalesce(sum(
+                    CASE WHEN status IN (
+                        'applied',
+                        'rejected',
+                        'discarded',
+                        'expired'
+                    ) THEN 1 ELSE 0 END
+                ), 0)
+            FROM document_drafts;
+            """;
+        await using var reader =
+            await command.Command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return new DocumentDraftQueueSummary(0, 0, 0);
+        }
+        return new DocumentDraftQueueSummary(
+            reader.GetInt32(0),
+            reader.GetInt32(1),
+            reader.GetInt32(2));
+    }
+
     public static async Task<DocumentDraftRecordPage> ListAsync(
         VaultOperationContext context,
         DocumentDraftQuery query,
@@ -175,11 +250,45 @@ public static class DocumentDraftStore
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(query);
         var pageSize = NormalizePageSize(query.Page.PageSize);
+        var queueStatuses = QueueStatuses(query.Queue);
+        if (query.Status is { } filterStatus
+            && !queueStatuses.Contains(filterStatus))
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "Draft status does not belong to the selected queue.");
+        }
+        if (query.SourceActor is { } sourceActor
+            && sourceActor is not (VaultActorKind.UserUi or VaultActorKind.Mcp))
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "Draft source actor must be user_ui or mcp.");
+        }
+        if (query.UpdatedAfter is { } updatedAfter
+            && query.UpdatedBefore is { } updatedBefore
+            && updatedAfter >= updatedBefore)
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "Draft updatedAfter must be earlier than updatedBefore.");
+        }
+        var sourceActorValue = query.SourceActor switch
+        {
+            VaultActorKind.UserUi => "user_ui",
+            VaultActorKind.Mcp => "mcp",
+            _ => null
+        };
         var fingerprint = CursorCodec.Fingerprint(
             "document-drafts",
+            query.Queue.ToString(),
             query.Status?.ToDatabaseValue(),
             query.Type?.ToDatabaseValue(),
-            query.TargetDocumentId?.ToString("D"));
+            sourceActorValue,
+            query.TargetDocumentId?.ToString("D"),
+            query.UpdatedAfter?.ToUniversalTime().ToString("O"),
+            query.UpdatedBefore?.ToUniversalTime().ToString("O"),
+            pageSize.ToString(CultureInfo.InvariantCulture));
         var hasCursor = CursorCodec.TryDecode(
             query.Page.Cursor,
             "document-drafts",
@@ -223,6 +332,23 @@ public static class DocumentDraftStore
                 "$status",
                 status.ToDatabaseValue());
         }
+        else
+        {
+            sql.Append(" AND status IN (");
+            for (var index = 0; index < queueStatuses.Count; index++)
+            {
+                if (index > 0)
+                {
+                    sql.Append(", ");
+                }
+                var parameter = $"$queueStatus{index}";
+                sql.Append(parameter);
+                command.Command.Parameters.AddWithValue(
+                    parameter,
+                    queueStatuses[index].ToDatabaseValue());
+            }
+            sql.Append(')');
+        }
         if (query.Type is { } type)
         {
             sql.Append(" AND draft_type = $draftType");
@@ -236,6 +362,27 @@ public static class DocumentDraftStore
             command.Command.Parameters.AddWithValue(
                 "$targetDocumentId",
                 targetDocumentId.ToString("D"));
+        }
+        if (sourceActorValue is not null)
+        {
+            sql.Append(" AND source_actor = $sourceActor");
+            command.Command.Parameters.AddWithValue(
+                "$sourceActor",
+                sourceActorValue);
+        }
+        if (query.UpdatedAfter is { } afterBound)
+        {
+            sql.Append(" AND updated_at >= $updatedAfter");
+            command.Command.Parameters.AddWithValue(
+                "$updatedAfter",
+                afterBound.ToUniversalTime().ToString("O"));
+        }
+        if (query.UpdatedBefore is { } beforeBound)
+        {
+            sql.Append(" AND updated_at < $updatedBefore");
+            command.Command.Parameters.AddWithValue(
+                "$updatedBefore",
+                beforeBound.ToUniversalTime().ToString("O"));
         }
         if (cursor is not null)
         {
@@ -291,6 +438,26 @@ public static class DocumentDraftStore
             : null;
         return new DocumentDraftRecordPage(rows, nextCursor);
     }
+
+    private static IReadOnlyList<DocumentDraftStatus> QueueStatuses(
+        DocumentDraftQueue queue) =>
+        queue switch
+        {
+            DocumentDraftQueue.PendingReview =>
+                [DocumentDraftStatus.PendingReview],
+            DocumentDraftQueue.Working =>
+                [DocumentDraftStatus.Draft, DocumentDraftStatus.Conflict],
+            DocumentDraftQueue.History =>
+            [
+                DocumentDraftStatus.Applied,
+                DocumentDraftStatus.Rejected,
+                DocumentDraftStatus.Discarded,
+                DocumentDraftStatus.Expired
+            ],
+            _ => throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "Draft queue is invalid.")
+        };
 
     public static async Task<int> CountNonTerminalAsync(
         VaultOperationContext context,

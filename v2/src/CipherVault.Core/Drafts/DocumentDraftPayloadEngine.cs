@@ -20,11 +20,50 @@ public static class DocumentDraftPayloadEngine
     {
         WriteIndented = false
     };
+    private static readonly HashSet<string> CreatePayloadKeys =
+        new(StringComparer.Ordinal)
+        {
+            "title",
+            "virtualPath",
+            "folder",
+            "format",
+            "content",
+            "tags",
+            "reviewContext"
+        };
+    private static readonly HashSet<string> UpdatePayloadKeys =
+        new(StringComparer.Ordinal)
+        {
+            "operations",
+            "reviewContext"
+        };
+    private static readonly HashSet<string> ReplaceBodyKeys =
+        OperationKeys("replace_body", "content");
+    private static readonly HashSet<string> AppendBodyKeys =
+        OperationKeys("append_body", "content");
+    private static readonly HashSet<string> SetPropertyKeys =
+        OperationKeys("set_property", "key", "value");
+    private static readonly HashSet<string> RemovePropertyKeys =
+        OperationKeys("remove_property", "key");
+    private static readonly HashSet<string> AddTagKeys =
+        OperationKeys("add_tag", "tag");
+    private static readonly HashSet<string> RemoveTagKeys =
+        OperationKeys("remove_tag", "tag");
+    private static readonly string[] OperationTypeOrder =
+    [
+        "replace_body",
+        "append_body",
+        "set_property",
+        "remove_property",
+        "add_tag",
+        "remove_tag"
+    ];
 
     internal static PreparedCreateDraftPayload PrepareCreatePayload(
         JsonElement payload,
         Guid futureDocumentId,
-        bool allowMatchingIdentity = false)
+        bool allowMatchingIdentity = false,
+        JsonElement? existingPayload = null)
     {
         RequireObject(payload, "Create draft payload");
         if (payload.TryGetProperty("futureDocumentId", out _)
@@ -34,12 +73,20 @@ public static class DocumentDraftPayloadEngine
                 VaultErrorCode.DocumentIdProtected,
                 "Create draft system identity fields are managed by the server.");
         }
-        var title = RequireString(payload, "title", allowEmpty: false);
-        var content = RequireString(payload, "content", allowEmpty: true);
-        var format = ParseFormat(RequireString(payload, "format", allowEmpty: false));
-        var virtualPath = OptionalString(payload, "virtualPath");
-        var folder = OptionalString(payload, "folder");
-        var tags = OptionalStringArray(payload, "tags");
+        DocumentDraftReviewContextCodec.EnsureOnlyProperties(
+            payload,
+            "Create draft payload",
+            CreatePayloadKeys);
+        DocumentDraftReviewContextCodec.ValidateFromPayload(payload);
+        var source = existingPayload is { } existing
+            ? DocumentDraftReviewContextCodec.MergeForUpdate(payload, existing)
+            : payload;
+        var title = RequireString(source, "title", allowEmpty: false);
+        var content = RequireString(source, "content", allowEmpty: true);
+        var format = ParseFormat(RequireString(source, "format", allowEmpty: false));
+        var virtualPath = OptionalString(source, "virtualPath");
+        var folder = OptionalString(source, "folder");
+        var tags = OptionalStringArray(source, "tags");
         if (format == VaultDocumentFormat.Markdown)
         {
             var identity = DocumentIdentity.InspectMarkdown(content);
@@ -92,6 +139,17 @@ public static class DocumentDraftPayloadEngine
                 tags = working.Tags
             },
             JsonOptions);
+        var reviewContext =
+            DocumentDraftReviewContextCodec.NormalizeForCreate(source);
+        if (reviewContext is { } context)
+        {
+            var node = JsonNode.Parse(persistedPayload.GetRawText())
+                as JsonObject
+                ?? throw CorruptDraft(
+                    "Create draft payload could not be normalized.");
+            node["reviewContext"] = JsonNode.Parse(context.GetRawText());
+            persistedPayload = JsonSerializer.SerializeToElement(node, JsonOptions);
+        }
         return new PreparedCreateDraftPayload(
             futureDocumentId,
             persistedPayload,
@@ -190,14 +248,32 @@ public static class DocumentDraftPayloadEngine
         _ = ParseOperations(payload);
     }
 
+    public static JsonElement PrepareUpdatePayload(
+        JsonElement payload,
+        JsonElement existingPayload)
+    {
+        _ = ParseOperations(payload);
+        return DocumentDraftReviewContextCodec.MergeForUpdate(
+            payload,
+            existingPayload);
+    }
+
     public static void ValidateTrashPayload(JsonElement payload)
     {
-        RequireObject(payload, "Trash draft payload");
-        if (payload.EnumerateObject().Any())
-        {
-            throw InvalidOperation(
-                "Trash draft payload must be an empty object.");
-        }
+        _ = DocumentDraftReviewContextCodec.NormalizeTrashPayload(payload);
+    }
+
+    public static JsonElement NormalizeTrashPayload(JsonElement payload) =>
+        DocumentDraftReviewContextCodec.NormalizeTrashPayload(payload);
+
+    public static JsonElement PrepareTrashPayload(
+        JsonElement incomingPayload,
+        JsonElement existingPayload)
+    {
+        var merged = DocumentDraftReviewContextCodec.MergeForUpdate(
+            incomingPayload,
+            existingPayload);
+        return DocumentDraftReviewContextCodec.NormalizeTrashPayload(merged);
     }
 
     public static DocumentDraftPreviewComputation ComputePreview(
@@ -327,7 +403,8 @@ public static class DocumentDraftPayloadEngine
             working,
             diff.Text,
             diff.Truncated,
-            OperationCount: 0);
+            OperationCount: 0,
+            EmptyOperationSummary());
     }
 
     private static DocumentDraftPreviewComputation ComputeUpdate(
@@ -335,6 +412,7 @@ public static class DocumentDraftPayloadEngine
         DocumentDraftSnapshot baseSnapshot)
     {
         var operations = ParseOperations(payload);
+        var operationSummary = SummarizeOperations(operations);
         var working = new DocumentDraftWorkingCopy(
             baseSnapshot.DocumentId,
             baseSnapshot.Title,
@@ -365,7 +443,8 @@ public static class DocumentDraftPayloadEngine
             working,
             diff.Text,
             diff.Truncated,
-            operations.Count);
+            operations.Count,
+            operationSummary);
     }
 
     private static DocumentDraftPreviewComputation ComputeTrash(
@@ -383,13 +462,140 @@ public static class DocumentDraftPayloadEngine
                 baseSnapshot.Tags),
             string.Empty,
             DiffTruncated: false,
-            OperationCount: 0);
+            OperationCount: 0,
+            EmptyOperationSummary());
     }
+
+    public static DocumentDraftOperationSummary GetOperationSummary(
+        DocumentDraftType draftType,
+        JsonElement payload) =>
+        draftType == DocumentDraftType.Update
+            ? SummarizeOperations(ParseOperations(payload))
+            : EmptyOperationSummary();
+
+    public static DocumentDraftBodyEditCapability GetBodyEditCapability(
+        DocumentDraftRecord draft,
+        JsonElement payload,
+        DocumentDraftSnapshot? snapshot,
+        DocumentDraftWorkingCopy preview)
+    {
+        if (draft.Status is not (
+            DocumentDraftStatus.Draft
+            or DocumentDraftStatus.PendingReview))
+        {
+            return new DocumentDraftBodyEditCapability(
+                false,
+                "draft_not_editable");
+        }
+        if (draft.DraftType == DocumentDraftType.Create)
+        {
+            return new DocumentDraftBodyEditCapability(true, null);
+        }
+        if (draft.DraftType == DocumentDraftType.Trash)
+        {
+            return new DocumentDraftBodyEditCapability(
+                false,
+                "trash_not_editable");
+        }
+        if (snapshot is null
+            || !payload.TryGetProperty("operations", out var operations)
+            || operations.ValueKind != JsonValueKind.Array)
+        {
+            return new DocumentDraftBodyEditCapability(
+                false,
+                "mixed_body_operation_unsafe");
+        }
+
+        var candidateOperations = new JsonArray();
+        foreach (var operation in operations.EnumerateArray())
+        {
+            var type = operation.GetProperty("type").GetString();
+            if (type is "replace_body" or "append_body")
+            {
+                continue;
+            }
+            candidateOperations.Add(JsonNode.Parse(operation.GetRawText()));
+        }
+        candidateOperations.Add(new JsonObject
+        {
+            ["type"] = "replace_body",
+            ["content"] = preview.Content
+        });
+        var candidate = new JsonObject
+        {
+            ["operations"] = candidateOperations
+        };
+        if (payload.TryGetProperty("reviewContext", out var context)
+            && context.ValueKind != JsonValueKind.Null)
+        {
+            candidate["reviewContext"] = JsonNode.Parse(context.GetRawText());
+        }
+
+        try
+        {
+            _ = ComputeUpdate(
+                JsonSerializer.SerializeToElement(candidate, JsonOptions),
+                snapshot);
+            return new DocumentDraftBodyEditCapability(true, null);
+        }
+        catch (VaultException)
+        {
+            return new DocumentDraftBodyEditCapability(
+                false,
+                "mixed_body_operation_unsafe");
+        }
+    }
+
+    private static DocumentDraftOperationSummary EmptyOperationSummary() =>
+        new(0, []);
+
+    private static DocumentDraftOperationSummary SummarizeOperations(
+        IReadOnlyList<DraftOperation> operations)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            ["replace_body"] = 0,
+            ["append_body"] = 0,
+            ["set_property"] = 0,
+            ["remove_property"] = 0,
+            ["add_tag"] = 0,
+            ["remove_tag"] = 0
+        };
+        foreach (var operation in operations)
+        {
+            counts[OperationType(operation)]++;
+        }
+        return new DocumentDraftOperationSummary(
+            operations.Count,
+            OperationTypeOrder
+                .Where(type => counts[type] > 0)
+                .Select(type => new DocumentDraftOperationCount(
+                    type,
+                    counts[type]))
+                .ToArray());
+    }
+
+    private static string OperationType(DraftOperation operation) =>
+        operation switch
+        {
+            ReplaceBodyOperation => "replace_body",
+            AppendBodyOperation => "append_body",
+            SetPropertyOperation => "set_property",
+            RemovePropertyOperation => "remove_property",
+            AddTagOperation => "add_tag",
+            RemoveTagOperation => "remove_tag",
+            _ => throw new ArgumentOutOfRangeException(nameof(operation))
+        };
 
     private static IReadOnlyList<DraftOperation> ParseOperations(
         JsonElement payload)
     {
         RequireObject(payload, "Update draft payload");
+        DocumentDraftReviewContextCodec.EnsureOnlyProperties(
+            payload,
+            "Update draft payload",
+            UpdatePayloadKeys);
+        DocumentDraftReviewContextCodec.ValidateFromPayload(payload);
         if (!payload.TryGetProperty("operations", out var operationsElement)
             || operationsElement.ValueKind != JsonValueKind.Array)
         {
@@ -419,6 +625,20 @@ public static class DocumentDraftPayloadEngine
     {
         RequireObject(element, "Draft operation");
         var type = RequireString(element, "type", allowEmpty: false);
+        var allowedKeys = type switch
+        {
+            "replace_body" => ReplaceBodyKeys,
+            "append_body" => AppendBodyKeys,
+            "set_property" => SetPropertyKeys,
+            "remove_property" => RemovePropertyKeys,
+            "add_tag" => AddTagKeys,
+            "remove_tag" => RemoveTagKeys,
+            _ => throw InvalidOperation("Draft operation type is invalid.")
+        };
+        DocumentDraftReviewContextCodec.EnsureOnlyProperties(
+            element,
+            "Draft operation",
+            allowedKeys);
         return type switch
         {
             "replace_body" => new ReplaceBodyOperation(
@@ -810,6 +1030,22 @@ public static class DocumentDraftPayloadEngine
         {
             throw InvalidOperation($"{name} must be a JSON object.");
         }
+    }
+
+    private static HashSet<string> OperationKeys(
+        string type,
+        params string[] fields)
+    {
+        var keys = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "type"
+        };
+        _ = type;
+        foreach (var field in fields)
+        {
+            _ = keys.Add(field);
+        }
+        return keys;
     }
 
     private static VaultDocumentFormat ParseFormat(string value) =>

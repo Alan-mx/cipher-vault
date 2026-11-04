@@ -56,6 +56,14 @@ public sealed class DocumentDraftService
             },
             cancellationToken).AsTask();
 
+    public Task<DocumentDraftQueueSummary> GetSummaryAsync(
+        CancellationToken cancellationToken = default) =>
+        sessionManager.ExecuteAsync(
+            async (context, token) => await DocumentDraftStore.GetSummaryAsync(
+                context,
+                token),
+            cancellationToken).AsTask();
+
     public Task<DocumentDraftDetail> GetAsync(
         Guid draftId,
         CancellationToken cancellationToken = default) =>
@@ -66,7 +74,7 @@ public sealed class DocumentDraftService
                     context,
                     draftId,
                     token);
-                return ToDetail(record);
+                return await ToDetailAsync(context, record, token);
             },
             cancellationToken).AsTask();
 
@@ -133,6 +141,12 @@ public sealed class DocumentDraftService
                         targetDocumentId,
                         baseRevision,
                         token);
+                    if (request.DraftType == DocumentDraftType.Trash)
+                    {
+                        persistedPayload =
+                            DocumentDraftPayloadEngine.NormalizeTrashPayload(
+                                request.Payload);
+                    }
                 }
 
                 var payloadJson = SerializePayloadText(persistedPayload);
@@ -268,13 +282,21 @@ public sealed class DocumentDraftService
                         DocumentDraftPayloadEngine.PrepareCreatePayload(
                             payload,
                             futureDocumentId,
-                            allowMatchingIdentity: true).PersistedPayload;
+                            allowMatchingIdentity: true,
+                            existingPayload: ParsePayload(current)).PersistedPayload;
                     payloadVersion = 2;
                     snapshot = null;
                 }
                 else
                 {
-                    persistedPayload = payload;
+                    persistedPayload =
+                        current.DraftType == DocumentDraftType.Trash
+                            ? DocumentDraftPayloadEngine.PrepareTrashPayload(
+                                payload,
+                                ParsePayload(current))
+                            : DocumentDraftPayloadEngine.PrepareUpdatePayload(
+                                payload,
+                                ParsePayload(current));
                     snapshot = ParseRequiredSnapshot(current);
                 }
                 var payloadJson = SerializePayloadText(persistedPayload);
@@ -897,8 +919,10 @@ public sealed class DocumentDraftService
         return ToMetadata(record, preview.WorkingCopy);
     }
 
-    private static DocumentDraftDetail ToDetail(
-        DocumentDraftRecord record)
+    private static async Task<DocumentDraftDetail> ToDetailAsync(
+        VaultOperationContext context,
+        DocumentDraftRecord record,
+        CancellationToken cancellationToken)
     {
         var payload = record.DraftType == DocumentDraftType.Create
             ? DocumentDraftPayloadEngine.ToClientPayload(record)
@@ -908,15 +932,55 @@ public sealed class DocumentDraftService
             record,
             payload,
             snapshot);
+        var sourceDocumentIds =
+            DocumentDraftReviewContextCodec.ReadSourceDocumentIds(payload);
+        var availableDocumentIds =
+            await DocumentDraftStore.ReadAvailableDocumentIdsAsync(
+                context,
+                sourceDocumentIds,
+                cancellationToken);
+        var reviewContext =
+            DocumentDraftReviewContextCodec.ParseForDisplay(
+                payload,
+                availableDocumentIds);
+        if (reviewContext is not null)
+        {
+            reviewContext = reviewContext with
+            {
+                Sources = reviewContext.Sources.ToArray()
+            };
+        }
+        var structuredChanges =
+            DocumentDraftStructuredDiffBuilder.Build(
+                record.DraftType,
+                snapshot,
+                preview.WorkingCopy);
+        structuredChanges = structuredChanges with
+        {
+            Changes = structuredChanges.Changes.ToArray()
+        };
+        var operationSummary = preview.OperationSummary with
+        {
+            Items = preview.OperationSummary.Items.ToArray()
+        };
+        var bodyEdit = DocumentDraftPayloadEngine.GetBodyEditCapability(
+            record,
+            payload,
+            snapshot,
+            preview.WorkingCopy);
         return new DocumentDraftDetail(
             ToMetadata(record, preview.WorkingCopy),
             payload,
+            reviewContext,
             new DocumentDraftPreview(
                 preview.WorkingCopy.Content,
-                preview.WorkingCopy.Tags,
+                preview.WorkingCopy.Tags.ToArray(),
                 preview.UnifiedDiff,
                 preview.DiffTruncated,
-                preview.OperationCount));
+                preview.OperationCount,
+                structuredChanges,
+                operationSummary,
+                bodyEdit));
     }
 
     private static DocumentDraftMetadata ToMetadata(
@@ -1235,8 +1299,15 @@ public sealed class DocumentDraftService
         {
             draftId = draft.DraftId.ToString("D"),
             draftType = draft.DraftType.ToDatabaseValue(),
-            draftRevision = draft.DraftRevision
+            draftRevision = draft.DraftRevision,
+            hasReviewContext = HasReviewContext(draft.PayloadJson)
         };
+
+    private static bool HasReviewContext(string payloadJson)
+    {
+        using var payload = JsonDocument.Parse(payloadJson);
+        return DocumentDraftReviewContextCodec.HasContext(payload.RootElement);
+    }
 
     private static Task AppendDraftAuditAsync(
         VaultOperationContext context,

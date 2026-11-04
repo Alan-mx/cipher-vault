@@ -99,7 +99,7 @@ export const router = createRouter({
         vault: "unlocked",
         sensitive: true,
         layout: "workspace",
-        title: "待审核",
+        title: "AI 工作区",
       },
     },
     {

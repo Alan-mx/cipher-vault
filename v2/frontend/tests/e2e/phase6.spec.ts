@@ -49,6 +49,7 @@ const ensureUnlocked = async (page: Page): Promise<void> => {
     await page.getByRole("button", { name: "解锁", exact: true }).click();
   }
   await expect(page).toHaveURL(/\/documents$/);
+  await page.waitForLoadState("networkidle");
 };
 
 test("Phase 6 desktop flow, responsive layout and accessibility", async ({
@@ -415,9 +416,14 @@ test("Phase 6 desktop flow, responsive layout and accessibility", async ({
   expect(draftSetup.draftId).toMatch(/^[0-9a-f-]+$/);
 
   await page.goto("/review");
-  await expect(page.getByRole("heading", { name: "待审核" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "AI 工作区" })).toBeVisible();
   await page.getByRole("button", { name: /Review Draft/ }).click();
   await expect(page.locator(".draft-detail textarea")).toBeVisible();
+  await page.screenshot({
+    path: resolve(screenshotRoot, "review-1280.png"),
+    fullPage: true,
+  });
+  await assertNoSeriousAxeViolations(page, "review desktop");
   await page
     .locator(".draft-detail textarea")
     .fill("# Review Draft\n\nReviewed proposal");
@@ -440,7 +446,18 @@ test("Phase 6 desktop flow, responsive layout and accessibility", async ({
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/review");
-  await expect(page.getByRole("heading", { name: "待审核" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "AI 工作区" })).toBeVisible();
+  await page.getByRole("button", { name: /历史/ }).click();
+  await page.getByRole("button", { name: /Review Draft/ }).click();
+  await expect(page.locator(".detail-heading")).toContainText("已提交");
+  await expect(page.getByRole("button", { name: "提交正式文档" })).toHaveCount(
+    0,
+  );
+  await page.screenshot({
+    path: resolve(screenshotRoot, "review-390.png"),
+    fullPage: true,
+  });
+  await assertNoSeriousAxeViolations(page, "review mobile");
   await assertNoHorizontalOverflow(page);
   await page.goto("/documents");
   await expect(page.getByRole("button", { name: "打开导航" })).toBeVisible();
