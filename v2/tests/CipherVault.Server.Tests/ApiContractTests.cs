@@ -75,10 +75,40 @@ public sealed class ApiContractTests
             new Dictionary<string, object?>
             {
                 ["currentRevision"] = 7,
+                ["reasonCode"] = "provider_timeout",
                 ["content"] = "secret"
             });
 
         Assert.Equal(7, error.Details["currentRevision"]);
+        Assert.Equal(
+            "provider_timeout",
+            error.Details["reasonCode"]);
         Assert.False(error.Details.ContainsKey("content"));
+    }
+
+    [Theory]
+    [InlineData("not_configured", 409)]
+    [InlineData("index_building", 409)]
+    [InlineData("provider_unavailable", 503)]
+    [InlineData("provider_timeout", 503)]
+    [InlineData("provider_rate_limited", 503)]
+    [InlineData("provider_invalid_response", 503)]
+    public void SemanticUnavailableErrorsMapTemporaryProviderFailuresTo503(
+        string reasonCode,
+        int expectedStatus)
+    {
+        var failure = ApiErrorMapper.Map(
+            new VaultException(
+                VaultErrorCode.SemanticSearchUnavailable,
+                "Semantic search is unavailable.",
+                details: new Dictionary<string, object?>
+                {
+                    ["reasonCode"] = reasonCode
+                }));
+
+        Assert.Equal(expectedStatus, failure.StatusCode);
+        Assert.Equal(
+            ApiErrorCodes.SemanticSearchUnavailable,
+            failure.Code);
     }
 }

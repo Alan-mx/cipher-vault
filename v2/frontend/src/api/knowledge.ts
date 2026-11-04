@@ -16,6 +16,7 @@ export const knowledgeApi = {
       method: "POST",
       body: {
         query: query.query,
+        searchMode: query.searchMode,
         tags: query.tags,
         format: query.format,
         updatedAfter: query.updatedAfter,

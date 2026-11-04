@@ -50,6 +50,7 @@ public sealed class PropertySearchApiTests
             "/api/search/query",
             new StructuredSearchApiRequest(
                 Query: "",
+                SearchMode: null,
                 Tags: null,
                 Format: null,
                 UpdatedAfter: null,
@@ -100,6 +101,7 @@ public sealed class PropertySearchApiTests
                 null,
                 null,
                 null,
+                null,
                 false,
                 "all",
                 null,
@@ -115,6 +117,7 @@ public sealed class PropertySearchApiTests
             "/api/search/query",
             new StructuredSearchApiRequest(
                 "",
+                null,
                 null,
                 null,
                 null,

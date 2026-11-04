@@ -222,6 +222,16 @@ export interface SearchCoverage {
   truncated: boolean;
 }
 
+export type SearchMode = "keyword" | "semantic" | "hybrid";
+
+export type SearchRetrievalSource = "keyword" | "semantic";
+
+export interface SemanticMatch {
+  headingPath: string[];
+  excerpt: string;
+  cosineScore: number;
+}
+
 export interface SearchHit {
   documentId: GuidString;
   title: string;
@@ -229,12 +239,19 @@ export interface SearchHit {
   revision: number;
   snippet: string;
   score: number;
+  retrievalSources?: SearchRetrievalSource[];
+  keywordScore?: number | null;
+  fusionScore?: number | null;
+  semanticMatch?: SemanticMatch | null;
 }
 
 export interface SearchPage {
   hits: SearchHit[];
   coverage: SearchCoverage;
   nextCursor?: string | null;
+  mode: SearchMode;
+  degraded: boolean;
+  degradedReason?: string | null;
 }
 
 export interface GraphNode {
@@ -412,6 +429,7 @@ export interface TrashRestoreRequest {
 
 export interface SearchQuery {
   query: string;
+  searchMode?: SearchMode;
   tags?: string[];
   format?: VaultFormat;
   updatedAfter?: UtcTimestamp;
@@ -511,6 +529,43 @@ export interface VersionInfo {
 }
 
 export type McpWriteMode = "draft" | "direct";
+
+export type SemanticIndexState =
+  "not_configured" | "disabled" | "building" | "ready" | "degraded" | "failed";
+
+export interface SemanticProfileView {
+  profileId: string;
+  providerId: string;
+  modelId: string;
+  dimension: number;
+  maxInputTokens: number;
+  endpointFingerprint: string;
+  isRemote: boolean;
+  profileVersion: number;
+  chunkerVersion: number;
+  status: string;
+  lastErrorCode?: string | null;
+  createdAt: UtcTimestamp;
+  updatedAt: UtcTimestamp;
+  readyAt?: UtcTimestamp | null;
+}
+
+export interface SemanticIndexStatus {
+  state: SemanticIndexState;
+  endpointDisplay?: string | null;
+  remoteDeploymentAllowed: boolean;
+  remoteConsentRequired: boolean;
+  remoteConsentGranted: boolean;
+  consentGrantedAt?: UtcTimestamp | null;
+  consentRevokedAt?: UtcTimestamp | null;
+  documentCount: number;
+  chunkCount: number;
+  pendingJobCount: number;
+  failedJobCount: number;
+  lastErrorCode?: string | null;
+  lastUpdatedAt?: UtcTimestamp | null;
+  profile?: SemanticProfileView | null;
+}
 
 export interface McpWriteModeStatus {
   mode: McpWriteMode;

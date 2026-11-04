@@ -16,12 +16,13 @@ public sealed class BackupSchemaCompatibilityTests
         Assert.True(BackupCompatibilityPolicy.IsSupported(5));
         Assert.True(BackupCompatibilityPolicy.IsSupported(6));
         Assert.True(BackupCompatibilityPolicy.IsSupported(7));
-        Assert.False(BackupCompatibilityPolicy.IsSupported(8));
+        Assert.True(BackupCompatibilityPolicy.IsSupported(8));
+        Assert.False(BackupCompatibilityPolicy.IsSupported(9));
     }
 
     [Theory]
     [InlineData(4)]
-    [InlineData(8)]
+    [InlineData(9)]
     public async Task RestoreRejectsSchemaOutsideSupportedRange(
         int schemaVersion)
     {
@@ -38,6 +39,7 @@ public sealed class BackupSchemaCompatibilityTests
     [Theory]
     [InlineData(5)]
     [InlineData(6)]
+    [InlineData(7)]
     public async Task RestoreAcceptsSupportedOlderSchemaWithCompatibilityPolicy(
         int schemaVersion)
     {

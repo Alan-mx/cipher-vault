@@ -45,6 +45,26 @@ public sealed class McpDraftToolsTests
             page.GetProperty("items").EnumerateArray(),
             item => item.GetProperty("draftId").GetGuid() == draftId);
 
+        var semantic = await CallToolAsync(
+            server.Client,
+            token,
+            "search_notes",
+            new { query = "MCP", searchMode = "semantic" });
+        Assert.Equal(
+            "semantic_search_unavailable",
+            semantic.GetProperty("code").GetString());
+
+        var hybrid = await CallToolAsync(
+            server.Client,
+            token,
+            "search_notes",
+            new { query = "MCP", searchMode = "hybrid" });
+        Assert.Equal("hybrid", hybrid.GetProperty("mode").GetString());
+        Assert.True(hybrid.GetProperty("degraded").GetBoolean());
+        Assert.Equal(
+            "not_configured",
+            hybrid.GetProperty("degradedReason").GetString());
+
         var detail = await CallToolAsync(
             server.Client,
             token,

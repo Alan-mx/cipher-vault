@@ -21,7 +21,8 @@ public static class McpToolErrorMapper
         "actual",
         "mode",
         "sessionGeneration",
-        "status"
+        "status",
+        "reasonCode"
     ];
 
     public static McpToolError Map(
@@ -84,6 +85,14 @@ public static class McpToolErrorMapper
             VaultErrorCode.InvalidManifest => "invalid_manifest",
             VaultErrorCode.InvalidInput => "invalid_input",
             VaultErrorCode.InvalidCursor => "invalid_input",
+            VaultErrorCode.SemanticSearchUnavailable =>
+                "semantic_search_unavailable",
+            VaultErrorCode.SemanticProfileMismatch =>
+                "semantic_profile_mismatch",
+            VaultErrorCode.SemanticRemoteNotAllowed =>
+                "semantic_remote_not_allowed",
+            VaultErrorCode.SemanticRebuildInProgress =>
+                "semantic_rebuild_in_progress",
             VaultErrorCode.DocumentPathConflict => "path_conflict",
             VaultErrorCode.PatchTargetNotFound => "patch_target_not_found",
             VaultErrorCode.PatchTargetAmbiguous => "patch_target_ambiguous",
@@ -141,6 +150,14 @@ public static class McpToolErrorMapper
             "invalid_manifest" => "Import Manifest is invalid.",
             "invalid_input" => "Tool arguments are invalid.",
             "invalid_offset" => "Document content offset is invalid.",
+            "semantic_search_unavailable" =>
+                "Semantic search is unavailable.",
+            "semantic_profile_mismatch" =>
+                "Semantic embedding profile changed.",
+            "semantic_remote_not_allowed" =>
+                "Remote semantic embedding is not allowed.",
+            "semantic_rebuild_in_progress" =>
+                "Semantic index rebuild is already in progress.",
             "path_conflict" => "Document path is already in use.",
             "patch_target_not_found" => "Patch target was not found.",
             "patch_target_ambiguous" => "Patch target is ambiguous.",
@@ -179,6 +196,14 @@ public static class McpToolErrorMapper
             "invalid_manifest" => "Regenerate the plaintext export and retry.",
             "invalid_input" => "Correct the tool arguments and retry.",
             "invalid_offset" => "Use an offset within the document and outside a surrogate pair.",
+            "semantic_search_unavailable" =>
+                "Retry later or use keyword search while semantic indexing is unavailable.",
+            "semantic_profile_mismatch" =>
+                "Read semantic index status and retry with the active profile.",
+            "semantic_remote_not_allowed" =>
+                "Ask the user to configure and confirm remote embedding in the Web UI.",
+            "semantic_rebuild_in_progress" =>
+                "Wait for the current semantic index rebuild to finish.",
             "path_conflict" => "Choose a different virtual path or update the existing document.",
             "patch_target_not_found" => "Read the document map and choose an existing target.",
             "patch_target_ambiguous" => "Use a more specific heading path.",
@@ -193,5 +218,8 @@ public static class McpToolErrorMapper
         };
 
     private static bool RetryableFor(string code) =>
-        code is "vault_locked" or "vault_busy" or "database_error";
+        code is "vault_locked"
+            or "vault_busy"
+            or "database_error"
+            or "semantic_search_unavailable";
 }

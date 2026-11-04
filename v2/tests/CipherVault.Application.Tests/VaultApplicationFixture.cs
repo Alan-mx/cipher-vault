@@ -105,8 +105,11 @@ internal sealed class VaultApplicationFixture : IAsyncDisposable
     internal async Task RelockAsync()
     {
         _ = await Manager.LockAsync();
-        _ = await Manager.UnlockAsync(Password);
+        _ = await UnlockAgainAsync();
     }
+
+    internal Task<VaultSessionStatus> UnlockAgainAsync() =>
+        Manager.UnlockAsync(Password);
 
     internal Task<McpWriteModeStatus> EnableDirectWriteAsync() =>
         WriteMode.ChangeAsync(

@@ -4,6 +4,7 @@ using CipherVault.Core.Audit;
 using CipherVault.Core.Database;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
+using CipherVault.Core.Storage.Semantic;
 using CipherVault.Core.Storage.Tags;
 using Microsoft.Data.Sqlite;
 
@@ -201,6 +202,13 @@ public static class TrashStore
                 tags,
                 now,
                 cancellationToken);
+            await SemanticIndexQueue.QueueIndexAsync(
+                context,
+                documentId,
+                newRevision,
+                current.Content,
+                now,
+                cancellationToken);
             var auditEventId = await AuditStore.AppendAsync(
                 context,
                 actor,
@@ -257,6 +265,12 @@ public static class TrashStore
                 });
         }
 
+        await SemanticIndexQueue.QueuePurgeAsync(
+            context,
+            documentId,
+            current.Revision,
+            now,
+            cancellationToken);
         var auditEventId = await AuditStore.AppendAsync(
             context,
             actor,

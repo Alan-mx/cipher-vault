@@ -2,7 +2,12 @@ import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 import { knowledgeApi } from "../api";
 import { registerSensitiveStore } from "../session/lifecycle";
-import type { SearchHit, SearchPage, SearchQuery } from "../types/api";
+import type {
+  SearchHit,
+  SearchMode,
+  SearchPage,
+  SearchQuery,
+} from "../types/api";
 import type {
   SearchPropertyFilter,
   SearchPropertyMatch,
@@ -39,6 +44,7 @@ export interface SearchPropertyFilterDraft {
 
 export const useSearchStore = defineStore("search", () => {
   const query = ref("");
+  const searchMode = ref<SearchMode>("hybrid");
   const filters = ref<SearchFilters>({
     tags: [],
     format: null,
@@ -54,17 +60,24 @@ export const useSearchStore = defineStore("search", () => {
   const nextCursor = ref<string | null>(null);
   const loading = ref(false);
   const error = ref<ApiClientError | null>(null);
-  const canSearch = computed(
-    () =>
-      query.value.trim().length > 0 ||
+  const degraded = ref(false);
+  const degradedReason = ref<string | null>(null);
+  const canSearch = computed(() => {
+    const hasQuery = query.value.trim().length > 0;
+    if (searchMode.value !== "keyword") {
+      return hasQuery;
+    }
+    return (
+      hasQuery ||
       filters.value.tags.length > 0 ||
       filters.value.format !== null ||
       filters.value.updatedAfter !== null ||
       filters.value.updatedBefore !== null ||
       filters.value.hasBacklinks ||
       filters.value.orphanOnly ||
-      toApiPropertyFilters(filters.value.propertyFilters).length > 0,
-  );
+      toApiPropertyFilters(filters.value.propertyFilters).length > 0
+    );
+  });
   let requestGeneration = 0;
   let controller: AbortController | null = null;
 
@@ -72,6 +85,7 @@ export const useSearchStore = defineStore("search", () => {
     const propertyFilters = toApiPropertyFilters(filters.value.propertyFilters);
     return {
       query: query.value.trim(),
+      searchMode: searchMode.value,
       ...(filters.value.tags.length ? { tags: filters.value.tags } : {}),
       ...(filters.value.format ? { format: filters.value.format } : {}),
       ...(filters.value.updatedAfter
@@ -103,6 +117,8 @@ export const useSearchStore = defineStore("search", () => {
     controller = new AbortController();
     loading.value = true;
     error.value = null;
+    degraded.value = false;
+    degradedReason.value = null;
     try {
       const page = await knowledgeApi.search(
         buildQuery(append ? (nextCursor.value ?? undefined) : undefined),
@@ -114,6 +130,8 @@ export const useSearchStore = defineStore("search", () => {
       hits.value = append ? [...hits.value, ...page.hits] : page.hits;
       coverage.value = page.coverage;
       nextCursor.value = page.nextCursor ?? null;
+      degraded.value = page.degraded;
+      degradedReason.value = page.degradedReason ?? null;
     } catch (caught) {
       if (
         generation !== requestGeneration ||
@@ -141,14 +159,13 @@ export const useSearchStore = defineStore("search", () => {
   const setQuery = (value: string): void => {
     query.value = value;
     if (!canSearch.value) {
-      requestGeneration++;
-      controller?.abort();
-      hits.value = [];
-      coverage.value = null;
-      nextCursor.value = null;
-      error.value = null;
-      loading.value = false;
+      clearResults();
     }
+  };
+
+  const setMode = (value: SearchMode): void => {
+    searchMode.value = value;
+    clearResults();
   };
 
   const setFilters = (update: Partial<SearchFilters>): void => {
@@ -201,6 +218,7 @@ export const useSearchStore = defineStore("search", () => {
     controller?.abort();
     controller = null;
     query.value = "";
+    searchMode.value = "hybrid";
     filters.value = {
       tags: [],
       format: null,
@@ -215,6 +233,21 @@ export const useSearchStore = defineStore("search", () => {
     coverage.value = null;
     nextCursor.value = null;
     error.value = null;
+    degraded.value = false;
+    degradedReason.value = null;
+    loading.value = false;
+  };
+
+  const clearResults = (): void => {
+    requestGeneration++;
+    controller?.abort();
+    controller = null;
+    hits.value = [];
+    coverage.value = null;
+    nextCursor.value = null;
+    error.value = null;
+    degraded.value = false;
+    degradedReason.value = null;
     loading.value = false;
   };
 
@@ -222,15 +255,19 @@ export const useSearchStore = defineStore("search", () => {
 
   return {
     query,
+    searchMode,
     filters,
     hits,
     coverage,
     nextCursor,
     loading,
     error,
+    degraded,
+    degradedReason,
     canSearch,
     search,
     setQuery,
+    setMode,
     setFilters,
     addPropertyFilter,
     updatePropertyFilter,

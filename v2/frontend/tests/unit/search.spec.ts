@@ -12,6 +12,7 @@ describe("search store", () => {
   it("clears all search memory on sensitive reset", async () => {
     setActivePinia(createPinia());
     const search = useSearchStore();
+    expect(search.searchMode).toBe("hybrid");
     search.query = "secret";
     search.setFilters({ tags: ["Work"], orphanOnly: true });
 
@@ -19,6 +20,7 @@ describe("search store", () => {
     await search.search();
 
     expect(search.query).toBe("");
+    expect(search.searchMode).toBe("hybrid");
     expect(search.filters.tags).toEqual([]);
     expect(search.filters.orphanOnly).toBe(false);
     expect(search.hits).toEqual([]);
@@ -30,6 +32,7 @@ describe("search store", () => {
   it("allows a property-only structured query", async () => {
     setActivePinia(createPinia());
     const search = useSearchStore();
+    search.setMode("keyword");
     search.addPropertyFilter();
     const filter = search.filters.propertyFilters[0]!;
     search.updatePropertyFilter(filter.id, {
@@ -49,6 +52,8 @@ describe("search store", () => {
         truncated: false,
       },
       nextCursor: null,
+      mode: "keyword",
+      degraded: false,
     });
 
     expect(search.canSearch).toBe(true);
@@ -57,6 +62,7 @@ describe("search store", () => {
     expect(request).toHaveBeenCalledOnce();
     expect(request.mock.calls[0]![0]).toMatchObject({
       query: "",
+      searchMode: "keyword",
       propertyMatch: "any",
       propertyFilters: [
         {
@@ -68,7 +74,7 @@ describe("search store", () => {
     });
   });
 
-  it("keeps an empty query when another filter is active", () => {
+  it("requires a query outside keyword mode", () => {
     setActivePinia(createPinia());
     const search = useSearchStore();
     search.setFilters({ tags: ["Work"] });
@@ -77,6 +83,39 @@ describe("search store", () => {
     search.setQuery("   ");
 
     expect(search.query).toBe("   ");
+    expect(search.canSearch).toBe(false);
+
+    search.setMode("keyword");
+
     expect(search.canSearch).toBe(true);
+  });
+
+  it("keeps the explicit hybrid mode in the structured request", async () => {
+    setActivePinia(createPinia());
+    const search = useSearchStore();
+    search.query = "cache";
+    const request = vi.spyOn(knowledgeApi, "search").mockResolvedValue({
+      hits: [],
+      coverage: {
+        totalActiveDocuments: 0,
+        scannedDocuments: 0,
+        matchedDocuments: 0,
+        returnedDocuments: 0,
+        truncated: false,
+      },
+      nextCursor: null,
+      mode: "hybrid",
+      degraded: true,
+      degradedReason: "provider_timeout",
+    });
+
+    await search.search();
+
+    expect(request.mock.calls[0]![0]).toMatchObject({
+      query: "cache",
+      searchMode: "hybrid",
+    });
+    expect(search.degraded).toBe(true);
+    expect(search.degradedReason).toBe("provider_timeout");
   });
 });

@@ -7,6 +7,7 @@ using CipherVault.Core.Documents;
 using CipherVault.Core.KnowledgeGraph;
 using CipherVault.Core.Knowledge;
 using CipherVault.Core.Search;
+using CipherVault.Core.Semantic;
 
 namespace CipherVault.Server.Api.Endpoints;
 
@@ -51,6 +52,7 @@ public static class KnowledgeEndpoints
 
                     var request = new SearchQuery(
                         query,
+                        SearchMode.Keyword,
                         tags,
                         ApiQueryBinding.ParseFormat(format),
                         ApiQueryBinding.ParseTimestamp(

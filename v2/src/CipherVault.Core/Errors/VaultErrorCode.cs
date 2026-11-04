@@ -48,5 +48,9 @@ public enum VaultErrorCode
     BackupInProgress,
     BackupTooLarge,
     BackupNotFound,
-    ExportTooLarge
+    ExportTooLarge,
+    SemanticSearchUnavailable,
+    SemanticProfileMismatch,
+    SemanticRemoteNotAllowed,
+    SemanticRebuildInProgress
 }

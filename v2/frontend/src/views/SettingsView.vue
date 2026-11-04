@@ -11,6 +11,7 @@ import {
 } from "naive-ui";
 import McpTokenPanel from "../components/settings/McpTokenPanel.vue";
 import McpWriteModePanel from "../components/settings/McpWriteModePanel.vue";
+import SemanticEmbeddingPanel from "../components/settings/SemanticEmbeddingPanel.vue";
 import BackupPanel from "../components/settings/BackupPanel.vue";
 import PlaintextExportPanel from "../components/settings/PlaintextExportPanel.vue";
 import { useSessionStore } from "../stores/session";
@@ -165,6 +166,8 @@ onBeforeUnmount(() => {
     </section>
 
     <McpWriteModePanel />
+
+    <SemanticEmbeddingPanel />
 
     <McpTokenPanel />
 

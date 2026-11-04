@@ -9,12 +9,15 @@ using CipherVault.Application.Import;
 using CipherVault.Application.Knowledge;
 using CipherVault.Application.RelatedKnowledge;
 using CipherVault.Application.Search;
+using CipherVault.Application.Semantic;
+using CipherVault.Core.Semantic;
 using CipherVault.Server.Api;
 using CipherVault.Server.Api.Endpoints;
 using CipherVault.Server.Backup;
 using CipherVault.Server.Middleware;
 using CipherVault.Server.Mcp;
 using CipherVault.Server.Security;
+using CipherVault.Server.Semantic;
 using Microsoft.Extensions.Logging;
 
 namespace CipherVault.Server.Hosting;
@@ -51,6 +54,7 @@ public static class ServerWebApplication
         });
         builder.Logging.AddFilter("Microsoft", LogLevel.Warning);
         configureLogging?.Invoke(builder.Logging);
+        var embeddingOptions = EmbeddingOptions.Load(builder.Configuration);
 
         builder.Services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(
             ApiJson.Configure);
@@ -61,6 +65,12 @@ public static class ServerWebApplication
             options.Paths.BackupLockPath));
         builder.Services.AddSingleton(options.GitBackup);
         builder.Services.AddSingleton(timeProvider);
+        builder.Services.AddSingleton(embeddingOptions);
+        if (embeddingOptions.IsConfigured)
+        {
+            builder.Services.AddSingleton<IEmbeddingProvider>(_ =>
+                new OpenAiCompatibleEmbeddingProvider(embeddingOptions));
+        }
         builder.Services.AddSingleton(sessionManager);
         builder.Services.AddSingleton(tokenStore);
         builder.Services.AddSingleton<VaultLifecycleService>();
@@ -72,6 +82,20 @@ public static class ServerWebApplication
         builder.Services.AddSingleton<DocumentRevisionService>();
         builder.Services.AddSingleton<TrashService>();
         builder.Services.AddSingleton<SearchService>();
+        builder.Services.AddSingleton(provider =>
+            new SemanticIndexService(
+                provider.GetRequiredService<VaultSessionManager>(),
+                provider.GetService<IEmbeddingProvider>(),
+                embeddingOptions.ProfileVersion,
+                embeddingOptions.AllowRemote,
+                embeddingOptions.IsConfigured
+                    ? embeddingOptions.EndpointDisplay
+                    : null,
+                provider.GetRequiredService<TimeProvider>(),
+                provider.GetRequiredService<IdempotencyService>()));
+        builder.Services.AddSingleton<SemanticIndexProcessor>();
+        builder.Services.AddSingleton<SemanticSearchService>();
+        builder.Services.AddHostedService<SemanticIndexWorker>();
         builder.Services.AddSingleton<GraphService>();
         builder.Services.AddSingleton<KnowledgeViewService>();
         builder.Services.AddSingleton<RelatedKnowledgeService>();
@@ -123,6 +147,7 @@ public static class ServerWebApplication
         app.MapTrashEndpoints();
         app.MapRevisionEndpoints();
         app.MapKnowledgeEndpoints();
+        app.MapSemanticIndexEndpoints();
         app.MapImportEndpoints();
         app.MapAuditEndpoints();
         app.MapBackupEndpoints();

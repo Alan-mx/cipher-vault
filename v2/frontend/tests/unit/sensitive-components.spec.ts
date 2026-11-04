@@ -59,6 +59,9 @@ const baseStubs = {
   BackupPanel: {
     template: '<section data-test="backup-panel" />',
   },
+  SemanticEmbeddingPanel: {
+    template: '<section data-test="semantic-embedding-panel" />',
+  },
   PlaintextExportPanel: {
     template: '<section data-test="plaintext-export-panel" />',
   },

@@ -36,6 +36,11 @@
       "version": 7,
       "name": "markdown_links",
       "sha256": "8902d824df72779fc443d3681b00be95e7c31de58f0ce9ad779d2cc42c9c2cfc"
+    },
+    {
+      "version": 8,
+      "name": "semantic_index",
+      "sha256": "dfda3dbe880eb33617eb16c702ddb8013a881de03cee95258000c0fc2581dd73"
     }
   ]
 }

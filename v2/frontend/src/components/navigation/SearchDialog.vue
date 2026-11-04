@@ -22,7 +22,7 @@ import {
   type SearchPropertyValueType,
 } from "../../stores/search";
 import type { VaultFormat } from "../../types/domain";
-import type { SearchPropertyOperator } from "../../types/api";
+import type { SearchMode, SearchPropertyOperator } from "../../types/api";
 
 const props = defineProps<{
   show: boolean;
@@ -62,6 +62,11 @@ const valueTypeOptions = [
   { label: "布尔", value: "boolean" },
   { label: "null", value: "null" },
 ] satisfies Array<{ label: string; value: SearchPropertyValueType }>;
+const modeOptions = [
+  { label: "关键词", value: "keyword" },
+  { label: "语义", value: "semantic" },
+  { label: "混合", value: "hybrid" },
+] satisfies Array<{ label: string; value: SearchMode }>;
 const numericTypeOptions = valueTypeOptions.filter(
   (option) => option.value === "string" || option.value === "number",
 );
@@ -69,6 +74,30 @@ const booleanOptions = [
   { label: "true", value: "true" },
   { label: "false", value: "false" },
 ];
+const degradedReasonLabel = computed(() => {
+  switch (search.degradedReason) {
+    case "not_configured":
+      return "未配置语义索引";
+    case "remote_consent_required":
+      return "远程语义索引尚未确认";
+    case "index_building":
+      return "语义索引构建中";
+    case "profile_invalid":
+      return "语义 Profile 已失效";
+    case "index_failed":
+      return "语义索引失败";
+    case "provider_timeout":
+      return "Embedding 服务超时";
+    case "provider_rate_limited":
+      return "Embedding 服务限流";
+    case "provider_invalid_response":
+      return "Embedding 响应无效";
+    case "provider_unavailable":
+      return "Embedding 服务不可用";
+    default:
+      return search.degradedReason ?? "语义检索不可用";
+  }
+});
 
 const open = async (): Promise<void> => {
   await catalog.loadTags();
@@ -121,7 +150,7 @@ watch(
 );
 
 watch(
-  () => [search.query, search.filters] as const,
+  () => [search.query, search.searchMode, search.filters] as const,
   () => {
     if (!props.show) {
       return;
@@ -162,6 +191,23 @@ watch(
             <NIcon :component="X" aria-hidden="true" />
           </template>
         </NButton>
+      </div>
+
+      <div class="search-mode-row">
+        <span>检索模式</span>
+        <NRadioGroup
+          :value="search.searchMode"
+          size="small"
+          @update:value="search.setMode($event as SearchMode)"
+        >
+          <NRadioButton
+            v-for="option in modeOptions"
+            :key="option.value"
+            :value="option.value"
+          >
+            {{ option.label }}
+          </NRadioButton>
+        </NRadioGroup>
       </div>
 
       <div class="search-filters">
@@ -359,6 +405,19 @@ watch(
         {{ search.error.message }}
       </NAlert>
 
+      <NAlert
+        v-else-if="search.degraded"
+        class="search-status"
+        type="warning"
+        :show-icon="false"
+      >
+        语义检索暂不可用，已返回关键词结果。
+        <span class="degraded-reason">
+          {{ degradedReasonLabel }}（<code>{{ search.degradedReason }}</code
+          >）
+        </span>
+      </NAlert>
+
       <div class="search-results">
         <div
           v-if="search.loading && !search.hits.length"
@@ -383,11 +442,40 @@ watch(
             type="button"
             @click="emit('open', hit.documentId)"
           >
-            <strong>{{ hit.title }}</strong>
-            <p>{{ hit.snippet }}</p>
-            <div>
+            <div class="result-heading">
+              <strong>{{ hit.title }}</strong>
+              <span
+                v-for="source in hit.retrievalSources"
+                :key="source"
+                class="source-label"
+              >
+                {{ source === "semantic" ? "语义" : "关键词" }}
+              </span>
+            </div>
+            <p>{{ hit.semanticMatch?.excerpt ?? hit.snippet }}</p>
+            <div
+              v-if="hit.semanticMatch?.headingPath.length"
+              class="result-path"
+            >
+              {{ hit.semanticMatch.headingPath.join(" / ") }}
+            </div>
+            <div class="result-meta">
               <NTag size="tiny" :bordered="false"> R{{ hit.revision }} </NTag>
-              <span>
+              <span
+                v-if="hit.fusionScore !== null && hit.fusionScore !== undefined"
+              >
+                融合分 {{ hit.fusionScore.toFixed(4) }}
+              </span>
+              <span
+                v-else-if="
+                  hit.semanticMatch?.cosineScore !== null &&
+                  hit.semanticMatch?.cosineScore !== undefined
+                "
+              >
+                相似度
+                {{ hit.semanticMatch.cosineScore.toFixed(3) }}（非置信度）
+              </span>
+              <span v-else>
                 {{
                   search.query.trim()
                     ? `score ${hit.score.toFixed(2)}`
@@ -436,6 +524,16 @@ watch(
 .search-header {
   display: flex;
   gap: 8px;
+}
+
+.search-mode-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  color: var(--cv-muted);
+  font-size: 12px;
 }
 
 .search-input {
@@ -502,6 +600,10 @@ watch(
   margin-bottom: 12px;
 }
 
+.degraded-reason {
+  margin-left: 4px;
+}
+
 .search-results {
   min-height: 180px;
   overflow: auto;
@@ -534,6 +636,12 @@ watch(
   background: color-mix(in srgb, var(--cv-accent) 7%, transparent);
 }
 
+.result-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
 .search-result-list strong {
   font-size: 14px;
 }
@@ -549,7 +657,24 @@ watch(
   -webkit-line-clamp: 2;
 }
 
-.search-result-list div {
+.source-label {
+  padding: 1px 5px;
+  border: 1px solid var(--cv-border);
+  border-radius: 4px;
+  color: var(--cv-muted);
+  font-size: 10px;
+}
+
+.result-path {
+  overflow: hidden;
+  margin: -2px 0 6px;
+  color: var(--cv-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result-meta {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -574,6 +699,11 @@ watch(
 @media (max-width: 699px) {
   .search-filters {
     grid-template-columns: 1fr;
+  }
+
+  .search-mode-row {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .property-heading {

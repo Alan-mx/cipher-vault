@@ -18,7 +18,7 @@ public sealed class DatabaseSchemaTests
         var verified = await SqliteMcVaultStore.VerifyAsync(fixture.Root, fixture.Material);
 
         Assert.Equal(fixture.Material.VaultId, initialized.VaultId);
-        Assert.Equal(7, initialized.SchemaVersion);
+        Assert.Equal(8, initialized.SchemaVersion);
         Assert.Equal(initialized, verified);
     }
 
@@ -36,8 +36,8 @@ public sealed class DatabaseSchemaTests
             create: false);
         using var command = connection.Connection.CreateCommand();
         command.CommandText = "SELECT count(*) FROM schema_migrations;";
-        Assert.Equal(7, Convert.ToInt32(await command.ExecuteScalarAsync()));
-        Assert.Equal(7, second.SchemaVersion);
+        Assert.Equal(8, Convert.ToInt32(await command.ExecuteScalarAsync()));
+        Assert.Equal(8, second.SchemaVersion);
     }
 
     [Fact]
@@ -117,11 +117,11 @@ public sealed class DatabaseSchemaTests
                 CancellationToken.None);
             await SqliteMcDatabaseFactory.ExecuteNonQueryAsync(
                 session.Connection,
-                "UPDATE vault_meta SET value = '8' WHERE key = 'schema_version';",
+                "UPDATE vault_meta SET value = '9' WHERE key = 'schema_version';",
                 CancellationToken.None);
 
-            var migration8 = new DatabaseMigration(
-                8,
+            var migration9 = new DatabaseMigration(
+                9,
                 "must_not_apply",
                 "CREATE TABLE must_not_apply(id INTEGER PRIMARY KEY) STRICT;",
                 new string('a', 64));
@@ -130,13 +130,13 @@ public sealed class DatabaseSchemaTests
                     session.Connection,
                     material.VaultId,
                     DateTimeOffset.UtcNow,
-                    [.. migrations, migration8],
+                    [.. migrations, migration9],
                     CancellationToken.None));
 
             Assert.Equal(VaultErrorCode.CorruptVault, exception.Code);
             using var command = session.Connection.CreateCommand();
             command.CommandText = """
-                SELECT count(*) FROM schema_migrations WHERE version = 8;
+                SELECT count(*) FROM schema_migrations WHERE version = 9;
                 """;
             Assert.Equal(0, Convert.ToInt32(await command.ExecuteScalarAsync()));
             command.CommandText = """
@@ -245,7 +245,7 @@ public sealed class DatabaseSchemaTests
                 migrations,
                 CancellationToken.None);
 
-            Assert.Equal(7, upgraded.SchemaVersion);
+            Assert.Equal(8, upgraded.SchemaVersion);
         }
         finally
         {
@@ -331,7 +331,7 @@ public sealed class DatabaseSchemaTests
                 migrations,
                 CancellationToken.None);
 
-            Assert.Equal(7, upgraded.SchemaVersion);
+            Assert.Equal(8, upgraded.SchemaVersion);
             using var command = session.Connection.CreateCommand();
             command.CommandText =
                 """
@@ -351,7 +351,7 @@ public sealed class DatabaseSchemaTests
                 """;
             Assert.Equal(9, Convert.ToInt32(await command.ExecuteScalarAsync()));
             command.CommandText = "SELECT count(*) FROM schema_migrations;";
-            Assert.Equal(7, Convert.ToInt32(await command.ExecuteScalarAsync()));
+            Assert.Equal(8, Convert.ToInt32(await command.ExecuteScalarAsync()));
         }
         finally
         {
@@ -424,19 +424,19 @@ public sealed class DatabaseSchemaTests
                 DateTimeOffset.UtcNow,
                 migrations,
                 CancellationToken.None);
-            Assert.Equal(7, upgraded.SchemaVersion);
+            Assert.Equal(8, upgraded.SchemaVersion);
 
-            var failedMigration8 = new DatabaseMigration(
-                8,
-                "seven_to_eight_failure",
-                "CREATE TABLE seven_to_eight_rollback_probe(id INTEGER); INSERT INTO missing_table VALUES(1);",
+            var failedMigration9 = new DatabaseMigration(
+                9,
+                "future_migration_failure",
+                "CREATE TABLE future_migration_rollback_probe(id INTEGER); INSERT INTO missing_table VALUES(1);",
                 new string('b', 64));
             await Assert.ThrowsAnyAsync<SqliteException>(() =>
                 DatabaseInitializer.EnsureSchemaAsync(
                     session.Connection,
                     material.VaultId,
                     DateTimeOffset.UtcNow,
-                    [.. migrations, failedMigration8],
+                    [.. migrations, failedMigration9],
                     CancellationToken.None));
 
             using (var verification = session.Connection.CreateCommand())
@@ -445,14 +445,14 @@ public sealed class DatabaseSchemaTests
                     SELECT value FROM vault_meta WHERE key = 'schema_version';
                     """;
                 Assert.Equal(
-                    "7",
+                    "8",
                     Convert.ToString(await verification.ExecuteScalarAsync()));
                 verification.CommandText =
-                    "SELECT count(*) FROM schema_migrations WHERE version = 8;";
+                    "SELECT count(*) FROM schema_migrations WHERE version = 9;";
                 Assert.Equal(0, Convert.ToInt32(await verification.ExecuteScalarAsync()));
                 verification.CommandText = """
                     SELECT count(*) FROM sqlite_master
-                    WHERE name = 'seven_to_eight_rollback_probe';
+                    WHERE name = 'future_migration_rollback_probe';
                     """;
                 Assert.Equal(0, Convert.ToInt32(await verification.ExecuteScalarAsync()));
                 verification.CommandText =
@@ -542,7 +542,7 @@ public sealed class DatabaseSchemaTests
                 migrations,
                 CancellationToken.None);
 
-            Assert.Equal(7, upgraded.SchemaVersion);
+            Assert.Equal(8, upgraded.SchemaVersion);
             using var command = session.Connection.CreateCommand();
             command.CommandText =
                 """
@@ -620,7 +620,7 @@ public sealed class DatabaseSchemaTests
                 migrations,
                 CancellationToken.None);
 
-            Assert.Equal(7, upgraded.SchemaVersion);
+            Assert.Equal(8, upgraded.SchemaVersion);
             using (var selectHistorical = session.Connection.CreateCommand())
             {
                 selectHistorical.CommandText = """
@@ -760,6 +760,208 @@ public sealed class DatabaseSchemaTests
             {
                 Directory.Delete(root, recursive: true);
             }
+        }
+    }
+
+    [Fact]
+    public async Task SemanticIndexSchemaEnforcesProfileConsentJobsAndChunks()
+    {
+        using var fixture = await Fixture.CreateAsync();
+        _ = await SqliteMcVaultStore.InitializeAsync(
+            fixture.Root,
+            fixture.Material);
+        await using var session = await SqliteMcDatabaseFactory.OpenSessionAsync(
+            fixture.Root,
+            fixture.Material,
+            create: false);
+
+        var documentId = Guid.NewGuid();
+        var profileId = new string('a', 64);
+        var endpointFingerprint = new string('b', 64);
+        const string now = "2026-11-05T00:00:00Z";
+        using (var command = session.Connection.CreateCommand())
+        {
+            command.CommandText =
+                $"""
+                 INSERT INTO documents(
+                     document_id, title, title_key, path, path_key, format,
+                     content, frontmatter_json, headings_json, revision,
+                     created_at, updated_at)
+                 VALUES(
+                     '{documentId:D}', 'Semantic', 'semantic', '/semantic.md',
+                     '/semantic.md', 'md', '# Semantic', json_object(), '[]', 1,
+                     '{now}', '{now}');
+
+                 INSERT INTO semantic_profiles(
+                     profile_id, provider_id, model_id, dimension,
+                     max_input_tokens, profile_version, chunker_version,
+                     endpoint_fingerprint, is_remote, is_active, status,
+                     last_error_code, created_at, updated_at, ready_at)
+                 VALUES(
+                     '{profileId}', 'openai-compatible', 'embedding-test', 3,
+                     8192, 1, 1, '{endpointFingerprint}', 0, 1, 'ready',
+                     NULL, '{now}', '{now}', '{now}');
+
+                 INSERT INTO semantic_remote_consents(
+                     profile_id, consent_version, endpoint_fingerprint,
+                     granted_by_actor, granted_at, revoked_at, updated_at)
+                 VALUES(
+                     '{profileId}', 1, '{endpointFingerprint}', 'user_ui',
+                     '{now}', NULL, '{now}');
+
+                 INSERT INTO semantic_index_jobs(
+                     document_id, profile_id, job_type, status,
+                     requested_revision, document_content_hash, attempt_count,
+                     available_at, last_error_code, created_at, updated_at,
+                     completed_at)
+                 VALUES(
+                     '{documentId:D}', '{profileId}', 'index', 'pending', 1,
+                     '{new string('c', 64)}', 0, '{now}', NULL, '{now}',
+                     '{now}', NULL);
+                 """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        using (var chunk = session.Connection.CreateCommand())
+        {
+            chunk.CommandText =
+                """
+                INSERT INTO semantic_chunks(
+                    document_id, profile_id, source_revision, chunk_ordinal,
+                    heading_path_json, start_offset, end_offset,
+                    chunk_content_hash, dimension, vector_blob, created_at)
+                VALUES(
+                    $documentId, $profileId, 1, 0, '["Semantic"]', 0, 9,
+                    $hash, 3, $vector, $now);
+                """;
+            chunk.Parameters.AddWithValue(
+                "$documentId",
+                documentId.ToString("D"));
+            chunk.Parameters.AddWithValue("$profileId", profileId);
+            chunk.Parameters.AddWithValue("$hash", new string('c', 64));
+            chunk.Parameters.AddWithValue("$vector", new byte[12]);
+            chunk.Parameters.AddWithValue("$now", now);
+            await chunk.ExecuteNonQueryAsync();
+        }
+
+        using (var duplicateActive = session.Connection.CreateCommand())
+        {
+            duplicateActive.CommandText =
+                $"""
+                 INSERT INTO semantic_profiles(
+                     profile_id, provider_id, model_id, dimension,
+                     max_input_tokens, profile_version, chunker_version,
+                     endpoint_fingerprint, is_remote, is_active, status,
+                     created_at, updated_at, ready_at)
+                 VALUES(
+                     '{new string('d', 64)}', 'openai-compatible',
+                     'embedding-test-2', 3, 8192, 1, 1,
+                     '{new string('e', 64)}', 0, 1, 'ready',
+                     '{now}', '{now}', '{now}');
+                 """;
+            var exception = await Assert.ThrowsAsync<SqliteException>(
+                () => duplicateActive.ExecuteNonQueryAsync());
+            Assert.Contains("UNIQUE", exception.Message, StringComparison.Ordinal);
+        }
+
+        using (var dimensionMismatch = session.Connection.CreateCommand())
+        {
+            dimensionMismatch.CommandText =
+                """
+                INSERT INTO semantic_chunks(
+                    document_id, profile_id, source_revision, chunk_ordinal,
+                    heading_path_json, start_offset, end_offset,
+                    chunk_content_hash, dimension, vector_blob, created_at)
+                VALUES(
+                    $documentId, $profileId, 1, 1, '[]', 0, 1,
+                    $hash, 4, $vector, $now);
+                """;
+            dimensionMismatch.Parameters.AddWithValue(
+                "$documentId",
+                documentId.ToString("D"));
+            dimensionMismatch.Parameters.AddWithValue("$profileId", profileId);
+            dimensionMismatch.Parameters.AddWithValue(
+                "$hash",
+                new string('f', 64));
+            dimensionMismatch.Parameters.AddWithValue(
+                "$vector",
+                new byte[16]);
+            dimensionMismatch.Parameters.AddWithValue("$now", now);
+            var exception = await Assert.ThrowsAsync<SqliteException>(
+                () => dimensionMismatch.ExecuteNonQueryAsync());
+            Assert.Contains(
+                "dimension must match",
+                exception.Message,
+                StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public async Task SemanticAuditAndIdempotencyWhitelistsAreActive()
+    {
+        using var fixture = await Fixture.CreateAsync();
+        _ = await SqliteMcVaultStore.InitializeAsync(
+            fixture.Root,
+            fixture.Material);
+        await using var session = await SqliteMcDatabaseFactory.OpenSessionAsync(
+            fixture.Root,
+            fixture.Material,
+            create: false);
+        const string now = "2026-11-05T00:00:00Z";
+
+        using (var command = session.Connection.CreateCommand())
+        {
+            command.CommandText =
+                $"""
+                 INSERT INTO idempotency_records(
+                     idempotency_key, actor_kind, operation, session_id,
+                     request_hash, result_json, created_at, expires_at)
+                 VALUES(
+                     '{Guid.NewGuid():D}', 'user_ui', 'semantic_index.rebuild',
+                     NULL, '{new string('a', 64)}', json_object(), '{now}',
+                     '{now}');
+
+                 INSERT INTO audit_events(
+                     event_id, occurred_at, actor_kind, action, document_id,
+                     revision, correlation_id, result, details_json)
+                 VALUES(
+                     '{Guid.NewGuid():D}', '{now}', 'user_ui',
+                     'embedding.profile_change', NULL, NULL, NULL, 'success',
+                     json_object('profileId', 'probe'));
+                 """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        using (var invalidOperation = session.Connection.CreateCommand())
+        {
+            invalidOperation.CommandText =
+                $"""
+                 INSERT INTO idempotency_records(
+                     idempotency_key, actor_kind, operation, session_id,
+                     request_hash, result_json, created_at, expires_at)
+                 VALUES(
+                     '{Guid.NewGuid():D}', 'user_ui', 'semantic.invalid',
+                     NULL, '{new string('b', 64)}', json_object(), '{now}',
+                     '{now}');
+                 """;
+            await Assert.ThrowsAsync<SqliteException>(
+                () => invalidOperation.ExecuteNonQueryAsync());
+        }
+
+        using (var invalidAction = session.Connection.CreateCommand())
+        {
+            invalidAction.CommandText =
+                $"""
+                 INSERT INTO audit_events(
+                     event_id, occurred_at, actor_kind, action, document_id,
+                     revision, correlation_id, result, details_json)
+                 VALUES(
+                     '{Guid.NewGuid():D}', '{now}', 'user_ui',
+                     'embedding.invalid', NULL, NULL, NULL, 'success',
+                     json_object());
+                 """;
+            await Assert.ThrowsAsync<SqliteException>(
+                () => invalidAction.ExecuteNonQueryAsync());
         }
     }
 

@@ -99,7 +99,7 @@ public sealed class BackupCompatibilityFixtureTests
             Assert.NotNull(restoreResult);
             Assert.Equal(5, restoreResult.SchemaVersion);
             Assert.Equal(5, restoreResult.SourceSchemaVersion);
-            Assert.Equal(7, restoreResult.CurrentSchemaVersion);
+            Assert.Equal(8, restoreResult.CurrentSchemaVersion);
             Assert.True(restoreResult.SchemaMigrationPending);
             Assert.Equal(
                 BackupMigrationTriggers.FirstUnlock,
@@ -161,14 +161,21 @@ public sealed class BackupCompatibilityFixtureTests
                         SELECT
                             (SELECT value FROM vault_meta WHERE key = 'schema_version'),
                             (SELECT count(*) FROM sqlite_master
-                             WHERE name IN ('document_drafts', 'idempotency_records'));
+                             WHERE name IN (
+                                 'document_drafts',
+                                 'idempotency_records',
+                                 'semantic_profiles',
+                                 'semantic_remote_consents',
+                                 'semantic_index_jobs',
+                                 'semantic_chunks'
+                             ));
                         """;
                     await using var reader =
                         await command.Command.ExecuteReaderAsync(token);
                     Assert.True(await reader.ReadAsync(token));
                     return (reader.GetString(0), reader.GetInt32(1));
                 });
-            Assert.Equal(("7", 2), upgradedSchema);
+            Assert.Equal(("8", 6), upgradedSchema);
             Assert.Equal(
                 fixtureHashBefore,
                 await HashFileAsync(BackupCompatibilityFixture.PackagePath));
@@ -218,7 +225,7 @@ public sealed class BackupCompatibilityFixtureTests
                 DatabaseMigrationCatalog.Load(),
                 CancellationToken.None);
 
-            Assert.Equal(7, upgraded.SchemaVersion);
+            Assert.Equal(8, upgraded.SchemaVersion);
             using var command = session.Connection.CreateCommand();
             command.CommandText =
                 "SELECT count(*) FROM documents WHERE path = 'fixtures/compatibility-fixture.md';";

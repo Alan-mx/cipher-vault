@@ -16,7 +16,9 @@ public enum IdempotencyOperation
     DraftReject,
     DraftDiscard,
     DraftApply,
-    McpWriteModeChange
+    McpWriteModeChange,
+    SemanticRemoteConsentChange,
+    SemanticIndexRebuild
 }
 
 public sealed record IdempotencyRecord(
@@ -47,6 +49,10 @@ public static class IdempotencyOperationMapping
             IdempotencyOperation.DraftDiscard => "draft.discard",
             IdempotencyOperation.DraftApply => "draft.apply",
             IdempotencyOperation.McpWriteModeChange => "mcp_write_mode.change",
+            IdempotencyOperation.SemanticRemoteConsentChange =>
+                "semantic_remote_consent.change",
+            IdempotencyOperation.SemanticIndexRebuild =>
+                "semantic_index.rebuild",
             _ => throw new ArgumentOutOfRangeException(nameof(value))
         };
 
@@ -66,6 +72,10 @@ public static class IdempotencyOperationMapping
             "draft.discard" => IdempotencyOperation.DraftDiscard,
             "draft.apply" => IdempotencyOperation.DraftApply,
             "mcp_write_mode.change" => IdempotencyOperation.McpWriteModeChange,
+            "semantic_remote_consent.change" =>
+                IdempotencyOperation.SemanticRemoteConsentChange,
+            "semantic_index.rebuild" =>
+                IdempotencyOperation.SemanticIndexRebuild,
             _ => throw new ArgumentOutOfRangeException(nameof(value))
         };
 }

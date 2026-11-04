@@ -57,6 +57,10 @@ public static class ApiErrorCodes
     public const string BackupTooLarge = "backup_too_large";
     public const string BackupNotFound = "backup_not_found";
     public const string ExportTooLarge = "export_too_large";
+    public const string SemanticSearchUnavailable = "semantic_search_unavailable";
+    public const string SemanticProfileMismatch = "semantic_profile_mismatch";
+    public const string SemanticRemoteNotAllowed = "semantic_remote_not_allowed";
+    public const string SemanticRebuildInProgress = "semantic_rebuild_in_progress";
     public const string InvalidIfMatch = "invalid_if_match";
     public const string UnsupportedMediaType = "unsupported_media_type";
     public const string InternalError = "internal_error";

@@ -76,6 +76,7 @@ public static class SearchStore
         }
         var filterFingerprint = CursorCodec.Fingerprint(
             normalizedQuery,
+            query.Mode.ToString(),
             string.Join('\u001F', tags.Select(tag => tag.NormalizedKey)),
             format,
             query.UpdatedAfter?.ToUniversalTime().ToString("O"),
@@ -240,7 +241,10 @@ public static class SearchStore
                     reader.GetString(2),
                     reader.GetInt32(3),
                     BoundSnippet(reader.IsDBNull(5) ? string.Empty : reader.GetString(5)),
-                    score),
+                    score)
+                {
+                    UpdatedAt = updatedAt
+                },
                 new SearchCursor(score, updatedAt, id, snapshotAt)));
         }
 
@@ -385,7 +389,10 @@ public static class SearchStore
                         path,
                         reader.GetInt32(3),
                         BuildSnippet(content, query),
-                        1.0),
+                        1.0)
+                    {
+                        UpdatedAt = updatedAt
+                    },
                     itemCursor));
             }
         }
@@ -500,7 +507,10 @@ public static class SearchStore
                     reader.GetString(2),
                     reader.GetInt32(3),
                     BoundSnippet(reader.GetString(4)),
-                    1.0),
+                    1.0)
+                {
+                    UpdatedAt = updatedAt
+                },
                 itemCursor));
         }
 
@@ -560,7 +570,7 @@ public static class SearchStore
             CultureInfo.InvariantCulture);
     }
 
-    private static void AppendCommonFilters(
+    internal static void AppendCommonFilters(
         StringBuilder sql,
         VaultCommandLease lease,
         SearchQuery query,

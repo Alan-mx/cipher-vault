@@ -6,6 +6,7 @@ using CipherVault.Application.Search;
 using CipherVault.Core.Documents;
 using CipherVault.Core.KnowledgeGraph;
 using CipherVault.Core.Search;
+using CipherVault.Core.Semantic;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
@@ -41,6 +42,7 @@ public sealed class KnowledgeTools
         DateTimeOffset? updatedBefore = null,
         bool? hasBacklinks = null,
         bool orphanOnly = false,
+        string? searchMode = null,
         JsonElement[]? propertyFilters = null,
         string propertyMatch = "all",
         string? cursor = null,
@@ -53,6 +55,7 @@ public sealed class KnowledgeTools
                 return await search.SearchAsync(
                     new SearchQuery(
                         query ?? string.Empty,
+                        ParseSearchMode(searchMode),
                         tags,
                         DocumentReadTools.ParseFormat(format),
                         updatedAfter,
@@ -189,5 +192,14 @@ public sealed class KnowledgeTools
             "all" => SearchPropertyMatch.All,
             "any" => SearchPropertyMatch.Any,
             _ => throw InvalidInput("propertyMatch must be all or any.")
+        };
+
+    private static SearchMode ParseSearchMode(string? value) =>
+        value switch
+        {
+            null or "keyword" => SearchMode.Keyword,
+            "semantic" => SearchMode.Semantic,
+            "hybrid" => SearchMode.Hybrid,
+            _ => throw InvalidInput("searchMode is invalid.")
         };
 }

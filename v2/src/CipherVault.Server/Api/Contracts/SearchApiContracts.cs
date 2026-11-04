@@ -1,6 +1,7 @@
 using System.Text.Json;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Search;
+using CipherVault.Core.Semantic;
 
 namespace CipherVault.Server.Api.Contracts;
 
@@ -11,6 +12,7 @@ public sealed record SearchPropertyFilterApiRequest(
 
 public sealed record StructuredSearchApiRequest(
     string? Query,
+    string? SearchMode,
     string[]? Tags,
     string? Format,
     DateTimeOffset? UpdatedAfter,
@@ -28,6 +30,7 @@ public static class StructuredSearchApiMapper
         this StructuredSearchApiRequest request) =>
         new(
             request.Query ?? string.Empty,
+            ParseSearchMode(request.SearchMode),
             request.Tags,
             ApiQueryBinding.ParseFormat(request.Format),
             request.UpdatedAfter,
@@ -39,6 +42,15 @@ public static class StructuredSearchApiMapper
                 .Select(filter => filter.ToApplicationFilter())
                 .ToArray(),
             ParseMatch(request.PropertyMatch));
+
+    public static SearchMode ParseSearchMode(string? value) =>
+        value switch
+        {
+            null or "keyword" => SearchMode.Keyword,
+            "semantic" => SearchMode.Semantic,
+            "hybrid" => SearchMode.Hybrid,
+            _ => throw InvalidRequest("searchMode is invalid.")
+        };
 
     private static SearchPropertyFilter ToApplicationFilter(
         this SearchPropertyFilterApiRequest filter)

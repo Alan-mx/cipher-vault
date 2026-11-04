@@ -11,6 +11,7 @@ export { vaultApi } from "./vault";
 export { catalogApi } from "./catalog";
 export { documentApi } from "./documents";
 export { knowledgeApi } from "./knowledge";
+export { semanticIndexApi } from "./semantic-index";
 export { revisionApi } from "./revisions";
 export { trashApi } from "./trash";
 export { importApi } from "./imports";

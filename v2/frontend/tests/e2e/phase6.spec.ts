@@ -291,7 +291,13 @@ test("Phase 6 desktop flow, responsive layout and accessibility", async ({
   await expect(
     page.getByRole("button", { name: /Alpha/ }).first(),
   ).toBeVisible();
+  await expect(
+    page.getByText("语义检索暂不可用，已返回关键词结果。"),
+  ).toBeVisible();
   await page.getByPlaceholder("输入全文搜索词…").fill("");
+  await page
+    .locator(".search-mode-row .n-radio__label", { hasText: "关键词" })
+    .click();
   await page.getByRole("button", { name: "添加属性条件" }).click();
   await page.getByPlaceholder("例如 status / source.kind").fill("source.kind");
   await page
@@ -334,6 +340,8 @@ test("Phase 6 desktop flow, responsive layout and accessibility", async ({
   ).toBeVisible();
   await expect(page.getByText("0.0.0-local")).toBeVisible();
   await expect(page.getByRole("heading", { name: "导出明文" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "语义检索" })).toBeVisible();
+  await expect(page.getByText("未配置", { exact: true })).toBeVisible();
   await expect(page.getByText("下载后将失去 Vault 加密保护")).toBeVisible();
   await page.getByRole("button", { name: "创建备份" }).click();
   await expect(page.locator(".backup-row")).toHaveCount(1);

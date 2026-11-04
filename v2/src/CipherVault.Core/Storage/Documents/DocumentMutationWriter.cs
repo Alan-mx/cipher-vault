@@ -2,6 +2,7 @@ using CipherVault.Core.Audit;
 using CipherVault.Core.Database;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
+using CipherVault.Core.Storage.Semantic;
 using Microsoft.Data.Sqlite;
 using System.Globalization;
 using System.Text;
@@ -279,6 +280,13 @@ public static class DocumentMutationWriter
                 parsed.Tags,
                 now,
                 cancellationToken);
+            await SemanticIndexQueue.QueueIndexAsync(
+                context,
+                documentId,
+                1,
+                parsed.Content,
+                now,
+                cancellationToken);
 
             var auditEventId = await AuditStore.AppendAsync(
                 context,
@@ -550,6 +558,13 @@ public static class DocumentMutationWriter
                 parsed.Tags,
                 now,
                 cancellationToken);
+            await SemanticIndexQueue.QueueIndexAsync(
+                context,
+                documentId,
+                newRevision,
+                parsed.Content,
+                now,
+                cancellationToken);
             var auditEventId = await AuditStore.AppendAsync(
                 context,
                 actor,
@@ -681,6 +696,12 @@ public static class DocumentMutationWriter
             newRevision,
             "success",
             new { purgeEligibleAt },
+            now,
+            cancellationToken);
+        await SemanticIndexQueue.QueueDeleteAsync(
+            context,
+            documentId,
+            newRevision,
             now,
             cancellationToken);
         return new TrashDeleteResult(

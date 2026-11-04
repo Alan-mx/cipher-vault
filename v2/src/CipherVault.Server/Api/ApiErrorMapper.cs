@@ -21,6 +21,7 @@ public static class ApiErrorMapper
         "actualBytes",
         "purgeEligibleAt",
         "retryAfterSeconds",
+        "reasonCode",
         "mode",
         "sessionGeneration",
         "status",
@@ -136,6 +137,20 @@ public static class ApiErrorMapper
                 StatusCodes.Status409Conflict,
                 ApiErrorCodes.RevisionConflict,
                 "Document revision changed."),
+            VaultErrorCode.SemanticSearchUnavailable =>
+                SemanticUnavailableFailure(exception),
+            VaultErrorCode.SemanticProfileMismatch => Failure(
+                StatusCodes.Status409Conflict,
+                ApiErrorCodes.SemanticProfileMismatch,
+                "Semantic profile changed."),
+            VaultErrorCode.SemanticRemoteNotAllowed => Failure(
+                StatusCodes.Status409Conflict,
+                ApiErrorCodes.SemanticRemoteNotAllowed,
+                "Remote semantic embedding is not allowed."),
+            VaultErrorCode.SemanticRebuildInProgress => Failure(
+                StatusCodes.Status409Conflict,
+                ApiErrorCodes.SemanticRebuildInProgress,
+                "Semantic index rebuild is already in progress."),
             VaultErrorCode.DraftRevisionConflict => Failure(
                 StatusCodes.Status409Conflict,
                 ApiErrorCodes.DraftRevisionConflict,
@@ -283,4 +298,24 @@ public static class ApiErrorMapper
         string code,
         string message) =>
         new(statusCode, code, message);
+
+    private static ApiFailure SemanticUnavailableFailure(
+        VaultException exception)
+    {
+        var statusCode = exception.Details.TryGetValue(
+                "reasonCode",
+                out var reason)
+            && reason is string reasonCode
+            && reasonCode is
+                "provider_unavailable"
+                or "provider_timeout"
+                or "provider_rate_limited"
+                or "provider_invalid_response"
+                ? StatusCodes.Status503ServiceUnavailable
+                : StatusCodes.Status409Conflict;
+        return Failure(
+            statusCode,
+            ApiErrorCodes.SemanticSearchUnavailable,
+            "Semantic search is unavailable.");
+    }
 }
