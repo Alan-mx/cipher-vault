@@ -33,8 +33,16 @@ public sealed class DocumentDraftServiceTests
             mcp,
             Guid.NewGuid());
         Assert.Equal(DocumentDraftStatus.Draft, created.Status);
+        Assert.NotNull(created.FutureDocumentId);
 
         var detail = await fixture.Drafts.GetAsync(created.DraftId);
+        Assert.Equal(created.FutureDocumentId, detail.Metadata.FutureDocumentId);
+        Assert.False(detail.Payload.TryGetProperty("futureDocumentId", out _));
+        Assert.False(detail.Payload.TryGetProperty("payloadVersion", out _));
+        Assert.Contains(
+            $"id: {created.FutureDocumentId:D}",
+            detail.Preview.Content,
+            StringComparison.Ordinal);
         Assert.Contains("# Redis Cache", detail.Preview.Content);
         Assert.Contains("# Redis Cache", detail.Preview.UnifiedDiff);
 
@@ -52,6 +60,9 @@ public sealed class DocumentDraftServiceTests
             Guid.NewGuid());
         Assert.Equal(DocumentDraftStatus.Applied, applied.Status);
         Assert.Equal(1, applied.DocumentWriteResult.Revision);
+        Assert.Equal(
+            created.FutureDocumentId,
+            applied.DocumentWriteResult.DocumentId);
 
         var document = await fixture.Documents.GetAsync(
             applied.DocumentWriteResult.DocumentId);
@@ -61,6 +72,157 @@ public sealed class DocumentDraftServiceTests
             10_000);
         Assert.Contains("# Redis Cache", content.Content);
         Assert.Contains("Redis", document.Tags);
+    }
+
+    [Fact]
+    public async Task CreateDraftRejectsFrontmatterIdentity()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var mcp = new VaultActorContext(VaultActorKind.Mcp);
+        var payload = Parse(
+            $$"""
+              {
+                "title": "Protected",
+                "virtualPath": "notes/protected.md",
+                "format": "md",
+                "content": "---\nid: {{Guid.NewGuid():D}}\n---\nBody",
+                "tags": []
+              }
+              """);
+
+        var exception = await Assert.ThrowsAsync<VaultException>(
+            () => fixture.Drafts.CreateAsync(
+                new CreateDocumentDraftRequest(
+                    DocumentDraftType.Create,
+                    null,
+                    null,
+                    payload),
+                mcp,
+                Guid.NewGuid()));
+
+        Assert.Equal(VaultErrorCode.DocumentIdProtected, exception.Code);
+    }
+
+    [Fact]
+    public async Task UpdateCreateDraftPreservesFutureIdentity()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var mcp = new VaultActorContext(VaultActorKind.Mcp);
+        var user = new VaultActorContext(VaultActorKind.UserUi);
+        var created = await fixture.Drafts.CreateAsync(
+            new CreateDocumentDraftRequest(
+                DocumentDraftType.Create,
+                null,
+                null,
+                Parse(
+                    """
+                    {
+                      "title": "Draft identity",
+                      "virtualPath": "notes/draft-identity.md",
+                      "format": "md",
+                      "content": "# Draft identity\n",
+                      "tags": []
+                    }
+                    """)),
+            mcp,
+            Guid.NewGuid());
+
+        var updated = await fixture.Drafts.UpdateAsync(
+            created.DraftId,
+            created.DraftRevision,
+            Parse(
+                """
+                {
+                  "title": "Draft identity",
+                  "virtualPath": "notes/draft-identity.md",
+                  "format": "md",
+                  "content": "# Updated identity\n",
+                  "tags": []
+                }
+                """),
+            mcp,
+            Guid.NewGuid());
+
+        Assert.Equal(created.FutureDocumentId, updated.FutureDocumentId);
+        var detail = await fixture.Drafts.GetAsync(created.DraftId);
+        Assert.Contains(
+            $"id: {created.FutureDocumentId:D}",
+            detail.Preview.Content,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            $"id: {created.FutureDocumentId:D}",
+            detail.Payload.GetProperty("content").GetString(),
+            StringComparison.Ordinal);
+
+        var reviewed = await fixture.Drafts.SubmitReviewAsync(
+            created.DraftId,
+            updated.DraftRevision,
+            mcp,
+            Guid.NewGuid());
+        var applied = await fixture.Drafts.ApplyAsync(
+            created.DraftId,
+            reviewed.DraftRevision,
+            user,
+            Guid.NewGuid());
+
+        Assert.Equal(created.FutureDocumentId, applied.DocumentWriteResult.DocumentId);
+    }
+
+    [Fact]
+    public async Task UpdateDraftPreviewAndApplyIncludeCurrentIdentity()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var user = new VaultActorContext(VaultActorKind.UserUi);
+        var mcp = new VaultActorContext(VaultActorKind.Mcp);
+        var document = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Identity update",
+                null,
+                null,
+                VaultDocumentFormat.Markdown,
+                "Original",
+                null),
+            user);
+        var created = await fixture.Drafts.CreateAsync(
+            new CreateDocumentDraftRequest(
+                DocumentDraftType.Update,
+                document.DocumentId,
+                1,
+                Parse(
+                    """
+                    {
+                      "operations": [
+                        { "type": "replace_body", "content": "Replacement" }
+                      ]
+                    }
+                    """)),
+            mcp,
+            Guid.NewGuid());
+        var detail = await fixture.Drafts.GetAsync(created.DraftId);
+        Assert.Contains(
+            $"id: {document.DocumentId:D}",
+            detail.Preview.Content,
+            StringComparison.Ordinal);
+
+        var reviewed = await fixture.Drafts.SubmitReviewAsync(
+            created.DraftId,
+            created.DraftRevision,
+            mcp,
+            Guid.NewGuid());
+        _ = await fixture.Drafts.ApplyAsync(
+            created.DraftId,
+            reviewed.DraftRevision,
+            user,
+            Guid.NewGuid());
+
+        var content = await fixture.Documents.ReadContentAsync(
+            document.DocumentId,
+            0,
+            500);
+        Assert.Contains(
+            $"id: {document.DocumentId:D}",
+            content.Content,
+            StringComparison.Ordinal);
     }
 
     [Fact]

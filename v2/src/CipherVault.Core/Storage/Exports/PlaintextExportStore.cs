@@ -29,7 +29,9 @@ public static class PlaintextExportStore
             var transformed = PlaintextExportContentTransformer.Transform(
                 document.Content,
                 document.VirtualPath,
-                document.Links);
+                document.Links,
+                document.DocumentId,
+                document.Format);
             bytes = checked(
                 bytes + Encoding.UTF8.GetByteCount(transformed));
             if (count > PlaintextExportLimits.MaxDocuments
@@ -64,7 +66,7 @@ public static class PlaintextExportStore
         using var command = context.CreateCommand();
         command.Command.CommandText = cursor is null
             ? """
-              SELECT d.document_id, d.path_key, d.path, d.format, d.revision,
+              SELECT d.document_id, d.path_key, d.path, d.title, d.format, d.revision,
                      d.content, l.link_kind, l.resolution_status, t.path,
                      l.display_text, l.target_heading, l.start_offset,
                      l.end_offset
@@ -81,7 +83,7 @@ public static class PlaintextExportStore
                        l.start_offset;
               """
             : """
-              SELECT d.document_id, d.path_key, d.path, d.format, d.revision,
+              SELECT d.document_id, d.path_key, d.path, d.title, d.format, d.revision,
                      d.content, l.link_kind, l.resolution_status, t.path,
                      l.display_text, l.target_heading, l.start_offset,
                      l.end_offset
@@ -130,25 +132,26 @@ public static class PlaintextExportStore
 
         var pathKey = reader.GetString(1);
         var path = reader.GetString(2);
+        var title = reader.GetString(3);
         var format = VaultDocumentFormatExtensions.ParseDatabaseValue(
-            reader.GetString(3));
-        var revision = reader.GetInt32(4);
-        var content = reader.GetString(5);
+            reader.GetString(4));
+        var revision = reader.GetInt32(5);
+        var content = reader.GetString(6);
         var links = new List<ExportDocumentLink>();
         do
         {
-            if (reader.IsDBNull(6))
+            if (reader.IsDBNull(7))
             {
                 continue;
             }
             links.Add(new ExportDocumentLink(
-                ParseLinkKind(reader.GetString(6)),
-                reader.GetString(7),
-                reader.IsDBNull(8) ? null : reader.GetString(8),
-                reader.GetString(9),
-                reader.IsDBNull(10) ? null : reader.GetString(10),
-                reader.GetInt32(11),
-                reader.GetInt32(12)));
+                ParseLinkKind(reader.GetString(7)),
+                reader.GetString(8),
+                reader.IsDBNull(9) ? null : reader.GetString(9),
+                reader.GetString(10),
+                reader.IsDBNull(11) ? null : reader.GetString(11),
+                reader.GetInt32(12),
+                reader.GetInt32(13)));
         }
         while (await reader.ReadAsync(cancellationToken)
                && string.Equals(
@@ -177,6 +180,7 @@ public static class PlaintextExportStore
         return new PlaintextExportDocument(
             documentId,
             path,
+            title,
             format,
             revision,
             content,

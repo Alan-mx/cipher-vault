@@ -234,12 +234,22 @@ Web SearchDialog 和 MCP `search_notes` 支持结构化 Frontmatter 属性过滤
 - 标题和路径变化时自动在草稿或正式写入的同一事务内更新反向 WikiLink 和相对链接。
 - unresolved / ambiguous 链接在 Web 中只显示文本，不跳转到错误的站点路径。
 
+## 稳定文档 ID 与迁移
+
+- Markdown 的顶层 Frontmatter `id` 与数据库 `documentId` 是同一个 GUID。
+- 新建、更新、草稿提交和 Revision Restore 由服务端统一维护 ID，普通编辑和 MCP 不能替换身份。
+- 旧 Markdown 在下一次正式写入时补充 `id`；导出时只在导出副本中补充，不修改数据库原文。
+- TXT 正文不写身份标记，导出 Manifest v2 保存其 `documentId`。
+- 导入会恢复 Markdown/Manifest 身份；重复、已占用或回收站中的 ID 不会覆盖已有文档。
+- 文档页支持“复制”，新文档使用全新 ID、Revision 1，并重新建立出链。
+
 ## 明文导出
 
 Settings 页面提供“导出明文”。该操作会下载当前全部有效 Markdown/TXT 文档的未加密 ZIP：
 
 - 保持 Vault 中的虚拟目录和 `.md` / `.txt` 路径。
-- 保留 Frontmatter、标签和标准 Markdown 链接；已解析 WikiLink 会转换为相对 Markdown 链接。
+- 保留 Frontmatter、标签和标准 Markdown 链接；Markdown 会携带稳定 `id`，已解析 WikiLink 会转换为相对 Markdown 链接。
+- Manifest 使用 FormatVersion 2，包含每篇文档的 `documentId`、标题、路径、大小和 SHA-256。
 - 不包含回收站、历史 Revision、Audit、备份或配置。
 - ZIP 内包含 `_cipher-vault-export.json` 清单和逐文件 SHA-256。
 - 不新增导出密码；下载后文件完全脱离 Vault 加密保护。

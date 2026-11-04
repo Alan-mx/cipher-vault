@@ -28,6 +28,7 @@ public sealed record DocumentDraftApiItem(
     string Status,
     Guid? TargetDocumentId,
     int? BaseDocumentRevision,
+    Guid? FutureDocumentId,
     string SourceActor,
     string? Title,
     string? VirtualPath,
@@ -58,6 +59,7 @@ public sealed record DocumentDraftMutationApiResponse(
     Guid DraftId,
     int DraftRevision,
     string Status,
+    Guid? FutureDocumentId,
     DateTimeOffset UpdatedAt);
 
 public sealed record DocumentDraftApplyApiResponse(
@@ -101,6 +103,7 @@ public static class DocumentDraftApiMapper
             result.DraftId,
             result.DraftRevision,
             result.Status.ToDatabaseValue(),
+            result.FutureDocumentId,
             result.UpdatedAt);
 
     public static DocumentDraftApplyApiResponse ToApiResponse(
@@ -144,6 +147,7 @@ public static class DocumentDraftApiMapper
             metadata.Status.ToDatabaseValue(),
             metadata.TargetDocumentId,
             metadata.BaseDocumentRevision,
+            metadata.FutureDocumentId,
             metadata.SourceActor,
             metadata.Title,
             metadata.VirtualPath,

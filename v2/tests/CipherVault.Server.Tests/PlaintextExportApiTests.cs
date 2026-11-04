@@ -17,19 +17,25 @@ public sealed class PlaintextExportApiTests
         using var unlock = await server.Client.UnlockAsync();
         Assert.Equal(HttpStatusCode.OK, unlock.StatusCode);
         var csrf = await server.Client.GetAntiforgeryTokenAsync();
+        Guid createdId;
         using (var created = await server.Client.PostJsonWithAntiforgeryAsync(
-            "/api/documents",
-            csrf,
-            new
-            {
-                title = "Exported",
-                folder = "notes",
-                format = "md",
-                content = "# Exported\n正文",
-                tags = new[] { "export" }
-            }))
+                   "/api/documents",
+                   csrf,
+                   new
+                   {
+                       title = "Exported",
+                       folder = "notes",
+                       format = "md",
+                       content = "# Exported\n正文",
+                       tags = new[] { "export" }
+                   }))
         {
             Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+            using var createdJson = JsonDocument.Parse(
+                await created.Content.ReadAsStringAsync());
+            createdId = createdJson.RootElement
+                .GetProperty("documentId")
+                .GetGuid();
         }
 
         using var wrong = await PostPreflightAsync(
@@ -70,13 +76,18 @@ public sealed class PlaintextExportApiTests
             ["notes/Exported.md", PlaintextExportLimits.ManifestFileName],
             archive.Entries.Select(entry => entry.FullName));
         Assert.Equal(
-            "# Exported\n正文",
+            $"---\nid: {createdId:D}\n---\n# Exported\n正文",
             ReadEntry(archive, "notes/Exported.md"));
         using var manifest = JsonDocument.Parse(
             ReadEntry(archive, PlaintextExportLimits.ManifestFileName));
         Assert.Equal(
             1,
             manifest.RootElement.GetProperty("documentCount").GetInt32());
+        using var manifestDocument = JsonDocument.Parse(
+            manifest.RootElement.GetProperty("documents")[0].GetRawText());
+        Assert.Equal(
+            createdId.ToString("D"),
+            manifestDocument.RootElement.GetProperty("documentId").GetString());
 
         using var audit = await server.Client.GetAsync(
             "/api/audit?action=export.plaintext");

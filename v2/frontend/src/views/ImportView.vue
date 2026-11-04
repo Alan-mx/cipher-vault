@@ -86,6 +86,9 @@ const commit = async (): Promise<void> => {
             {{ imports.preview.skippedCount }} · Rejected
             {{ imports.preview.rejectedCount }}
           </span>
+          <span v-if="imports.preview.manifestVersion">
+            Manifest v{{ imports.preview.manifestVersion }}
+          </span>
           <span>
             预览 Token 有效至
             {{

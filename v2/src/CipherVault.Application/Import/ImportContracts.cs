@@ -7,20 +7,33 @@ public enum ImportPreviewItemState
     Rejected
 }
 
+public enum ImportIdentitySource
+{
+    Frontmatter,
+    Manifest,
+    Generated
+}
+
 public sealed record ImportPreviewRequest(string SourceRoot);
 
 public sealed record ImportPreviewItem(
     string RelativePath,
     string VirtualPath,
+    string Title,
     CipherVault.Core.Documents.VaultDocumentFormat Format,
     long SizeBytes,
     string Sha256,
+    Guid? DocumentId,
+    ImportIdentitySource? IdentitySource,
+    string? ContentHash,
     ImportPreviewItemState State,
     string? Reason);
 
 public sealed record ImportPreviewResult(
     string Token,
     DateTimeOffset ExpiresAt,
+    int? ManifestVersion,
+    string? ManifestSha256,
     int ReadyCount,
     int SkippedCount,
     int RejectedCount,

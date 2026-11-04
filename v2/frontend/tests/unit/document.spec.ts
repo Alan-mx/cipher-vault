@@ -161,6 +161,49 @@ describe("document inspector", () => {
   });
 });
 
+describe("document copy", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("opens the copied document and keeps a late result from replacing selection", async () => {
+    setActivePinia(createPinia());
+    const store = useDocumentStore();
+    setDocument(store, "doc-a", "A");
+    const copy = deferred({
+      documentId: "doc-copy",
+      revision: 1,
+      virtualPath: "A copy.md",
+      committedAt: "2026-11-02T00:00:00Z",
+      auditEventId: "audit",
+    });
+    vi.spyOn(documentApi, "copy").mockReturnValue(copy.promise);
+    vi.spyOn(documentApi, "metadata").mockImplementation((id) =>
+      Promise.resolve(metadata(id, id === "doc-a" ? "A" : "B")),
+    );
+    vi.spyOn(documentApi, "content").mockImplementation((id) =>
+      Promise.resolve(content(id, id)),
+    );
+    vi.spyOn(documentApi, "map").mockImplementation((id) =>
+      Promise.resolve(map(id, id === "doc-a" ? "A" : "B")),
+    );
+
+    const copying = store.copy({ title: "A copy" });
+    await store.open("doc-b");
+    copy.resolve({
+      documentId: "doc-copy",
+      revision: 1,
+      virtualPath: "A copy.md",
+      committedAt: "2026-11-02T00:00:00Z",
+      auditEventId: "audit",
+    });
+    const result = await copying;
+
+    expect(result.documentId).toBe("doc-copy");
+    expect(store.documentId).toBe("doc-b");
+  });
+});
+
 describe("document operation generation guards", () => {
   afterEach(() => {
     vi.restoreAllMocks();

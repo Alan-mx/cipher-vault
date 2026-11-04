@@ -27,6 +27,16 @@ public static class ApiErrorCodes
     public const string WriteModeDraftRequired = "write_mode_draft_required";
     public const string IdempotencyKeyRequired = "idempotency_key_required";
     public const string IdempotencyKeyReused = "idempotency_key_reused";
+    public const string InvalidDocumentId = "invalid_document_id";
+    public const string DocumentIdConflict = "document_id_conflict";
+    public const string DocumentIdMismatch = "document_id_mismatch";
+    public const string DocumentIdProtected = "document_id_protected";
+    public const string TrashedDocumentIdConflict = "trashed_document_id_conflict";
+    public const string DuplicateDocumentIdInImport =
+        "duplicate_document_id_in_import";
+    public const string UnsupportedManifestVersion =
+        "unsupported_manifest_version";
+    public const string InvalidManifest = "invalid_manifest";
     public const string McpWriteModeInvalid = "mcp_write_mode_invalid";
     public const string PatchTargetAmbiguous = "patch_target_ambiguous";
     public const string VaultAlreadyInitialized = "vault_already_initialized";

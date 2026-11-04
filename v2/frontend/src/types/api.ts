@@ -236,13 +236,18 @@ export interface ImportPreviewRequest {
 }
 
 export type ImportPreviewItemState = "ready" | "skipped_conflict" | "rejected";
+export type ImportIdentitySource = "frontmatter" | "manifest" | "generated";
 
 export interface ImportPreviewItem {
   relativePath: string;
   virtualPath: string;
+  title: string;
   format: VaultFormat;
   sizeBytes: number;
   sha256: string;
+  documentId?: GuidString | null;
+  identitySource?: ImportIdentitySource | null;
+  contentHash?: string | null;
   state: ImportPreviewItemState;
   reason?: string | null;
 }
@@ -250,6 +255,8 @@ export interface ImportPreviewItem {
 export interface ImportPreviewResult {
   token: string;
   expiresAt: UtcTimestamp;
+  manifestVersion?: number | null;
+  manifestSha256?: string | null;
   readyCount: number;
   skippedCount: number;
   rejectedCount: number;
@@ -326,6 +333,11 @@ export interface UpdateDocumentRequest {
   virtualPath?: string;
   content: string;
   tags?: string[];
+}
+
+export interface CopyDocumentRequest {
+  title?: string;
+  virtualPath?: string;
 }
 
 export interface TrashRestoreRequest {
@@ -460,6 +472,7 @@ export interface DocumentDraftItem {
   status: DocumentDraftStatus;
   targetDocumentId?: GuidString | null;
   baseDocumentRevision?: number | null;
+  futureDocumentId?: GuidString | null;
   sourceActor: ActorKind;
   title?: string | null;
   virtualPath?: string | null;
@@ -491,6 +504,7 @@ export interface DocumentDraftMutationResult {
   draftId: GuidString;
   draftRevision: number;
   status: DocumentDraftStatus;
+  futureDocumentId?: GuidString | null;
   updatedAt: UtcTimestamp;
 }
 

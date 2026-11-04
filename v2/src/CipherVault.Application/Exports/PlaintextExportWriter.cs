@@ -60,7 +60,9 @@ internal static class PlaintextExportWriter
                 var content = PlaintextExportContentTransformer.Transform(
                     document.Content,
                     document.VirtualPath,
-                    document.Links);
+                    document.Links,
+                    document.DocumentId,
+                    document.Format);
                 var bytes = EncodeContent(content);
                 actualBytes = checked(actualBytes + bytes.LongLength);
                 if (actualBytes > PlaintextExportLimits.MaxContentBytes)
@@ -80,7 +82,9 @@ internal static class PlaintextExportWriter
                 }
 
                 manifestDocuments.Add(new PlaintextExportManifestDocument(
+                    document.DocumentId.ToString("D"),
                     document.VirtualPath,
+                    document.Title,
                     document.Format == VaultDocumentFormat.Markdown
                         ? "md"
                         : "txt",

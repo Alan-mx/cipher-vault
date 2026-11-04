@@ -243,6 +243,16 @@ internal static class DocumentPatchEngine
 
     private static void ValidateCommand(VaultPatchCommand command)
     {
+        if (command.TargetKind == "frontmatter"
+            && string.Equals(
+                command.FrontMatterKey?.Trim(),
+                DocumentIdentity.FrontMatterKey,
+                StringComparison.Ordinal))
+        {
+            throw new VaultException(
+                VaultErrorCode.DocumentIdProtected,
+                "The document identity cannot be patched.");
+        }
         if (command.TargetKind is not ("heading" or "frontmatter") ||
             command.Operation is not ("append" or "prepend" or "replace" or "delete"))
         {

@@ -1,4 +1,6 @@
+using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using CipherVault.Core.Audit;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
@@ -8,6 +10,340 @@ namespace CipherVault.Application.Tests;
 
 public sealed class ImportServiceTests
 {
+    [Fact]
+    public async Task PreviewClassifiesFrontmatterAndGeneratedIdentity()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var sourceRoot = Path.Combine(
+            fixture.Parent,
+            $"identity-preview-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(sourceRoot);
+        var frontmatterId = Guid.NewGuid();
+        WriteFile(
+            sourceRoot,
+            "frontmatter.md",
+            $"---\nid: {frontmatterId:D}\n---\nBody");
+        WriteFile(sourceRoot, "generated.txt", "plain");
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+
+        var preview = await fixture.Import.PreviewAsync(
+            new ImportPreviewRequest(sourceRoot),
+            actor);
+
+        Assert.Null(preview.ManifestVersion);
+        var frontmatter = Assert.Single(
+            preview.Items,
+            item => item.RelativePath == "frontmatter.md");
+        Assert.Equal(frontmatterId, frontmatter.DocumentId);
+        Assert.Equal(ImportIdentitySource.Frontmatter, frontmatter.IdentitySource);
+        var generated = Assert.Single(
+            preview.Items,
+            item => item.RelativePath == "generated.txt");
+        Assert.NotNull(generated.DocumentId);
+        Assert.Equal(ImportIdentitySource.Generated, generated.IdentitySource);
+        Assert.NotNull(generated.ContentHash);
+        _ = await fixture.Import.CommitAsync(
+            new ImportCommitRequest(preview.Token),
+            actor);
+        Assert.Equal(
+            frontmatterId,
+            (await fixture.Documents.GetAsync(frontmatterId)).DocumentId);
+        Assert.Equal(
+            generated.DocumentId,
+            (await fixture.Documents.GetAsync(generated.DocumentId!.Value)).DocumentId);
+    }
+
+    [Fact]
+    public async Task PreviewUsesManifestForMarkdownAndTextIdentity()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var sourceRoot = Path.Combine(
+            fixture.Parent,
+            $"manifest-preview-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(sourceRoot);
+        var markdownId = Guid.NewGuid();
+        var textId = Guid.NewGuid();
+        const string markdownContent =
+            "---\nid: 7b29a2e1-1111-4222-8333-123456789abc\n---\nBody";
+        var actualMarkdown = markdownContent.Replace(
+            "7b29a2e1-1111-4222-8333-123456789abc",
+            markdownId.ToString("D"),
+            StringComparison.Ordinal);
+        const string textContent = "plain";
+        WriteFile(sourceRoot, "notes/a.md", actualMarkdown);
+        WriteFile(sourceRoot, "notes/b.txt", textContent);
+        await WriteManifestAsync(
+            sourceRoot,
+            [
+                (markdownId, "notes/a.md", "Manifest title", "md", actualMarkdown),
+                (textId, "notes/b.txt", "Text title", "txt", textContent)
+            ]);
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+
+        var preview = await fixture.Import.PreviewAsync(
+            new ImportPreviewRequest(sourceRoot),
+            actor);
+
+        Assert.Equal(2, preview.ManifestVersion);
+        Assert.NotNull(preview.ManifestSha256);
+        var markdown = Assert.Single(
+            preview.Items,
+            item => item.RelativePath == "notes/a.md");
+        Assert.Equal(markdownId, markdown.DocumentId);
+        Assert.Equal(ImportIdentitySource.Frontmatter, markdown.IdentitySource);
+        Assert.Equal("Manifest title", markdown.Title);
+        var text = Assert.Single(
+            preview.Items,
+            item => item.RelativePath == "notes/b.txt");
+        Assert.Equal(textId, text.DocumentId);
+        Assert.Equal(ImportIdentitySource.Manifest, text.IdentitySource);
+        Assert.Equal("Text title", text.Title);
+
+        _ = await fixture.Import.CommitAsync(
+            new ImportCommitRequest(preview.Token),
+            actor);
+        Assert.Equal(
+            "Manifest title",
+            (await fixture.Documents.GetAsync(markdownId)).Title);
+        Assert.Equal(
+            "Text title",
+            (await fixture.Documents.GetAsync(textId)).Title);
+    }
+
+    [Fact]
+    public async Task PreviewRejectsManifestMarkdownWithoutMatchingId()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var sourceRoot = Path.Combine(
+            fixture.Parent,
+            $"manifest-missing-id-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(sourceRoot);
+        const string content = "Body";
+        WriteFile(sourceRoot, "note.md", content);
+        await WriteManifestAsync(
+            sourceRoot,
+            [(Guid.NewGuid(), "note.md", "Note", "md", content)]);
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+
+        var preview = await fixture.Import.PreviewAsync(
+            new ImportPreviewRequest(sourceRoot),
+            actor);
+
+        var item = Assert.Single(preview.Items);
+        Assert.Equal(ImportPreviewItemState.Rejected, item.State);
+        Assert.Equal("invalid_manifest", item.Reason);
+    }
+
+    [Fact]
+    public async Task PreviewRejectsManifestAndFrontmatterIdMismatch()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var sourceRoot = Path.Combine(
+            fixture.Parent,
+            $"manifest-id-mismatch-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(sourceRoot);
+        var frontmatterId = Guid.NewGuid();
+        var manifestId = Guid.NewGuid();
+        var content = $"---\nid: {frontmatterId:D}\n---\nBody";
+        WriteFile(sourceRoot, "note.md", content);
+        await WriteManifestAsync(
+            sourceRoot,
+            [(manifestId, "note.md", "Note", "md", content)]);
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+
+        var preview = await fixture.Import.PreviewAsync(
+            new ImportPreviewRequest(sourceRoot),
+            actor);
+
+        var item = Assert.Single(preview.Items);
+        Assert.Equal(ImportPreviewItemState.Rejected, item.State);
+        Assert.Equal("document_id_mismatch", item.Reason);
+    }
+
+    [Fact]
+    public async Task PreviewRejectsAllDuplicateIdsInBatch()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var sourceRoot = Path.Combine(
+            fixture.Parent,
+            $"duplicate-id-preview-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(sourceRoot);
+        var id = Guid.NewGuid();
+        WriteFile(
+            sourceRoot,
+            "a.md",
+            $"---\nid: {id:D}\n---\nA");
+        WriteFile(
+            sourceRoot,
+            "b.md",
+            $"---\nid: {id:D}\n---\nB");
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+
+        var preview = await fixture.Import.PreviewAsync(
+            new ImportPreviewRequest(sourceRoot),
+            actor);
+
+        Assert.All(
+            preview.Items,
+            item =>
+            {
+                Assert.Equal(ImportPreviewItemState.Rejected, item.State);
+                Assert.Equal("duplicate_document_id_in_import", item.Reason);
+            });
+    }
+
+    [Fact]
+    public async Task PreviewRejectsInvalidMarkdownIdentityPerFile()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var sourceRoot = Path.Combine(
+            fixture.Parent,
+            $"invalid-id-preview-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(sourceRoot);
+        WriteFile(
+            sourceRoot,
+            "invalid.md",
+            "---\nid: not-a-guid\n---\nBody");
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+
+        var preview = await fixture.Import.PreviewAsync(
+            new ImportPreviewRequest(sourceRoot),
+            actor);
+
+        var item = Assert.Single(preview.Items);
+        Assert.Equal(ImportPreviewItemState.Rejected, item.State);
+        Assert.Equal("invalid_document_id", item.Reason);
+    }
+
+    [Fact]
+    public async Task PreviewClassifiesExistingAndTrashedIdConflicts()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+        var created = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Existing",
+                "notes/existing.md",
+                null,
+                VaultDocumentFormat.Markdown,
+                "Body",
+                null),
+            actor);
+        var existingContent = (
+            await fixture.Documents.ReadContentAsync(
+                created.DocumentId,
+                0,
+                500)).Content;
+        var sameRoot = Path.Combine(
+            fixture.Parent,
+            $"same-id-preview-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(sameRoot, "notes"));
+        WriteFile(sameRoot, "notes/existing.md", existingContent);
+
+        var same = await fixture.Import.PreviewAsync(
+            new ImportPreviewRequest(sameRoot),
+            actor);
+
+        var sameItem = Assert.Single(same.Items);
+        Assert.Equal(ImportPreviewItemState.SkippedConflict, sameItem.State);
+        Assert.Equal("duplicate_document_id", sameItem.Reason);
+
+        var differentRoot = Path.Combine(
+            fixture.Parent,
+            $"different-path-preview-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(differentRoot);
+        WriteFile(differentRoot, "other.md", existingContent);
+        var different = await fixture.Import.PreviewAsync(
+            new ImportPreviewRequest(differentRoot),
+            actor);
+        var differentItem = Assert.Single(different.Items);
+        Assert.Equal(ImportPreviewItemState.Rejected, differentItem.State);
+        Assert.Equal("document_id_conflict", differentItem.Reason);
+
+        _ = await fixture.Documents.DeleteAsync(
+            created.DocumentId,
+            1,
+            actor);
+        var trashed = await fixture.Import.PreviewAsync(
+            new ImportPreviewRequest(sameRoot),
+            actor);
+        var trashedItem = Assert.Single(trashed.Items);
+        Assert.Equal(ImportPreviewItemState.Rejected, trashedItem.State);
+        Assert.Equal("trashed_document_id_conflict", trashedItem.Reason);
+    }
+
+    [Fact]
+    public async Task CommitRejectsManifestChangedAfterPreview()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var sourceRoot = Path.Combine(
+            fixture.Parent,
+            $"changed-manifest-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(sourceRoot);
+        WriteFile(sourceRoot, "note.txt", "body");
+        await WriteManifestAsync(
+            sourceRoot,
+            [(Guid.NewGuid(), "note.txt", "Note", "txt", "body")]);
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+        var preview = await fixture.Import.PreviewAsync(
+            new ImportPreviewRequest(sourceRoot),
+            actor);
+        await WriteManifestAsync(
+            sourceRoot,
+            [(Guid.NewGuid(), "note.txt", "Changed", "txt", "body")]);
+
+        var exception = await Assert.ThrowsAsync<VaultException>(
+            () => fixture.Import.CommitAsync(
+                new ImportCommitRequest(preview.Token),
+                actor));
+
+        Assert.Equal(VaultErrorCode.InvalidManifest, exception.Code);
+    }
+
+    [Fact]
+    public async Task CommitRejectsIdentityOccupiedAfterPreview()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var sourceRoot = Path.Combine(
+            fixture.Parent,
+            $"id-race-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(sourceRoot);
+        var id = Guid.NewGuid();
+        WriteFile(
+            sourceRoot,
+            "note.md",
+            $"---\nid: {id:D}\n---\nBody");
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+        var preview = await fixture.Import.PreviewAsync(
+            new ImportPreviewRequest(sourceRoot),
+            actor);
+        await fixture.QueryAsync(
+            async context =>
+                await CipherVault.Core.Storage.Documents.DocumentMutationWriter
+                    .CreateTrustedAsync(
+                        context,
+                        id,
+                        new CreateDocumentRequest(
+                            "Occupied",
+                            "occupied.md",
+                            null,
+                            VaultDocumentFormat.Markdown,
+                            "Other body",
+                            null),
+                        actor,
+                        fixture.TimeProvider.GetUtcNow(),
+                        DocumentContentLimitMode.StandardWrite,
+                        CancellationToken.None));
+
+        var result = await fixture.Import.CommitAsync(
+            new ImportCommitRequest(preview.Token),
+            actor);
+
+        var item = Assert.Single(result.Items);
+        Assert.Equal("failed", item.Result);
+        Assert.Equal("DocumentIdConflict", item.ErrorCode);
+    }
+
     [Theory]
     [InlineData("a/Source.md", "z/Target.md", "../z/Target.md")]
     [InlineData("z/Source.md", "a/Target.md", "../a/Target.md")]
@@ -174,7 +510,11 @@ public sealed class ImportServiceTests
         var content = await fixture.Documents.ReadContentAsync(
             existing.DocumentId,
             offset: 0);
-        Assert.Equal("original", content.Content);
+        Assert.Contains(
+            $"id: {existing.DocumentId:D}",
+            content.Content,
+            StringComparison.Ordinal);
+        Assert.EndsWith("original", content.Content, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -318,5 +658,44 @@ public sealed class ImportServiceTests
             relativePath.Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, content, new UTF8Encoding(false));
+    }
+
+    private static Task WriteManifestAsync(
+        string sourceRoot,
+        IReadOnlyList<(
+            Guid DocumentId,
+            string Path,
+            string Title,
+            string Format,
+            string Content)> documents)
+    {
+        var entries = documents.Select(document =>
+        {
+            var bytes = Encoding.UTF8.GetBytes(document.Content);
+            return new
+            {
+                documentId = document.DocumentId.ToString("D"),
+                virtualPath = document.Path,
+                title = document.Title,
+                format = document.Format,
+                revision = 1,
+                bytes = bytes.LongLength,
+                sha256 = Convert.ToHexString(SHA256.HashData(bytes))
+                    .ToLowerInvariant()
+            };
+        }).ToArray();
+        var json = JsonSerializer.Serialize(new
+        {
+            format = "cipher-vault-plaintext-export",
+            formatVersion = 2,
+            exportedAtUtc = "2026-11-04T00:00:00Z",
+            documentCount = entries.Length,
+            totalContentBytes = entries.Sum(entry => entry.bytes),
+            documents = entries
+        });
+        return File.WriteAllTextAsync(
+            Path.Combine(sourceRoot, "_cipher-vault-export.json"),
+            json,
+            new UTF8Encoding(false));
     }
 }

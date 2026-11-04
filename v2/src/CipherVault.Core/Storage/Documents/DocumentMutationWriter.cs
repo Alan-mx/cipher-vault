@@ -4,6 +4,7 @@ using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
 using Microsoft.Data.Sqlite;
 using System.Globalization;
+using System.Text;
 
 namespace CipherVault.Core.Storage.Documents;
 
@@ -20,11 +21,14 @@ public static class DocumentMutationWriter
             request,
             actor,
             now,
+            requestedDocumentId: null,
+            DocumentIdentityMode.NewDocument,
             DocumentContentLimitMode.StandardWrite,
             cancellationToken);
 
     internal static async Task<DocumentWriteResult> CreateForDraftAsync(
         VaultOperationContext context,
+        Guid documentId,
         CreateDocumentRequest request,
         VaultActorContext actor,
         DateTimeOffset now,
@@ -34,14 +38,154 @@ public static class DocumentMutationWriter
             request,
             actor,
             now,
+            documentId,
+            DocumentIdentityMode.ExistingDocument,
             DocumentContentLimitMode.ExistingDocumentAuthoring,
             cancellationToken);
+
+    internal static async Task<DocumentWriteResult> CreateTrustedAsync(
+        VaultOperationContext context,
+        Guid documentId,
+        CreateDocumentRequest request,
+        VaultActorContext actor,
+        DateTimeOffset now,
+        DocumentContentLimitMode limitMode,
+        CancellationToken cancellationToken) =>
+        await CreateCoreAsync(
+            context,
+            request,
+            actor,
+            now,
+            documentId,
+            DocumentIdentityMode.TrustedImport,
+            limitMode,
+            cancellationToken);
+
+    public static async Task<DocumentWriteResult> CopyAsync(
+        VaultOperationContext context,
+        Guid sourceDocumentId,
+        int expectedRevision,
+        CopyDocumentRequest request,
+        VaultActorContext actor,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(actor);
+        if (actor.Kind != VaultActorKind.UserUi)
+        {
+            throw new VaultException(
+                VaultErrorCode.Forbidden,
+                "Only UserUi can copy a document.");
+        }
+
+        var current = await ReadCurrentForMutationAsync(
+            context,
+            sourceDocumentId,
+            cancellationToken);
+        ThrowIfRevisionMismatch(expectedRevision, current.Revision);
+        var format = VaultDocumentFormatExtensions.ParseDatabaseValue(
+            current.Format);
+        var title = string.IsNullOrWhiteSpace(request.Title)
+            ? BuildDefaultCopyTitle(current.Title)
+            : TitleNormalizer.NormalizeTitle(request.Title);
+        var path = request.VirtualPath is not null
+            ? VirtualPath.Normalize(request.VirtualPath, format).Path
+            : await BuildAvailableCopyPathAsync(
+                context,
+                current,
+                title,
+                format,
+                cancellationToken);
+        var documentId = Guid.NewGuid();
+        var content = format == VaultDocumentFormat.Markdown
+            ? DocumentIdentity.EnsureMarkdownIdentity(
+                current.Content,
+                documentId,
+                DocumentIdentityMode.CopyAsNew)
+            : current.Content;
+        return await CreateTrustedAsync(
+            context,
+            documentId,
+            new CreateDocumentRequest(
+                title,
+                path,
+                Folder: null,
+                format,
+                content,
+                current.TagNames),
+            actor,
+            now,
+            DocumentContentLimitMode.StandardWrite,
+            cancellationToken);
+    }
+
+    private static async Task<string> BuildAvailableCopyPathAsync(
+        VaultOperationContext context,
+        CurrentDocumentState source,
+        string title,
+        VaultDocumentFormat format,
+        CancellationToken cancellationToken)
+    {
+        var folder = source.Path.Contains('/')
+            ? source.Path[..source.Path.LastIndexOf('/')]
+            : null;
+        for (var suffix = 0; suffix < 1_000; suffix++)
+        {
+            var candidateTitle = suffix == 0
+                ? title
+                : $"{title} {suffix + 1}";
+            var candidatePath = VirtualPath.Build(
+                candidateTitle,
+                folder,
+                format).Path;
+            using var query = context.CreateCommand();
+            query.Command.CommandText =
+                """
+                SELECT count(*)
+                FROM documents
+                WHERE deleted_at IS NULL AND path_key = $pathKey;
+                """;
+            query.Command.Parameters.AddWithValue(
+                "$pathKey",
+                candidatePath);
+            if (Convert.ToInt32(
+                    await query.Command.ExecuteScalarAsync(cancellationToken)) == 0)
+            {
+                return candidatePath;
+            }
+        }
+        throw new VaultException(
+            VaultErrorCode.DocumentPathConflict,
+            "No available copy path could be generated.");
+    }
+
+    private static string BuildDefaultCopyTitle(string title)
+    {
+        const string suffix = " 副本";
+        const int maxTitleLength = 200;
+        var prefix = new StringBuilder(maxTitleLength);
+        var count = 0;
+        foreach (var rune in title.EnumerateRunes())
+        {
+            if (count >= maxTitleLength - suffix.Length)
+            {
+                break;
+            }
+            prefix.Append(rune);
+            count++;
+        }
+        return TitleNormalizer.NormalizeTitle(prefix.ToString() + suffix);
+    }
 
     private static async Task<DocumentWriteResult> CreateCoreAsync(
         VaultOperationContext context,
         CreateDocumentRequest request,
         VaultActorContext actor,
         DateTimeOffset now,
+        Guid? requestedDocumentId,
+        DocumentIdentityMode identityMode,
         DocumentContentLimitMode limitMode,
         CancellationToken cancellationToken)
     {
@@ -50,15 +194,21 @@ public static class DocumentMutationWriter
         ArgumentNullException.ThrowIfNull(actor);
         EnsureDocumentWriteActor(actor);
 
+        var documentId = requestedDocumentId ?? Guid.NewGuid();
+        var content = request.Format == VaultDocumentFormat.Markdown
+            ? DocumentIdentity.EnsureMarkdownIdentity(
+                request.Content,
+                documentId,
+                identityMode)
+            : request.Content;
         var parsed = DocumentContentParser.Parse(
             request.Title,
             request.VirtualPath,
             request.Folder,
             request.Format,
-            request.Content,
+            content,
             request.Tags,
             limitMode);
-        var documentId = Guid.NewGuid();
         try
         {
             using (var insert = context.CreateCommand())
@@ -218,12 +368,20 @@ public static class DocumentMutationWriter
             documentId,
             cancellationToken);
         ThrowIfRevisionMismatch(expectedRevision, current.Revision);
+        var requestedContent =
+            VaultDocumentFormatExtensions.ParseDatabaseValue(current.Format)
+                == VaultDocumentFormat.Markdown
+                ? DocumentIdentity.EnsureMarkdownIdentity(
+                    request.Content,
+                    current.DocumentId,
+                    DocumentIdentityMode.ExistingDocument)
+                : request.Content;
         var parsed = DocumentContentParser.Parse(
             request.Title,
             request.VirtualPath ?? current.Path,
             null,
             VaultDocumentFormatExtensions.ParseDatabaseValue(current.Format),
-            request.Content,
+            requestedContent,
             request.Tags,
             limitMode);
         if (IsNoOp(current, parsed))
@@ -271,12 +429,12 @@ public static class DocumentMutationWriter
         if (selfRewrites.Count > 0)
         {
             var content = string.Equals(
-                request.Content,
+                requestedContent,
                 current.Content,
                 StringComparison.Ordinal)
                 ? ApplyReplacements(current.Content, selfRewrites)
                 : ApplyRelocatedReplacements(
-                    request.Content,
+                    requestedContent,
                     selfRewrites);
             parsed = DocumentContentParser.Parse(
                 request.Title,

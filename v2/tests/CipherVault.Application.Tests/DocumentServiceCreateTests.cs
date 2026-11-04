@@ -6,6 +6,83 @@ namespace CipherVault.Application.Tests;
 public sealed class DocumentServiceCreateTests
 {
     [Fact]
+    public async Task MarkdownCreateInjectsStableDocumentId()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+
+        var created = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Identified",
+                null,
+                null,
+                VaultDocumentFormat.Markdown,
+                "# Identified",
+                null),
+            actor);
+
+        var content = await fixture.Documents.ReadContentAsync(
+            created.DocumentId,
+            0,
+            500);
+        Assert.Contains(
+            $"id: {created.DocumentId:D}",
+            content.Content,
+            StringComparison.Ordinal);
+        var map = await fixture.Documents.GetMapAsync(created.DocumentId);
+        Assert.Contains(
+            map.FrontMatterFields,
+            field => field.Key == "id"
+                && field.ValueType == "string"
+                && field.ValueJson.Contains(
+                    created.DocumentId.ToString("D"),
+                    StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task TextCreateDoesNotInjectIdentityIntoBody()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+
+        var created = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Plain",
+                null,
+                null,
+                VaultDocumentFormat.Text,
+                "plain body",
+                null),
+            actor);
+
+        var content = await fixture.Documents.ReadContentAsync(
+            created.DocumentId,
+            0,
+            100);
+        Assert.Equal("plain body", content.Content);
+    }
+
+    [Fact]
+    public async Task CreateRejectsCallerProvidedFrontmatterId()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+
+        var exception = await Assert.ThrowsAsync<VaultException>(
+            () => fixture.Documents.CreateAsync(
+                new CreateDocumentRequest(
+                    "Identified",
+                    null,
+                    null,
+                    VaultDocumentFormat.Markdown,
+                    $"---\nid: {Guid.NewGuid():D}\n---\nBody",
+                    null),
+                actor));
+
+        Assert.Equal(VaultErrorCode.DocumentIdProtected, exception.Code);
+    }
+
+    [Fact]
     public async Task CreateWritesDocumentIndicesRevisionAndAuditAtomically()
     {
         await using var fixture = await VaultApplicationFixture.CreateAsync();

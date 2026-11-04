@@ -8,7 +8,9 @@ internal static class PlaintextExportContentTransformer
     internal static string Transform(
         string content,
         string sourceVirtualPath,
-        IReadOnlyList<ExportDocumentLink> links)
+        IReadOnlyList<ExportDocumentLink> links,
+        Guid documentId,
+        VaultDocumentFormat format)
     {
         var result = content;
         foreach (var link in links
@@ -37,7 +39,12 @@ internal static class PlaintextExportContentTransformer
                 $"[{EscapeLinkText(link.DisplayText)}]({destination})",
                 result.AsSpan(link.EndOffset));
         }
-        return result;
+        return format == VaultDocumentFormat.Markdown
+            ? DocumentIdentity.EnsureMarkdownIdentity(
+                result,
+                documentId,
+                DocumentIdentityMode.ExportCopy)
+            : result;
     }
 
     private static string EscapeLinkText(string value) =>

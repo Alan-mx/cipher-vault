@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text.Json;
 using CipherVault.Core.Errors;
 using YamlDotNet.Core;
+using YamlDotNet.Core.Events;
 using YamlDotNet.RepresentationModel;
 using YamlDotNet.Serialization;
 
@@ -29,7 +30,8 @@ internal static class FrontMatterDocument
         var closingStart = FindClosingDelimiter(content, bodyStart);
         if (closingStart < 0)
         {
-            return false;
+            throw InvalidFrontMatter(
+                "Frontmatter opening delimiter is not closed.");
         }
         var closingEnd = FindLineEnd(content, closingStart);
         var end = NextLineStart(content, closingEnd);
@@ -48,11 +50,14 @@ internal static class FrontMatterDocument
         YamlMappingNode root;
         try
         {
-            values = new DeserializerBuilder()
-                .WithAttemptingUnquotedStringTypeDeserialization()
-                .WithDuplicateKeyChecking()
-                .Build()
-                .Deserialize<Dictionary<string, object?>>(yaml) ?? [];
+            if (CountTopLevelMappingKey(
+                    yaml,
+                    DocumentIdentity.FrontMatterKey) > 1)
+            {
+                throw new VaultException(
+                    VaultErrorCode.InvalidDocumentId,
+                    "Frontmatter contains duplicate id fields.");
+            }
             var stream = new YamlStream();
             stream.Load(new StringReader(yaml));
             if (stream.Documents.Count != 1 ||
@@ -62,6 +67,24 @@ internal static class FrontMatterDocument
                     "Frontmatter must contain one top-level mapping.");
             }
             root = mapping;
+            var idFieldCount = root.Children.Keys
+                .OfType<YamlScalarNode>()
+                .Count(key => string.Equals(
+                    key.Value,
+                    DocumentIdentity.FrontMatterKey,
+                    StringComparison.Ordinal));
+            if (idFieldCount > 1)
+            {
+                throw new VaultException(
+                    VaultErrorCode.InvalidDocumentId,
+                    "Frontmatter contains duplicate id fields.");
+            }
+
+            values = new DeserializerBuilder()
+                .WithAttemptingUnquotedStringTypeDeserialization()
+                .WithDuplicateKeyChecking()
+                .Build()
+                .Deserialize<Dictionary<string, object?>>(yaml) ?? [];
         }
         catch (VaultException)
         {
@@ -90,6 +113,17 @@ internal static class FrontMatterDocument
             {
                 throw InvalidFrontMatter(
                     $"Frontmatter value for {key} could not be resolved.");
+            }
+            if (string.Equals(
+                    key,
+                    DocumentIdentity.FrontMatterKey,
+                    StringComparison.Ordinal)
+                && (value is not string idValue
+                    || !DocumentIdentity.TryParse(idValue, out _)))
+            {
+                throw new VaultException(
+                    VaultErrorCode.InvalidDocumentId,
+                    "Frontmatter id must be a non-empty D-format UUID.");
             }
             var fieldStart = bodyStart + checked((int)keyNode.Start.Index);
             var nextFieldStart = index + 1 < entries.Length
@@ -234,6 +268,66 @@ internal static class FrontMatterDocument
         return -1;
     }
 
+    private static int CountTopLevelMappingKey(
+        string yaml,
+        string key)
+    {
+        var frames = new Stack<YamlContainerFrame>();
+        var parser = new Parser(new StringReader(yaml));
+        var count = 0;
+        while (parser.MoveNext())
+        {
+            switch (parser.Current)
+            {
+                case MappingStart:
+                    MarkParentValueComplete(frames);
+                    frames.Push(new YamlContainerFrame(IsMapping: true));
+                    break;
+                case MappingEnd:
+                    frames.Pop();
+                    MarkParentValueComplete(frames);
+                    break;
+                case SequenceStart:
+                    MarkParentValueComplete(frames);
+                    frames.Push(new YamlContainerFrame(IsMapping: false));
+                    break;
+                case SequenceEnd:
+                    frames.Pop();
+                    MarkParentValueComplete(frames);
+                    break;
+                case Scalar scalar when frames.Count > 0:
+                    var frame = frames.Peek();
+                    if (frame.IsMapping && frame.ExpectKey)
+                    {
+                        if (frames.Count == 1
+                            && string.Equals(
+                                scalar.Value,
+                                key,
+                                StringComparison.Ordinal))
+                        {
+                            count++;
+                        }
+                        frame.ExpectKey = false;
+                    }
+                    else if (frame.IsMapping)
+                    {
+                        frame.ExpectKey = true;
+                    }
+                    break;
+            }
+        }
+        return count;
+    }
+
+    private static void MarkParentValueComplete(
+        Stack<YamlContainerFrame> frames)
+    {
+        if (frames.Count > 0 && frames.Peek().IsMapping)
+        {
+            frames.Peek().ExpectKey = true;
+        }
+    }
+
     private static JsonElement ToJsonElement(object? value)
     {
         return JsonSerializer.SerializeToElement(ToPlainValue(value));
@@ -365,6 +459,13 @@ internal static class FrontMatterDocument
                 VaultErrorCode.FrontMatterInvalid,
                 message,
                 innerException);
+    }
+
+    private sealed class YamlContainerFrame(bool IsMapping)
+    {
+        internal bool IsMapping { get; } = IsMapping;
+
+        internal bool ExpectKey { get; set; } = IsMapping;
     }
 }
 

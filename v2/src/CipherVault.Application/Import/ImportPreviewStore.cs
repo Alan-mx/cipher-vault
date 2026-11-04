@@ -38,6 +38,7 @@ internal sealed class ImportPreviewStore
         string sourceRoot,
         Guid vaultSessionId,
         DateTimeOffset expiresAt,
+        string? manifestSha256,
         IReadOnlyList<ImportPreviewItem> items)
     {
         lock (sync)
@@ -51,6 +52,7 @@ internal sealed class ImportPreviewStore
                 sourceRoot,
                 vaultSessionId,
                 expiresAt,
+                manifestSha256,
                 items);
         }
     }
@@ -108,6 +110,7 @@ internal sealed class ImportPreviewStore
         string SourceRoot,
         Guid VaultSessionId,
         DateTimeOffset ExpiresAt,
+        string? ManifestSha256,
         IReadOnlyList<ImportPreviewItem> Items);
 
     private sealed class PreviewEntry

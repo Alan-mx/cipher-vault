@@ -22,12 +22,77 @@ public sealed class DocumentDraftPayloadEngineTests
             }
             """);
 
-        var working = DocumentDraftPayloadEngine.ParseCreatePayload(payload);
+        var futureDocumentId = Guid.NewGuid();
+        var prepared = DocumentDraftPayloadEngine.PrepareCreatePayload(
+            payload,
+            futureDocumentId);
+        var working = prepared.WorkingCopy;
 
         Assert.Equal("Redis 缓存设计", working.Title);
         Assert.Equal("architecture/redis-cache.md", working.VirtualPath);
         Assert.Equal(VaultDocumentFormat.Markdown, working.Format);
+        Assert.Equal(futureDocumentId, working.DocumentId);
         Assert.Equal(["Redis"], working.Tags);
+        Assert.Contains(
+            $"id: {futureDocumentId:D}",
+            working.Content,
+            StringComparison.Ordinal);
+        Assert.Equal(
+            2,
+            prepared.PersistedPayload
+                .GetProperty("payloadVersion")
+                .GetInt32());
+    }
+
+    [Fact]
+    public void LegacyCreateDraftWithoutFutureIdIsRejected()
+    {
+        var exception = Assert.Throws<VaultException>(
+            () => DocumentDraftPayloadEngine.RequireFutureDocumentId(
+                CreateDraftRecord(DocumentDraftType.Create)));
+
+        Assert.Equal(VaultErrorCode.CorruptVault, exception.Code);
+    }
+
+    [Theory]
+    [InlineData("set_property")]
+    [InlineData("remove_property")]
+    public void IdentityDraftOperationsAreProtected(string operation)
+    {
+        var documentId = Guid.Parse(
+            "7b29a2e1-1111-4222-8333-123456789abc");
+        var snapshot = new DocumentDraftSnapshot(
+            documentId,
+            1,
+            "Identity",
+            "Identity.md",
+            VaultDocumentFormat.Markdown,
+            $"---\nid: {documentId:D}\n---\nBody",
+            []);
+        var payload = Parse(
+            operation == "set_property"
+                ? """
+                  {
+                    "operations": [
+                      { "type": "set_property", "key": "id", "value": "x" }
+                    ]
+                  }
+                  """
+                : """
+                  {
+                    "operations": [
+                      { "type": "remove_property", "key": "id" }
+                    ]
+                  }
+                  """);
+
+        var exception = Assert.Throws<VaultException>(
+            () => DocumentDraftPayloadEngine.ComputePreview(
+                CreateDraftRecord(DocumentDraftType.Update),
+                payload,
+                snapshot));
+
+        Assert.Equal(VaultErrorCode.DocumentIdProtected, exception.Code);
     }
 
     [Fact]

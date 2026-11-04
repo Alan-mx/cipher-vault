@@ -109,13 +109,16 @@ public sealed class DocumentDraftService
                 }
 
                 ValidateCreateShape(request);
-                var payloadJson = SerializePayloadText(request.Payload);
-                EnsureSingleJsonSize(payloadJson);
+                JsonElement persistedPayload = request.Payload;
+                var payloadVersion = 1;
                 DocumentDraftSnapshot? snapshot = null;
                 if (request.DraftType == DocumentDraftType.Create)
                 {
-                    _ = DocumentDraftPayloadEngine.ParseCreatePayload(
-                        request.Payload);
+                    var prepared = DocumentDraftPayloadEngine.PrepareCreatePayload(
+                        request.Payload,
+                        Guid.NewGuid());
+                    persistedPayload = prepared.PersistedPayload;
+                    payloadVersion = 2;
                 }
                 else
                 {
@@ -130,18 +133,23 @@ public sealed class DocumentDraftService
                         targetDocumentId,
                         baseRevision,
                         token);
+                }
+
+                var payloadJson = SerializePayloadText(persistedPayload);
+                EnsureSingleJsonSize(payloadJson);
+                if (snapshot is not null)
+                {
                     var temporary = CreateTemporaryRecord(
                         request.DraftType,
-                        targetDocumentId,
-                        baseRevision,
+                        request.TargetDocumentId!.Value,
+                        request.BaseDocumentRevision!.Value,
                         payloadJson,
                         DocumentDraftPayloadEngine.SerializeSnapshot(snapshot));
                     _ = DocumentDraftPayloadEngine.ComputePreview(
                         temporary,
-                        request.Payload,
+                        persistedPayload,
                         snapshot);
                 }
-
                 var snapshotJson = snapshot is null
                     ? null
                     : DocumentDraftPayloadEngine.SerializeSnapshot(snapshot);
@@ -163,7 +171,7 @@ public sealed class DocumentDraftService
                     DocumentDraftStatus.Draft,
                     request.TargetDocumentId,
                     request.BaseDocumentRevision,
-                    1,
+                    payloadVersion,
                     payloadJson,
                     snapshotJson,
                     SourceActor(actor),
@@ -249,17 +257,37 @@ public sealed class DocumentDraftService
                     throw DraftNotEditable(current.Status);
                 }
 
-                var payloadJson = SerializePayloadText(payload);
+                JsonElement persistedPayload = payload;
+                var payloadVersion = current.PayloadVersion;
+                DocumentDraftSnapshot? snapshot;
+                if (current.DraftType == DocumentDraftType.Create)
+                {
+                    var futureDocumentId =
+                        DocumentDraftPayloadEngine.RequireFutureDocumentId(current);
+                    persistedPayload =
+                        DocumentDraftPayloadEngine.PrepareCreatePayload(
+                            payload,
+                            futureDocumentId,
+                            allowMatchingIdentity: true).PersistedPayload;
+                    payloadVersion = 2;
+                    snapshot = null;
+                }
+                else
+                {
+                    persistedPayload = payload;
+                    snapshot = ParseRequiredSnapshot(current);
+                }
+                var payloadJson = SerializePayloadText(persistedPayload);
                 EnsureSingleJsonSize(payloadJson);
-                var snapshot = ParseRequiredSnapshot(current);
                 var temporary = current with
                 {
                     PayloadJson = payloadJson,
+                    PayloadVersion = payloadVersion,
                     DraftRevision = expectedDraftRevision + 1
                 };
                 _ = DocumentDraftPayloadEngine.ComputePreview(
                     temporary,
-                    payload,
+                    persistedPayload,
                     snapshot);
                 await EnsureUpdateStorageLimitAsync(
                     context,
@@ -273,6 +301,7 @@ public sealed class DocumentDraftService
                 {
                     DraftRevision = expectedDraftRevision + 1,
                     Status = DocumentDraftStatus.Draft,
+                    PayloadVersion = payloadVersion,
                     PayloadJson = payloadJson,
                     UpdatedAt = now,
                     TerminalAt = null
@@ -547,6 +576,10 @@ public sealed class DocumentDraftService
                     DocumentDraftType.Create =>
                         await DocumentMutationWriter.CreateForDraftAsync(
                             context,
+                            preview.WorkingCopy.DocumentId
+                                ?? throw new VaultException(
+                                    VaultErrorCode.CorruptVault,
+                                    "Create draft is missing its future DocumentId."),
                             DocumentDraftPayloadEngine.ToCreateRequest(
                                 preview.WorkingCopy),
                             actor,
@@ -867,7 +900,9 @@ public sealed class DocumentDraftService
     private static DocumentDraftDetail ToDetail(
         DocumentDraftRecord record)
     {
-        var payload = ParsePayload(record);
+        var payload = record.DraftType == DocumentDraftType.Create
+            ? DocumentDraftPayloadEngine.ToClientPayload(record)
+            : ParsePayload(record);
         var snapshot = ParseRequiredSnapshot(record);
         var preview = DocumentDraftPayloadEngine.ComputePreview(
             record,
@@ -894,6 +929,9 @@ public sealed class DocumentDraftService
             record.Status,
             record.TargetDocumentId,
             record.BaseDocumentRevision,
+            record.DraftType == DocumentDraftType.Create
+                ? workingCopy.DocumentId
+                : null,
             record.SourceActor,
             workingCopy.Title,
             workingCopy.VirtualPath,
@@ -910,7 +948,27 @@ public sealed class DocumentDraftService
             record.DraftId,
             record.DraftRevision,
             record.Status,
+            record.DraftType == DocumentDraftType.Create
+                ? TryGetFutureDocumentId(record)
+                : null,
             record.UpdatedAt);
+
+    private static Guid? TryGetFutureDocumentId(
+        DocumentDraftRecord record)
+    {
+        if (record.DraftType != DocumentDraftType.Create)
+        {
+            return null;
+        }
+        try
+        {
+            return DocumentDraftPayloadEngine.RequireFutureDocumentId(record);
+        }
+        catch (VaultException)
+        {
+            return null;
+        }
+    }
 
     private static JsonElement ParsePayload(DocumentDraftRecord record)
     {

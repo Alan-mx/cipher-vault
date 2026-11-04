@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
@@ -20,16 +21,51 @@ public static class DocumentDraftPayloadEngine
         WriteIndented = false
     };
 
-    public static DocumentDraftWorkingCopy ParseCreatePayload(
-        JsonElement payload)
+    internal static PreparedCreateDraftPayload PrepareCreatePayload(
+        JsonElement payload,
+        Guid futureDocumentId,
+        bool allowMatchingIdentity = false)
     {
         RequireObject(payload, "Create draft payload");
+        if (payload.TryGetProperty("futureDocumentId", out _)
+            || payload.TryGetProperty("payloadVersion", out _))
+        {
+            throw new VaultException(
+                VaultErrorCode.DocumentIdProtected,
+                "Create draft system identity fields are managed by the server.");
+        }
         var title = RequireString(payload, "title", allowEmpty: false);
         var content = RequireString(payload, "content", allowEmpty: true);
         var format = ParseFormat(RequireString(payload, "format", allowEmpty: false));
         var virtualPath = OptionalString(payload, "virtualPath");
         var folder = OptionalString(payload, "folder");
         var tags = OptionalStringArray(payload, "tags");
+        if (format == VaultDocumentFormat.Markdown)
+        {
+            var identity = DocumentIdentity.InspectMarkdown(content);
+            if (identity.HasId)
+            {
+                if (!allowMatchingIdentity)
+                {
+                    throw new VaultException(
+                        VaultErrorCode.DocumentIdProtected,
+                        "A create draft cannot specify Frontmatter id.");
+                }
+                if (identity.DocumentId != futureDocumentId)
+                {
+                    throw new VaultException(
+                        VaultErrorCode.DocumentIdMismatch,
+                        "Create draft Frontmatter id does not match futureDocumentId.");
+                }
+            }
+            else
+            {
+                content = DocumentIdentity.EnsureMarkdownIdentity(
+                    content,
+                    futureDocumentId,
+                    DocumentIdentityMode.NewDocument);
+            }
+        }
         var parsed = DocumentContentParser.Parse(
             title,
             virtualPath,
@@ -37,13 +73,116 @@ public static class DocumentDraftPayloadEngine
             format,
             content,
             tags);
-        return new DocumentDraftWorkingCopy(
-            null,
+        var working = new DocumentDraftWorkingCopy(
+            futureDocumentId,
             parsed.Title,
             parsed.Path.Path,
             format,
             parsed.Content,
             parsed.Tags.Select(tag => tag.Name).ToArray());
+        var persistedPayload = JsonSerializer.SerializeToElement(
+            new
+            {
+                payloadVersion = 2,
+                futureDocumentId = DocumentIdentity.Format(futureDocumentId),
+                title = working.Title,
+                virtualPath = working.VirtualPath,
+                format = FormatToDatabaseValue(working.Format),
+                content = working.Content,
+                tags = working.Tags
+            },
+            JsonOptions);
+        return new PreparedCreateDraftPayload(
+            futureDocumentId,
+            persistedPayload,
+            working);
+    }
+
+    public static DocumentDraftWorkingCopy ParseCreatePayload(
+        JsonElement payload)
+    {
+        RequireObject(payload, "Create draft payload");
+        if (!payload.TryGetProperty("payloadVersion", out var version)
+            || version.ValueKind != JsonValueKind.Number
+            || !version.TryGetInt32(out var payloadVersion)
+            || payloadVersion != 2
+            || !payload.TryGetProperty("futureDocumentId", out var documentIdValue)
+            || documentIdValue.ValueKind != JsonValueKind.String
+            || !DocumentIdentity.TryParse(
+                documentIdValue.GetString(),
+                out var futureDocumentId))
+        {
+            throw CorruptDraft(
+                "Create draft payload version 2 or futureDocumentId is invalid.");
+        }
+        var title = RequireString(payload, "title", allowEmpty: false);
+        var content = RequireString(payload, "content", allowEmpty: true);
+        var format = ParseFormat(RequireString(payload, "format", allowEmpty: false));
+        var virtualPath = OptionalString(payload, "virtualPath")
+            ?? throw CorruptDraft("Create draft virtualPath is missing.");
+        var tags = OptionalStringArray(payload, "tags");
+        var parsed = DocumentContentParser.Parse(
+            title,
+            virtualPath,
+            folder: null,
+            format,
+            content,
+            tags);
+        if (format == VaultDocumentFormat.Markdown)
+        {
+            var identity = DocumentIdentity.InspectMarkdown(parsed.Content);
+            if (!identity.HasId)
+            {
+                throw CorruptDraft(
+                    "Create draft Markdown is missing Frontmatter id.");
+            }
+            if (identity.DocumentId != futureDocumentId)
+            {
+                throw CorruptDraft(
+                    "Create draft Frontmatter id does not match futureDocumentId.");
+            }
+        }
+        return new DocumentDraftWorkingCopy(
+            futureDocumentId,
+            parsed.Title,
+            parsed.Path.Path,
+            format,
+            parsed.Content,
+            parsed.Tags.Select(tag => tag.Name).ToArray());
+    }
+
+    public static Guid RequireFutureDocumentId(DocumentDraftRecord draft)
+    {
+        ArgumentNullException.ThrowIfNull(draft);
+        if (draft.DraftType != DocumentDraftType.Create)
+        {
+            throw CorruptDraft("Only create drafts have a futureDocumentId.");
+        }
+        using var document = JsonDocument.Parse(draft.PayloadJson);
+        var working = ParseCreatePayload(document.RootElement);
+        return working.DocumentId!.Value;
+    }
+
+    public static JsonElement ToClientPayload(DocumentDraftRecord draft)
+    {
+        ArgumentNullException.ThrowIfNull(draft);
+        var node = JsonNode.Parse(draft.PayloadJson) as JsonObject
+            ?? throw CorruptDraft("Draft payload must be a JSON object.");
+        if (draft.DraftType == DocumentDraftType.Create)
+        {
+            _ = node.Remove("payloadVersion");
+            _ = node.Remove("futureDocumentId");
+            if (node["content"] is JsonValue contentValue
+                && contentValue.TryGetValue<string>(out var content)
+                && node["format"] is JsonValue formatValue
+                && formatValue.TryGetValue<string>(out var format)
+                && ParseFormat(format) == VaultDocumentFormat.Markdown)
+            {
+                node["content"] = DocumentIdentity.RemoveMarkdownIdentity(
+                    content);
+            }
+        }
+        return JsonSerializer.SerializeToElement(node, JsonOptions);
     }
 
     public static void ValidateUpdatePayload(JsonElement payload)
@@ -69,7 +208,7 @@ public static class DocumentDraftPayloadEngine
         ArgumentNullException.ThrowIfNull(draft);
         return draft.DraftType switch
         {
-            DocumentDraftType.Create => ComputeCreate(payload),
+            DocumentDraftType.Create => ComputeCreate(draft.PayloadJson),
             DocumentDraftType.Update => ComputeUpdate(
                 payload,
                 baseSnapshot ?? throw CorruptDraft(
@@ -176,9 +315,10 @@ public static class DocumentDraftPayloadEngine
         ParseFormat(value);
 
     private static DocumentDraftPreviewComputation ComputeCreate(
-        JsonElement payload)
+        string payloadJson)
     {
-        var working = ParseCreatePayload(payload);
+        using var document = JsonDocument.Parse(payloadJson);
+        var working = ParseCreatePayload(document.RootElement);
         ValidateContent(working);
         var diff = DocumentPatchEngine.BuildUnifiedDiff(
             string.Empty,
@@ -206,6 +346,16 @@ public static class DocumentDraftPayloadEngine
         {
             working = ApplyOperation(working, operation);
             ValidateContent(working);
+        }
+        if (working.Format == VaultDocumentFormat.Markdown)
+        {
+            working = working with
+            {
+                Content = DocumentIdentity.EnsureMarkdownIdentity(
+                    working.Content,
+                    baseSnapshot.DocumentId,
+                    DocumentIdentityMode.ExistingDocument)
+            };
         }
 
         var diff = DocumentPatchEngine.BuildUnifiedDiff(
@@ -439,8 +589,12 @@ public static class DocumentDraftPayloadEngine
             && (string.Equals(key, "id", StringComparison.Ordinal)
                 || string.Equals(key, "tags", StringComparison.Ordinal)))
         {
-            throw InvalidOperation(
-                "The id and tags properties cannot be changed by set_property.");
+            throw string.Equals(key, "id", StringComparison.Ordinal)
+                ? new VaultException(
+                    VaultErrorCode.DocumentIdProtected,
+                    "The document identity cannot be changed by set_property.")
+                : InvalidOperation(
+                    "The tags property cannot be changed by set_property.");
         }
         ValidatePropertyValue(value);
 
@@ -491,8 +645,12 @@ public static class DocumentDraftPayloadEngine
         if (string.Equals(key, "id", StringComparison.Ordinal)
             || string.Equals(key, "tags", StringComparison.Ordinal))
         {
-            throw InvalidOperation(
-                "The id and tags properties cannot be removed by remove_property.");
+            throw string.Equals(key, "id", StringComparison.Ordinal)
+                ? new VaultException(
+                    VaultErrorCode.DocumentIdProtected,
+                    "The document identity cannot be removed by remove_property.")
+                : InvalidOperation(
+                    "The tags property cannot be removed by remove_property.");
         }
         if (!FrontMatterDocument.TryParse(working.Content, out var snapshot))
         {
@@ -694,3 +852,8 @@ public static class DocumentDraftPayloadEngine
 
     private sealed record RemoveTagOperation(string Tag) : DraftOperation;
 }
+
+internal sealed record PreparedCreateDraftPayload(
+    Guid FutureDocumentId,
+    JsonElement PersistedPayload,
+    DocumentDraftWorkingCopy WorkingCopy);

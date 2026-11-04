@@ -4,6 +4,7 @@ using CipherVault.Application.Backup;
 using CipherVault.Application.Drafts;
 using CipherVault.Application.Vault;
 using CipherVault.Core.Drafts;
+using CipherVault.Core.Errors;
 
 namespace CipherVault.Application.Documents;
 
@@ -89,6 +90,61 @@ public sealed class DocumentService
         if (result.AuditEventId is not null)
         {
             await mutationObserver.NotifySafelyAsync(DocumentMutationKind.Create);
+        }
+        return result;
+    }
+
+    public async Task<DocumentWriteResult> CopyIdempotentAsync(
+        Guid sourceDocumentId,
+        int expectedRevision,
+        CopyDocumentRequest request,
+        VaultActorContext actor,
+        Guid idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(actor);
+        if (actor.Kind != VaultActorKind.UserUi)
+        {
+            throw new VaultException(
+                VaultErrorCode.Forbidden,
+                "Only UserUi can copy a document.");
+        }
+        IdempotencyService.RequireKey(idempotencyKey);
+        var result = await sessionManager.ExecuteDocumentWriteAsync(
+            actor,
+            async (context, token) =>
+            {
+                var now = timeProvider.GetUtcNow();
+                return await IdempotentDocumentWrite.ExecuteAsync(
+                    context,
+                    actor,
+                    idempotencyKey,
+                    IdempotencyOperation.DocumentCreate,
+                    new
+                    {
+                        sourceDocumentId,
+                        expectedRevision,
+                        request.Title,
+                        request.VirtualPath
+                    },
+                    idempotency,
+                    now,
+                    () => DocumentMutationWriter.CopyAsync(
+                        context,
+                        sourceDocumentId,
+                        expectedRevision,
+                        request,
+                        actor,
+                        now,
+                        token),
+                    token);
+            },
+            cancellationToken);
+        if (result.AuditEventId is not null)
+        {
+            await mutationObserver.NotifySafelyAsync(
+                DocumentMutationKind.Create);
         }
         return result;
     }

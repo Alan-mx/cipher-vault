@@ -23,7 +23,11 @@ public static class ApiErrorMapper
         "retryAfterSeconds",
         "mode",
         "sessionGeneration",
-        "status"
+        "status",
+        "actual",
+        "expected",
+        "identitySource",
+        "format"
     ];
 
     public static ApiFailure Map(Exception exception) =>
@@ -172,6 +176,38 @@ public static class ApiErrorMapper
                 StatusCodes.Status409Conflict,
                 ApiErrorCodes.IdempotencyKeyReused,
                 "The idempotency key was used for a different request."),
+            VaultErrorCode.InvalidDocumentId => Failure(
+                StatusCodes.Status400BadRequest,
+                ApiErrorCodes.InvalidDocumentId,
+                "Document ID is invalid."),
+            VaultErrorCode.DocumentIdConflict => Failure(
+                StatusCodes.Status409Conflict,
+                ApiErrorCodes.DocumentIdConflict,
+                "Document ID is already in use."),
+            VaultErrorCode.DocumentIdMismatch => Failure(
+                StatusCodes.Status409Conflict,
+                ApiErrorCodes.DocumentIdMismatch,
+                "Document ID does not match document content."),
+            VaultErrorCode.DocumentIdProtected => Failure(
+                StatusCodes.Status400BadRequest,
+                ApiErrorCodes.DocumentIdProtected,
+                "Document ID is protected."),
+            VaultErrorCode.TrashedDocumentIdConflict => Failure(
+                StatusCodes.Status409Conflict,
+                ApiErrorCodes.TrashedDocumentIdConflict,
+                "Document ID belongs to a trashed document."),
+            VaultErrorCode.DuplicateDocumentIdInImport => Failure(
+                StatusCodes.Status409Conflict,
+                ApiErrorCodes.DuplicateDocumentIdInImport,
+                "The import batch contains duplicate document IDs."),
+            VaultErrorCode.UnsupportedManifestVersion => Failure(
+                StatusCodes.Status400BadRequest,
+                ApiErrorCodes.UnsupportedManifestVersion,
+                "Import Manifest version is not supported."),
+            VaultErrorCode.InvalidManifest => Failure(
+                StatusCodes.Status400BadRequest,
+                ApiErrorCodes.InvalidManifest,
+                "Import Manifest is invalid."),
             VaultErrorCode.PatchTargetAmbiguous => Failure(
                 StatusCodes.Status409Conflict,
                 ApiErrorCodes.PatchTargetAmbiguous,

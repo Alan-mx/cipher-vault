@@ -20,8 +20,13 @@ const statusType = (
   <div class="import-table">
     <div v-for="item in items" :key="item.relativePath" class="import-row">
       <div>
-        <strong>{{ item.relativePath }}</strong>
+        <strong>{{ item.title }}</strong>
         <p>{{ item.virtualPath }}</p>
+        <p v-if="item.documentId" class="identity-line">
+          ID {{ item.documentId.slice(0, 8) }}
+          <span v-if="item.identitySource"> · {{ item.identitySource }} </span>
+        </p>
+        <p v-if="item.reason" class="reason-line">{{ item.reason }}</p>
       </div>
       <NTag size="small" :type="statusType(item.state)" :bordered="false">
         {{ item.state }}
@@ -55,6 +60,15 @@ const statusType = (
   margin: 3px 0 0;
   color: var(--cv-muted);
   font-size: 11px;
+}
+
+.identity-line,
+.reason-line {
+  overflow-wrap: anywhere;
+}
+
+.reason-line {
+  color: var(--cv-error, #c0392b) !important;
 }
 
 @media (max-width: 699px) {

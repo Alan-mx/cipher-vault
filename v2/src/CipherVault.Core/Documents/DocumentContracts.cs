@@ -16,6 +16,10 @@ public sealed record UpdateDocumentRequest(
     string Content,
     IReadOnlyList<string> Tags);
 
+public sealed record CopyDocumentRequest(
+    string? Title,
+    string? VirtualPath);
+
 public enum VaultPatchTargetKind
 {
     Heading,

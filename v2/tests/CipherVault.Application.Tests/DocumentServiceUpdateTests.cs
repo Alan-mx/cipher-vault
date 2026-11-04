@@ -63,6 +63,98 @@ public sealed class DocumentServiceUpdateTests
     }
 
     [Fact]
+    public async Task UpdateAddsMissingIdToLegacyMarkdown()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+        var created = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Legacy",
+                "legacy.md",
+                null,
+                VaultDocumentFormat.Markdown,
+                "# Legacy",
+                null),
+            actor);
+        await fixture.QueryAsync(
+            async context =>
+            {
+                using var command = context.CreateCommand();
+                command.Command.CommandText =
+                    """
+                    UPDATE documents
+                    SET content = '# Legacy',
+                        frontmatter_json = '{}',
+                        headings_json = '[{"level":1,"text":"Legacy"}]'
+                    WHERE document_id = $documentId;
+                    """;
+                command.Command.Parameters.AddWithValue(
+                    "$documentId",
+                    created.DocumentId.ToString("D"));
+                return await command.Command.ExecuteNonQueryAsync();
+            });
+
+        var updated = await fixture.Documents.UpdateAsync(
+            created.DocumentId,
+            1,
+            new UpdateDocumentRequest(
+                "Legacy",
+                "legacy.md",
+                "# Legacy updated",
+                []),
+            actor);
+
+        Assert.Equal(2, updated.Revision);
+        var content = await fixture.Documents.ReadContentAsync(
+            created.DocumentId,
+            0,
+            500);
+        Assert.Contains(
+            $"id: {created.DocumentId:D}",
+            content.Content,
+            StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("not-a-guid", VaultErrorCode.InvalidDocumentId)]
+    [InlineData("mismatch", VaultErrorCode.DocumentIdMismatch)]
+    public async Task UpdateRejectsInvalidOrMismatchedId(
+        string scenario,
+        VaultErrorCode expectedCode)
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+        var created = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Identity",
+                null,
+                null,
+                VaultDocumentFormat.Markdown,
+                "Body",
+                null),
+            actor);
+        var id = scenario == "mismatch"
+            ? Guid.NewGuid().ToString("D")
+            : scenario;
+
+        var exception = await Assert.ThrowsAsync<VaultException>(
+            () => fixture.Documents.UpdateAsync(
+                created.DocumentId,
+                1,
+                new UpdateDocumentRequest(
+                    "Identity",
+                    null,
+                    $"---\nid: {id}\n---\nBody updated",
+                    []),
+                actor));
+
+        Assert.Equal(expectedCode, exception.Code);
+        Assert.Equal(
+            1,
+            (await fixture.Documents.GetAsync(created.DocumentId)).Revision);
+    }
+
+    [Fact]
     public async Task TitleAndPathRenameAutomaticallyRewritesResolvedWikiLink()
     {
         await using var fixture = await VaultApplicationFixture.CreateAsync();
@@ -102,7 +194,7 @@ public sealed class DocumentServiceUpdateTests
             source.DocumentId,
             0,
             100);
-        Assert.Equal("[[Renamed]]", chunk.Content);
+        Assert.Equal("[[Renamed]]", BodyWithoutFrontMatter(chunk.Content));
         var backlinks = await fixture.Documents.ListBacklinksAsync(
             target.DocumentId,
             new CursorPageRequest());
@@ -192,7 +284,7 @@ public sealed class DocumentServiceUpdateTests
         var chunk = await fixture.Documents.ReadContentAsync(source.DocumentId, 0, 200);
         Assert.Equal(
             "[Read](../archive/Target.md#Top \"title\")",
-            chunk.Content);
+            BodyWithoutFrontMatter(chunk.Content));
         var backlinks = await fixture.Documents.ListBacklinksAsync(
             target.DocumentId,
             new CursorPageRequest());
@@ -237,7 +329,9 @@ public sealed class DocumentServiceUpdateTests
             source.DocumentId,
             0,
             200);
-        Assert.Equal("Edited intro\n\n[Read](Target.md)", chunk.Content);
+        Assert.Equal(
+            "Edited intro\n\n[Read](Target.md)",
+            BodyWithoutFrontMatter(chunk.Content));
     }
 
     [Fact]
@@ -318,7 +412,7 @@ public sealed class DocumentServiceUpdateTests
             300);
         Assert.Equal(
             "[[Renamed]] [One](../archive/Renamed.md) [Two](../archive/Renamed.md#Target)",
-            chunk.Content);
+            BodyWithoutFrontMatter(chunk.Content));
     }
 
     [Fact]
@@ -344,6 +438,11 @@ public sealed class DocumentServiceUpdateTests
                 "[Target](../notes/Target.md)",
                 null),
             actor);
+        var originalSourceContent = (
+            await fixture.Documents.ReadContentAsync(
+                source.DocumentId,
+                0,
+                200)).Content;
         await fixture.QueryAsync(
             async context =>
             {
@@ -383,7 +482,7 @@ public sealed class DocumentServiceUpdateTests
             source.DocumentId,
             0,
             100);
-        Assert.Equal("[Target](../notes/Target.md)", sourceContent.Content);
+        Assert.Equal(originalSourceContent, sourceContent.Content);
     }
 
     [Fact]
@@ -444,5 +543,11 @@ public sealed class DocumentServiceUpdateTests
         {
             return exception.Code;
         }
+    }
+
+    private static string BodyWithoutFrontMatter(string content)
+    {
+        Assert.True(FrontMatterDocument.TryParse(content, out var snapshot));
+        return content[snapshot.End..];
     }
 }

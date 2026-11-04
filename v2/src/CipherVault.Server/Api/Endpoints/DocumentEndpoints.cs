@@ -77,6 +77,38 @@ public static class DocumentEndpoints
             .RequireAuthorization()
             .WithName("GetDocumentMetadata");
 
+        group.MapPost(
+                "/{id}/copy",
+                async (
+                    string id,
+                    CopyDocumentApiRequest request,
+                    DocumentService documents,
+                    HttpContext context,
+                    CancellationToken cancellationToken) =>
+                {
+                    var key = ApiInputValidation.RequireIdempotencyKey(
+                        context.Request.Headers["Idempotency-Key"].ToString());
+                    var result = await documents.CopyIdempotentAsync(
+                        ApiQueryBinding.ParseGuid(id, "id"),
+                        context.GetExpectedRevision(),
+                        new CopyDocumentRequest(
+                            request.Title,
+                            request.VirtualPath),
+                        context.CreateUserActor(),
+                        key,
+                        cancellationToken);
+                    context.Response.SetRevisionETag(result.Revision);
+                    context.Response.Headers.Location =
+                        $"/api/documents/{result.DocumentId:D}";
+                    return Results.Created(
+                        context.Response.Headers.Location,
+                        result);
+                })
+            .RequireAuthorization()
+            .RequireRevisionETag()
+            .RequireAntiforgery()
+            .WithName("CopyDocument");
+
         group.MapGet(
                 "/{id}/content",
                 async (

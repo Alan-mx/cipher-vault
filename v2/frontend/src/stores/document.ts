@@ -7,6 +7,7 @@ import {
 } from "../session/lifecycle";
 import type {
   BacklinkItem,
+  CopyDocumentRequest,
   CreateDocumentRequest,
   DocumentMap,
   DocumentMetadata,
@@ -302,6 +303,17 @@ export const useDocumentStore = defineStore("document", () => {
       draft.value.virtualPath !== savedDraft.value.virtualPath ||
       draft.value.content !== savedDraft.value.content ||
       draft.value.tags.join("\u001F") !== savedDraft.value.tags.join("\u001F");
+  };
+
+  const copy = async (
+    request: CopyDocumentRequest,
+  ): Promise<DocumentWriteResult> => {
+    const id = documentId.value;
+    const revision = loadedRevision.value;
+    if (!id || revision === null) {
+      throw new StaleDocumentOperationError();
+    }
+    return await documentApi.copy(id, revision, request, crypto.randomUUID());
   };
 
   const readAllContent = async (
@@ -786,6 +798,7 @@ export const useDocumentStore = defineStore("document", () => {
     hasDocument,
     open,
     create,
+    copy,
     updateDraft,
     save,
     loadLatestConflict,

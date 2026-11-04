@@ -12,11 +12,12 @@ import {
   NTag,
   useMessage,
 } from "naive-ui";
-import { Trash2 } from "@lucide/vue";
+import { Copy, Trash2 } from "@lucide/vue";
 import { useDocumentStore } from "../../stores/document";
 import DocumentCodeEditor from "./DocumentCodeEditor.vue";
 import MarkdownPreview from "./MarkdownPreview.vue";
 import SaveConflictDialog from "./SaveConflictDialog.vue";
+import CopyDocumentDialog from "./CopyDocumentDialog.vue";
 
 const documents = useDocumentStore();
 const message = useMessage();
@@ -24,6 +25,7 @@ const router = useRouter();
 const mode = ref<"edit" | "split" | "preview">(
   window.innerWidth < 900 ? "edit" : "split",
 );
+const copyOpen = ref(false);
 
 const save = async (): Promise<void> => {
   if (!documents.dirty || documents.conflict) {
@@ -56,6 +58,11 @@ const remove = async (): Promise<void> => {
   }
 };
 
+const handleCopied = async (documentId: string): Promise<void> => {
+  message.success("文档已复制为新知识。");
+  await router.push({ name: "document", params: { id: documentId } });
+};
+
 onMounted(() => window.addEventListener("keydown", handleShortcut));
 onBeforeUnmount(() => window.removeEventListener("keydown", handleShortcut));
 </script>
@@ -77,29 +84,45 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleShortcut));
           @update:value="documents.updateDraft({ virtualPath: $event })"
         />
       </div>
-      <NButton
-        type="primary"
-        :loading="documents.saveState === 'saving'"
-        :disabled="!documents.dirty || documents.saveState === 'saving'"
-        @click="save"
-      >
-        保存
-      </NButton>
-      <NPopconfirm @positive-click="remove">
-        <template #trigger>
-          <NButton
-            type="error"
-            secondary
-            :disabled="documents.saveState === 'saving'"
-          >
-            <template #icon>
-              <NIcon :component="Trash2" aria-hidden="true" />
-            </template>
-            删除
-          </NButton>
-        </template>
-        文档将移入回收站，可在 30 天后手动永久删除。
-      </NPopconfirm>
+      <div class="document-actions">
+        <NButton
+          type="primary"
+          :loading="documents.saveState === 'saving'"
+          :disabled="!documents.dirty || documents.saveState === 'saving'"
+          @click="save"
+        >
+          保存
+        </NButton>
+        <NButton
+          secondary
+          :disabled="
+            documents.dirty ||
+            documents.saveState === 'saving' ||
+            documents.conflict !== null
+          "
+          @click="copyOpen = true"
+        >
+          <template #icon>
+            <NIcon :component="Copy" aria-hidden="true" />
+          </template>
+          复制
+        </NButton>
+        <NPopconfirm @positive-click="remove">
+          <template #trigger>
+            <NButton
+              type="error"
+              secondary
+              :disabled="documents.saveState === 'saving'"
+            >
+              <template #icon>
+                <NIcon :component="Trash2" aria-hidden="true" />
+              </template>
+              删除
+            </NButton>
+          </template>
+          文档将移入回收站，可在 30 天后手动永久删除。
+        </NPopconfirm>
+      </div>
     </header>
 
     <div class="document-tags">
@@ -163,6 +186,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleShortcut));
       · Ctrl+S 保存
     </footer>
   </section>
+  <CopyDocumentDialog v-model:show="copyOpen" @copied="handleCopied" />
   <SaveConflictDialog />
 </template>
 
@@ -171,7 +195,14 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleShortcut));
   display: flex;
   align-items: start;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 20px;
+}
+
+.document-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .document-fields {

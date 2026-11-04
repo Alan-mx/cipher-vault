@@ -1,6 +1,7 @@
 using System.Text.Json;
 using CipherVault.Application.Documents;
 using CipherVault.Core.Documents;
+using CipherVault.Core.Errors;
 using CipherVault.Server.Api;
 using CipherVault.Server.Mcp;
 
@@ -8,6 +9,26 @@ namespace CipherVault.Server.Tests;
 
 public sealed class McpDataContractTests
 {
+    [Theory]
+    [InlineData(VaultErrorCode.InvalidDocumentId, "invalid_document_id")]
+    [InlineData(VaultErrorCode.DocumentIdConflict, "document_id_conflict")]
+    [InlineData(VaultErrorCode.DocumentIdMismatch, "document_id_mismatch")]
+    [InlineData(VaultErrorCode.DocumentIdProtected, "document_id_protected")]
+    public void IdentityErrorsMapToStableMcpCodes(
+        VaultErrorCode errorCode,
+        string expectedCode)
+    {
+        var mapped = McpToolErrorMapper.Map(
+            new VaultException(errorCode, "internal details"),
+            "correlation");
+
+        Assert.Equal(expectedCode, mapped.Code);
+        Assert.DoesNotContain(
+            "internal details",
+            mapped.Message,
+            StringComparison.Ordinal);
+    }
+
     [Fact]
     public void PartialUpdateParserPreservesOmittedAndEmptyValues()
     {

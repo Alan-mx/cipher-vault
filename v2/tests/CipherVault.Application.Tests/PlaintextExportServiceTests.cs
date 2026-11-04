@@ -83,7 +83,7 @@ public sealed class PlaintextExportServiceTests
             "TXT 正文",
             ReadEntry(archive, "Plain.txt"));
         Assert.Equal(
-            "---\ntags: [mcp-test]\n---\n# Alpha\n正文",
+            $"---\nid: {markdown.DocumentId:D}\ntags: [mcp-test]\n---\n# Alpha\n正文",
             ReadEntry(archive, "folder/Alpha.md"));
 
         var manifestText = ReadEntry(
@@ -97,6 +97,9 @@ public sealed class PlaintextExportServiceTests
         Assert.Equal(
             "cipher-vault-plaintext-export",
             manifest.RootElement.GetProperty("format").GetString());
+        Assert.Equal(
+            2,
+            manifest.RootElement.GetProperty("formatVersion").GetInt32());
         Assert.EndsWith(
             "Z",
             manifest.RootElement.GetProperty("exportedAtUtc").GetString(),
@@ -109,13 +112,19 @@ public sealed class PlaintextExportServiceTests
             .EnumerateArray()
             .ToArray();
         Assert.Equal(2, documents.Length);
-        Assert.False(documents[0].TryGetProperty("documentId", out _));
+        Assert.Equal(
+            text.DocumentId.ToString("D"),
+            documents[0].GetProperty("documentId").GetString());
+        Assert.Equal("Plain", documents[0].GetProperty("title").GetString());
         Assert.Equal(
             Convert.ToHexString(
                     SHA256.HashData(Encoding.UTF8.GetBytes("TXT 正文")))
                 .ToLowerInvariant(),
             documents[0].GetProperty("sha256").GetString());
-        Assert.False(documents[1].TryGetProperty("documentId", out _));
+        Assert.Equal(
+            markdown.DocumentId.ToString("D"),
+            documents[1].GetProperty("documentId").GetString());
+        Assert.Equal("Alpha", documents[1].GetProperty("title").GetString());
         Assert.Equal(
             "md",
             documents[1].GetProperty("format").GetString());
@@ -188,7 +197,7 @@ public sealed class PlaintextExportServiceTests
     {
         await using var fixture = await VaultApplicationFixture.CreateAsync();
         var actor = new VaultActorContext(VaultActorKind.UserUi);
-        _ = await fixture.Documents.CreateAsync(
+        var target = await fixture.Documents.CreateAsync(
             new CreateDocumentRequest(
                 "Target",
                 "notes/Target Name.md",
@@ -197,7 +206,7 @@ public sealed class PlaintextExportServiceTests
                 "# Target",
                 null),
             actor);
-        _ = await fixture.Documents.CreateAsync(
+        var source = await fixture.Documents.CreateAsync(
             new CreateDocumentRequest(
                 "Source",
                 "docs/Source.md",
@@ -206,8 +215,11 @@ public sealed class PlaintextExportServiceTests
                 "[[Target|Read]] [[Missing]]",
                 null),
             actor);
-        const string expected =
-            "[Read](../notes/Target%20Name.md) [[Missing]]";
+        var expectedSource =
+            $"---\nid: {source.DocumentId:D}\n---\n"
+            + "[Read](../notes/Target%20Name.md) [[Missing]]";
+        var expectedTarget =
+            $"---\nid: {target.DocumentId:D}\n---\n# Target";
         var service = new PlaintextExportService(
             fixture.Manager,
             fixture.TimeProvider);
@@ -220,15 +232,15 @@ public sealed class PlaintextExportServiceTests
             actor);
 
         Assert.Equal(
-            Encoding.UTF8.GetByteCount("# Target")
-            + Encoding.UTF8.GetByteCount(expected),
+            Encoding.UTF8.GetByteCount(expectedTarget)
+            + Encoding.UTF8.GetByteCount(expectedSource),
             preflight.TotalContentBytes);
         destination.Position = 0;
         using var archive = new ZipArchive(
             destination,
             ZipArchiveMode.Read,
             leaveOpen: true);
-        Assert.Equal(expected, ReadEntry(archive, "docs/Source.md"));
+        Assert.Equal(expectedSource, ReadEntry(archive, "docs/Source.md"));
         using var manifest = JsonDocument.Parse(
             ReadEntry(
                 archive,
@@ -240,16 +252,65 @@ public sealed class PlaintextExportServiceTests
                 item.GetProperty("virtualPath").GetString()
                 == "docs/Source.md");
         Assert.Equal(
-            Encoding.UTF8.GetByteCount(expected),
+            Encoding.UTF8.GetByteCount(expectedSource),
             sourceManifest.GetProperty("bytes").GetInt64());
         Assert.Equal(
             Convert.ToHexString(
-                    SHA256.HashData(Encoding.UTF8.GetBytes(expected)))
+                    SHA256.HashData(Encoding.UTF8.GetBytes(expectedSource)))
                 .ToLowerInvariant(),
             sourceManifest.GetProperty("sha256").GetString());
         Assert.Equal(
             result.TotalContentBytes,
             preflight.TotalContentBytes);
+    }
+
+    [Theory]
+    [InlineData("invalid", VaultErrorCode.InvalidDocumentId)]
+    [InlineData("mismatch", VaultErrorCode.DocumentIdMismatch)]
+    public async Task ExportRejectsInvalidIdentity(
+        string scenario,
+        VaultErrorCode expectedCode)
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+        var created = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Identity export",
+                "identity-export.md",
+                null,
+                VaultDocumentFormat.Markdown,
+                "Body",
+                null),
+            actor);
+        var id = scenario == "invalid"
+            ? "not-a-guid"
+            : Guid.NewGuid().ToString("D");
+        await fixture.QueryAsync(
+            async context =>
+            {
+                using var command = context.CreateCommand();
+                command.Command.CommandText =
+                    """
+                    UPDATE documents
+                    SET content = $content
+                    WHERE document_id = $documentId;
+                    """;
+                command.Command.Parameters.AddWithValue(
+                    "$content",
+                    $"---\nid: {id}\n---\nBody");
+                command.Command.Parameters.AddWithValue(
+                    "$documentId",
+                    created.DocumentId.ToString("D"));
+                return await command.Command.ExecuteNonQueryAsync();
+            });
+        var service = new PlaintextExportService(
+            fixture.Manager,
+            fixture.TimeProvider);
+
+        var exception = await Assert.ThrowsAsync<VaultException>(
+            () => service.PreflightAsync());
+
+        Assert.Equal(expectedCode, exception.Code);
     }
 
     [Fact]

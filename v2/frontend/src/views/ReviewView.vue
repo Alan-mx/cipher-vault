@@ -51,7 +51,11 @@ watch(
     title.value = detail.metadata.title ?? "";
     virtualPath.value = detail.metadata.virtualPath ?? "";
     format.value = detail.metadata.format ?? "md";
-    content.value = detail.preview.content;
+    const payloadContent = detail.payload.content;
+    content.value =
+      typeof payloadContent === "string"
+        ? payloadContent
+        : detail.preview.content;
     tags.value = detail.preview.tags.join(", ");
   },
 );
@@ -205,6 +209,9 @@ const rebase = async (): Promise<void> => {
           </span>
           <span>{{ item.virtualPath || "新文档" }}</span>
           <span>R{{ item.draftRevision }} · {{ item.draftType }}</span>
+          <span v-if="item.futureDocumentId">
+            ID {{ item.futureDocumentId.slice(0, 8) }}
+          </span>
         </button>
         <NButton
           v-if="drafts.nextCursor"
@@ -227,6 +234,9 @@ const rebase = async (): Promise<void> => {
                 {{ selected.metadata.status }} · R{{
                   selected.metadata.draftRevision
                 }}
+              </p>
+              <p v-if="selected.metadata.futureDocumentId">
+                正式 ID：{{ selected.metadata.futureDocumentId }}
               </p>
             </div>
             <NTag size="small" :bordered="false">

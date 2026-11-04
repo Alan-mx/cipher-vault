@@ -31,6 +31,19 @@ public sealed class ApiContractTests
     [InlineData(VaultErrorCode.VaultLockFailed, 503, "vault_lock_failed")]
     [InlineData(VaultErrorCode.DatabaseError, 500, "database_error")]
     [InlineData(VaultErrorCode.ExportTooLarge, 413, "export_too_large")]
+    [InlineData(VaultErrorCode.InvalidDocumentId, 400, "invalid_document_id")]
+    [InlineData(VaultErrorCode.DocumentIdConflict, 409, "document_id_conflict")]
+    [InlineData(VaultErrorCode.DocumentIdMismatch, 409, "document_id_mismatch")]
+    [InlineData(VaultErrorCode.DocumentIdProtected, 400, "document_id_protected")]
+    [InlineData(
+        VaultErrorCode.TrashedDocumentIdConflict,
+        409,
+        "trashed_document_id_conflict")]
+    [InlineData(
+        VaultErrorCode.UnsupportedManifestVersion,
+        400,
+        "unsupported_manifest_version")]
+    [InlineData(VaultErrorCode.InvalidManifest, 400, "invalid_manifest")]
     public void VaultErrorsMapToStableHttpStatuses(
         VaultErrorCode code,
         int expectedStatus,

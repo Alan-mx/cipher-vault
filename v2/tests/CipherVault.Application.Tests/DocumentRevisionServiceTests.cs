@@ -6,6 +6,76 @@ namespace CipherVault.Application.Tests;
 public sealed class DocumentRevisionServiceTests
 {
     [Fact]
+    public async Task RestorePreservesCurrentIdentityForLegacySnapshot()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+        var created = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Identity history",
+                null,
+                null,
+                VaultDocumentFormat.Markdown,
+                "version one",
+                null),
+            actor);
+        await fixture.Documents.UpdateAsync(
+            created.DocumentId,
+            1,
+            new UpdateDocumentRequest(
+                "Identity history",
+                null,
+                "version two",
+                []),
+            actor);
+        var legacyRevisionId = Guid.NewGuid();
+        await fixture.QueryAsync(
+            async context =>
+            {
+                using var command = context.CreateCommand();
+                command.Command.CommandText =
+                    """
+                    INSERT INTO document_revisions(
+                        revision_id, document_id, revision, title, path, format,
+                        content, frontmatter_json, headings_json, tags_json,
+                        created_at, retain_until)
+                    VALUES(
+                        $revisionId, $documentId, 99,
+                        'Identity history', 'Identity history.md', 'md',
+                        'legacy snapshot', '{}', '[]', '[]',
+                        '2026-11-04T00:00:00Z',
+                        '2099-11-04T00:00:00Z');
+                    """;
+                command.Command.Parameters.AddWithValue(
+                    "$revisionId",
+                    legacyRevisionId.ToString("D"));
+                command.Command.Parameters.AddWithValue(
+                    "$documentId",
+                    created.DocumentId.ToString("D"));
+                return await command.Command.ExecuteNonQueryAsync();
+            });
+
+        _ = await fixture.Revisions.RestoreAsync(
+            created.DocumentId,
+            legacyRevisionId,
+            2,
+            actor);
+
+        var content = await fixture.Documents.ReadContentAsync(
+            created.DocumentId,
+            0,
+            500);
+        Assert.Contains(
+            $"id: {created.DocumentId:D}",
+            content.Content,
+            StringComparison.Ordinal);
+        Assert.EndsWith(
+            "legacy snapshot",
+            content.Content,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task RestoreRevisionCreatesNewCurrentRevision()
     {
         await using var fixture = await VaultApplicationFixture.CreateAsync();

@@ -1,5 +1,6 @@
 import type {
   BacklinkPage,
+  CopyDocumentRequest,
   CreateDocumentRequest,
   DocumentContentChunk,
   DocumentMap,
@@ -19,6 +20,20 @@ export const documentApi = {
     apiClient.request<DocumentWriteResult>("/api/documents", {
       method: "POST",
       csrf: true,
+      body: request,
+    }),
+
+  copy: (
+    documentId: string,
+    revision: number,
+    request: CopyDocumentRequest,
+    idempotencyKey: string,
+  ) =>
+    apiClient.request<DocumentWriteResult>(`${documentPath(documentId)}/copy`, {
+      method: "POST",
+      csrf: true,
+      ifMatch: revision,
+      idempotencyKey,
       body: request,
     }),
 

@@ -129,6 +129,10 @@ public sealed record UpdateDocumentApiRequest(
             message);
 }
 
+public sealed record CopyDocumentApiRequest(
+    string? Title,
+    string? VirtualPath);
+
 public sealed record PatchDocumentApiRequest(
     VaultPatchTargetKind? TargetKind,
     IReadOnlyList<string>? HeadingPath,

@@ -9,6 +9,55 @@ namespace CipherVault.Application.Tests;
 public sealed class DocumentAuthoringServiceTests
 {
     [Fact]
+    public async Task AppendAddsMissingIdentityToLegacyMarkdown()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+        var created = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Legacy append",
+                "legacy-append.md",
+                null,
+                VaultDocumentFormat.Markdown,
+                "Body",
+                null),
+            actor);
+        await fixture.QueryAsync(
+            async context =>
+            {
+                using var command = context.CreateCommand();
+                command.Command.CommandText =
+                    """
+                    UPDATE documents
+                    SET content = 'Body',
+                        frontmatter_json = '{}'
+                    WHERE document_id = $documentId;
+                    """;
+                command.Command.Parameters.AddWithValue(
+                    "$documentId",
+                    created.DocumentId.ToString("D"));
+                return await command.Command.ExecuteNonQueryAsync();
+            });
+
+        var updated = await fixture.Authoring.AppendAsync(
+            created.DocumentId,
+            1,
+            "\nAppended",
+            actor);
+
+        Assert.Equal(2, updated.Revision);
+        var content = await fixture.Documents.ReadContentAsync(
+            created.DocumentId,
+            0,
+            500);
+        Assert.Contains(
+            $"id: {created.DocumentId:D}",
+            content.Content,
+            StringComparison.Ordinal);
+        Assert.EndsWith("Body\nAppended", content.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task AppendIsExactAndAllowsExistingDocumentMetadataUpdateAboveNormalWriteLimit()
     {
         await using var fixture = await VaultApplicationFixture.CreateAsync();

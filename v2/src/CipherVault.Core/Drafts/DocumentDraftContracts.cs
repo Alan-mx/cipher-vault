@@ -34,6 +34,7 @@ public sealed record DocumentDraftMetadata(
     DocumentDraftStatus Status,
     Guid? TargetDocumentId,
     int? BaseDocumentRevision,
+    Guid? FutureDocumentId,
     string SourceActor,
     string? Title,
     string? VirtualPath,
@@ -64,6 +65,7 @@ public sealed record DocumentDraftMutationResult(
     Guid DraftId,
     int DraftRevision,
     DocumentDraftStatus Status,
+    Guid? FutureDocumentId,
     DateTimeOffset UpdatedAt);
 
 public sealed record DocumentDraftApplyResult(

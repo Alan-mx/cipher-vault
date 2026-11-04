@@ -124,6 +124,19 @@ test("Phase 6 desktop flow, responsive layout and accessibility", async ({
   await page.reload();
   await expect(page.locator(".cm-content")).toContainText("Needle two");
 
+  await page.getByRole("button", { name: "复制", exact: true }).click();
+  const copyDialog = page.getByRole("dialog", { name: "复制文档" });
+  await expect(copyDialog).toBeVisible();
+  await expect(copyDialog.locator("input").first()).toHaveValue("Alpha 副本");
+  await page
+    .getByRole("dialog", { name: "复制文档" })
+    .getByRole("button", { name: "复制", exact: true })
+    .click();
+  await expect(page).not.toHaveURL(documentUrl);
+  await expect(page.locator(".cm-content")).toContainText("id:");
+  await page.goto(documentUrl);
+  await expect(page.locator(".cm-content")).toContainText("Needle two");
+
   await page.getByText("版本", { exact: true }).click();
   await expect(page.locator(".revision-row")).toHaveCount(2);
   await page.locator(".revision-row").nth(0).getByRole("checkbox").check();
@@ -205,7 +218,9 @@ test("Phase 6 desktop flow, responsive layout and accessibility", async ({
   ).toBeVisible();
   await page.getByRole("button", { name: "搜索文档" }).click();
   await page.getByPlaceholder("输入全文搜索词…").fill("Needle");
-  await expect(page.getByRole("button", { name: /Alpha/ })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /Alpha/ }).first(),
+  ).toBeVisible();
   await page.getByPlaceholder("输入全文搜索词…").fill("");
   await page.getByRole("button", { name: "添加属性条件" }).click();
   await page.getByPlaceholder("例如 status / source.kind").fill("source.kind");

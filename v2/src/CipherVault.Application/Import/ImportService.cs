@@ -61,7 +61,15 @@ public sealed class ImportService
                     var scan = await ImportSourceReader.ScanAsync(
                         sourceRoot,
                         token);
-                    var items = await ClassifyAsync(context, scan, token);
+                    var manifest = await ImportManifestReader.ReadAsync(
+                        sourceRoot,
+                        token);
+                    var items = await ClassifyAsync(
+                        context,
+                        sourceRoot,
+                        scan,
+                        manifest,
+                        token);
                     var readyCount = items.Count(
                         item => item.State == ImportPreviewItemState.Ready);
                     var skippedCount = items.Count(
@@ -89,6 +97,7 @@ public sealed class ImportService
                     return new PreviewOutcome(
                         context.SessionId,
                         sourceRoot,
+                        manifest?.ManifestSha256,
                         items);
                 },
                 cancellationToken);
@@ -98,6 +107,7 @@ public sealed class ImportService
                 completed.SourceRoot,
                 completed.VaultSessionId,
                 reservation.ExpiresAt,
+                completed.ManifestSha256,
                 completed.Items);
             var visibleItems = completed.Items
                 .Take(PreviewItemLimit)
@@ -105,6 +115,8 @@ public sealed class ImportService
             return new ImportPreviewResult(
                 reservation.Token,
                 reservation.ExpiresAt,
+                ManifestVersion: completed.ManifestSha256 is null ? null : 2,
+                ManifestSha256: completed.ManifestSha256,
                 completed.Items.Count(
                     item => item.State == ImportPreviewItemState.Ready),
                 completed.Items.Count(
@@ -164,6 +176,17 @@ public sealed class ImportService
                     VaultErrorCode.ImportSourceInvalid,
                     "Import source root changed after preview.");
             }
+            var manifest = await ImportManifestReader.ReadAsync(
+                sourceRoot,
+                cancellationToken);
+            if (!string.Equals(
+                    manifest?.ManifestSha256,
+                    preview.ManifestSha256,
+                    StringComparison.Ordinal))
+            {
+                throw InvalidManifest(
+                    "Import Manifest changed after preview.");
+            }
 
             var results = new List<ImportCommitItem>(preview.Items.Count);
             foreach (var item in preview.Items)
@@ -176,7 +199,7 @@ public sealed class ImportService
                         DocumentId: null,
                         Revision: null,
                         "skipped",
-                        "DocumentPathConflict"));
+                        item.Reason ?? "active_path_conflict"));
                     continue;
                 }
                 if (item.State == ImportPreviewItemState.Rejected)
@@ -193,6 +216,7 @@ public sealed class ImportService
                 results.Add(await ImportOneAsync(
                     preview,
                     sourceRoot,
+                    manifest,
                     item,
                     actor,
                     cancellationToken));
@@ -259,6 +283,7 @@ public sealed class ImportService
     private async Task<ImportCommitItem> ImportOneAsync(
         ImportPreviewStore.PendingImportPreview preview,
         string sourceRoot,
+        ImportManifest? manifest,
         ImportPreviewItem item,
         VaultActorContext actor,
         CancellationToken cancellationToken)
@@ -294,10 +319,89 @@ public sealed class ImportService
                         return FailedItem(item, "InvalidUtf8");
                     }
 
-                    var created = await DocumentMutationWriter.CreateAsync(
+                    if (item.DocumentId is not { } documentId)
+                    {
+                        return FailedItem(item, "invalid_document_id");
+                    }
+                    var manifestDocument = default(ImportManifestDocument);
+                    if (manifest is not null
+                        && !manifest.DocumentsByPath.TryGetValue(
+                            item.VirtualPath,
+                            out manifestDocument))
+                    {
+                        return FailedItem(item, "invalid_manifest");
+                    }
+                    if (manifestDocument is not null
+                        && (manifestDocument.DocumentId != documentId
+                            || manifestDocument.Format != item.Format
+                            || manifestDocument.Bytes != source.SizeBytes
+                            || !string.Equals(
+                                manifestDocument.Sha256,
+                                source.Sha256,
+                                StringComparison.Ordinal)))
+                    {
+                        return FailedItem(item, "invalid_manifest");
+                    }
+                    var contentHash = DocumentContentFingerprint.Compute(
+                        content,
+                        item.Format);
+                    if (!string.Equals(
+                            contentHash,
+                            item.ContentHash,
+                            StringComparison.Ordinal))
+                    {
+                        return FailedItem(item, "import_source_changed");
+                    }
+                    if (item.Format == VaultDocumentFormat.Markdown)
+                    {
+                        var identity = DocumentIdentity.InspectMarkdown(content);
+                        if (item.IdentitySource
+                                == ImportIdentitySource.Frontmatter
+                            && identity.DocumentId != documentId)
+                        {
+                            throw new VaultException(
+                                VaultErrorCode.DocumentIdMismatch,
+                                "Imported Markdown identity no longer matches Preview.");
+                        }
+                        if (item.IdentitySource
+                                == ImportIdentitySource.Generated
+                            && identity.HasId)
+                        {
+                            throw new VaultException(
+                                VaultErrorCode.DocumentIdMismatch,
+                                "Imported Markdown gained an unexpected identity.");
+                        }
+                    }
+
+                    var existing = await ImportConflictStore.FindExistingAsync(
                         context,
+                        [documentId],
+                        [item.VirtualPath],
+                        token);
+                    if (existing.TrashedIds.Contains(documentId))
+                    {
+                        throw new VaultException(
+                            VaultErrorCode.TrashedDocumentIdConflict,
+                            "Imported document identity belongs to a trashed document.");
+                    }
+                    if (existing.ActiveById.ContainsKey(documentId))
+                    {
+                        throw new VaultException(
+                            VaultErrorCode.DocumentIdConflict,
+                            "Imported document identity is already active.");
+                    }
+                    if (existing.ActivePaths.Contains(item.VirtualPath))
+                    {
+                        throw new VaultException(
+                            VaultErrorCode.DocumentPathConflict,
+                            "Imported document path is already active.");
+                    }
+
+                    var created = await DocumentMutationWriter.CreateTrustedAsync(
+                        context,
+                        documentId,
                         new CreateDocumentRequest(
-                            Path.GetFileNameWithoutExtension(item.RelativePath),
+                            item.Title,
                             item.VirtualPath,
                             Folder: null,
                             item.Format,
@@ -305,6 +409,7 @@ public sealed class ImportService
                             Tags: null),
                         actor,
                         timeProvider.GetUtcNow(),
+                        DocumentContentLimitMode.ExistingDocumentAuthoring,
                         token);
                     await context.CommitTransactionAsync(token);
                     return new ImportCommitItem(
@@ -392,9 +497,23 @@ public sealed class ImportService
 
     private static async Task<IReadOnlyList<ImportPreviewItem>> ClassifyAsync(
         VaultOperationContext context,
+        string sourceRoot,
         IReadOnlyList<ImportSourceFile> scan,
+        ImportManifest? manifest,
         CancellationToken cancellationToken)
     {
+        if (manifest is not null)
+        {
+            var scannedPaths = scan
+                .Select(file => file.VirtualPath)
+                .ToHashSet(StringComparer.Ordinal);
+            if (!scannedPaths.SetEquals(manifest.DocumentsByPath.Keys))
+            {
+                throw InvalidManifest(
+                    "Manifest document paths do not match the import source.");
+            }
+        }
+
         var seenPaths = new HashSet<string>(StringComparer.Ordinal);
         var candidates = new List<PreviewCandidate>(scan.Count);
         foreach (var file in scan)
@@ -404,40 +523,292 @@ public sealed class ImportService
             {
                 reason = "duplicate_path";
             }
-            candidates.Add(new PreviewCandidate(file, reason));
+            ImportManifestDocument? manifestDocument = null;
+            if (manifest is not null)
+            {
+                _ = manifest.DocumentsByPath.TryGetValue(
+                    file.VirtualPath,
+                    out manifestDocument);
+            }
+            candidates.Add(await BuildPreviewCandidateAsync(
+                sourceRoot,
+                file,
+                reason,
+                manifestDocument,
+                cancellationToken));
         }
 
-        var activePaths = await ImportConflictStore.FindActivePathsAsync(
+        var duplicateIds = candidates
+            .Where(candidate =>
+                candidate.Reason is null && candidate.DocumentId is not null)
+            .GroupBy(candidate => candidate.DocumentId!.Value)
+            .Where(group => group.Count() > 1)
+            .Select(group => group.Key)
+            .ToHashSet();
+        var existing = await ImportConflictStore.FindExistingAsync(
             context,
+            candidates
+                .Where(candidate =>
+                    candidate.Reason is null
+                    && candidate.DocumentId is not null)
+                .Select(candidate => candidate.DocumentId!.Value),
             candidates
                 .Where(candidate => candidate.Reason is null)
                 .Select(candidate => candidate.File.VirtualPath),
             cancellationToken);
+
         return candidates.Select(candidate =>
         {
-            var state = candidate.Reason switch
+            var state = ImportPreviewItemState.Rejected;
+            var reason = candidate.Reason;
+            if (reason is null
+                && candidate.DocumentId is { } documentId
+                && duplicateIds.Contains(documentId))
             {
-                not null => ImportPreviewItemState.Rejected,
-                _ when activePaths.Contains(candidate.File.VirtualPath) =>
-                    ImportPreviewItemState.SkippedConflict,
-                _ => ImportPreviewItemState.Ready
-            };
-            var reason = state switch
+                reason = "duplicate_document_id_in_import";
+            }
+            else if (reason is null
+                     && candidate.DocumentId is { } trashedId
+                     && existing.TrashedIds.Contains(trashedId))
             {
-                ImportPreviewItemState.Rejected => candidate.Reason,
-                ImportPreviewItemState.SkippedConflict => "active_path_conflict",
-                _ => null
-            };
+                reason = "trashed_document_id_conflict";
+            }
+            else if (reason is null
+                     && candidate.DocumentId is { } existingId
+                     && existing.ActiveById.TryGetValue(
+                         existingId,
+                         out var active))
+            {
+                if (active.Format == candidate.File.Format
+                    && string.Equals(
+                        active.VirtualPath,
+                        candidate.File.VirtualPath,
+                        StringComparison.Ordinal)
+                    && string.Equals(
+                        active.ContentHash,
+                        candidate.ContentHash,
+                        StringComparison.Ordinal))
+                {
+                    state = ImportPreviewItemState.SkippedConflict;
+                    reason = "duplicate_document_id";
+                }
+                else
+                {
+                    reason = "document_id_conflict";
+                }
+            }
+            else if (reason is null
+                     && existing.ActivePaths.Contains(
+                         candidate.File.VirtualPath))
+            {
+                state = ImportPreviewItemState.SkippedConflict;
+                reason = "active_path_conflict";
+            }
+            else if (reason is null)
+            {
+                state = ImportPreviewItemState.Ready;
+            }
+
             return new ImportPreviewItem(
                 candidate.File.RelativePath,
                 candidate.File.VirtualPath,
+                candidate.Title,
                 candidate.File.Format,
                 candidate.File.SizeBytes,
                 candidate.File.Sha256,
+                candidate.DocumentId,
+                candidate.IdentitySource,
+                candidate.ContentHash,
                 state,
                 reason);
         }).ToArray();
     }
+
+    private static async Task<PreviewCandidate> BuildPreviewCandidateAsync(
+        string sourceRoot,
+        ImportSourceFile file,
+        string? reason,
+        ImportManifestDocument? manifestDocument,
+        CancellationToken cancellationToken)
+    {
+        var title = manifestDocument?.Title ?? file.Title;
+        if (reason is not null)
+        {
+            return new PreviewCandidate(
+                file,
+                title,
+                null,
+                null,
+                null,
+                reason);
+        }
+
+        ImportSourceContent source;
+        try
+        {
+            source = await ImportSourceReader.ReadAsync(
+                sourceRoot,
+                file.RelativePath,
+                cancellationToken);
+        }
+        catch (VaultException exception)
+        {
+            return new PreviewCandidate(
+                file,
+                title,
+                null,
+                null,
+                null,
+                ImportReason(exception.Code));
+        }
+        if (source.SizeBytes != file.SizeBytes
+            || !string.Equals(
+                source.Sha256,
+                file.Sha256,
+                StringComparison.Ordinal))
+        {
+            return new PreviewCandidate(
+                file,
+                title,
+                null,
+                null,
+                null,
+                "import_source_changed");
+        }
+        if (!TryDecodeUtf8(source.Bytes, out var content))
+        {
+            return new PreviewCandidate(
+                file,
+                title,
+                null,
+                null,
+                null,
+                "invalid_utf8");
+        }
+
+        string contentHash;
+        DocumentFrontMatterIdentity? identity = null;
+        try
+        {
+            contentHash = DocumentContentFingerprint.Compute(
+                content,
+                file.Format);
+            if (file.Format == VaultDocumentFormat.Markdown)
+            {
+                identity = DocumentIdentity.InspectMarkdown(content);
+            }
+        }
+        catch (VaultException exception)
+        {
+            return new PreviewCandidate(
+                file,
+                title,
+                null,
+                null,
+                null,
+                ImportReason(exception.Code));
+        }
+        Guid? documentId;
+        ImportIdentitySource identitySource;
+        var identityReason = (string?)null;
+        if (file.Format == VaultDocumentFormat.Markdown)
+        {
+            var markdownIdentity = identity
+                ?? throw new InvalidOperationException(
+                    "Markdown identity was not inspected.");
+            if (manifestDocument is not null)
+            {
+                if (manifestDocument.Format != file.Format
+                    || manifestDocument.Bytes != source.SizeBytes
+                    || !string.Equals(
+                        manifestDocument.Sha256,
+                        source.Sha256,
+                        StringComparison.Ordinal))
+                {
+                    return new PreviewCandidate(
+                        file,
+                        title,
+                        manifestDocument.DocumentId,
+                        ImportIdentitySource.Frontmatter,
+                        contentHash,
+                        "invalid_manifest");
+                }
+                if (!markdownIdentity.HasId)
+                {
+                    return new PreviewCandidate(
+                        file,
+                        title,
+                        manifestDocument.DocumentId,
+                        ImportIdentitySource.Frontmatter,
+                        contentHash,
+                        "invalid_manifest");
+                }
+                if (markdownIdentity.DocumentId != manifestDocument.DocumentId)
+                {
+                    return new PreviewCandidate(
+                        file,
+                        title,
+                        markdownIdentity.DocumentId,
+                        ImportIdentitySource.Frontmatter,
+                        contentHash,
+                        "document_id_mismatch");
+                }
+                documentId = manifestDocument.DocumentId;
+                identitySource = ImportIdentitySource.Frontmatter;
+            }
+            else if (markdownIdentity.HasId)
+            {
+                documentId = markdownIdentity.DocumentId;
+                identitySource = ImportIdentitySource.Frontmatter;
+            }
+            else
+            {
+                documentId = Guid.NewGuid();
+                identitySource = ImportIdentitySource.Generated;
+            }
+        }
+        else if (manifestDocument is not null)
+        {
+            if (manifestDocument.Format != file.Format
+                || manifestDocument.Bytes != source.SizeBytes
+                || !string.Equals(
+                    manifestDocument.Sha256,
+                    source.Sha256,
+                    StringComparison.Ordinal))
+            {
+                identityReason = "invalid_manifest";
+            }
+            documentId = manifestDocument.DocumentId;
+            identitySource = ImportIdentitySource.Manifest;
+        }
+        else
+        {
+            documentId = Guid.NewGuid();
+            identitySource = ImportIdentitySource.Generated;
+        }
+
+        return new PreviewCandidate(
+            file,
+            title,
+            documentId,
+            identitySource,
+            contentHash,
+            identityReason);
+    }
+
+    private static string ImportReason(VaultErrorCode code) =>
+        code switch
+        {
+            VaultErrorCode.InvalidDocumentId => "invalid_document_id",
+            VaultErrorCode.DocumentIdMismatch => "document_id_mismatch",
+            VaultErrorCode.InvalidManifest => "invalid_manifest",
+            VaultErrorCode.UnsupportedManifestVersion =>
+                "unsupported_manifest_version",
+            _ => code.ToString()
+        };
+
+    private static VaultException InvalidManifest(string message) =>
+        new(VaultErrorCode.InvalidManifest, message);
 
     private static bool TryDecodeUtf8(byte[] bytes, out string content)
     {
@@ -484,9 +855,14 @@ public sealed class ImportService
     private sealed record PreviewOutcome(
         Guid VaultSessionId,
         string SourceRoot,
+        string? ManifestSha256,
         IReadOnlyList<ImportPreviewItem> Items);
 
     private sealed record PreviewCandidate(
         ImportSourceFile File,
+        string Title,
+        Guid? DocumentId,
+        ImportIdentitySource? IdentitySource,
+        string? ContentHash,
         string? Reason);
 }

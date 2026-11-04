@@ -33,7 +33,9 @@ public sealed record PlaintextExportManifest(
     IReadOnlyList<PlaintextExportManifestDocument> Documents);
 
 public sealed record PlaintextExportManifestDocument(
+    string DocumentId,
     string VirtualPath,
+    string Title,
     string Format,
     int Revision,
     long Bytes,
