@@ -50,6 +50,7 @@ public static class McpDocumentMapProjector
         var links = map.OutgoingLinks
             .Take(MaxLinks)
             .Select(link => new OutgoingLinkView(
+                link.LinkKind,
                 Truncate(link.RawTarget, MaxLinkText, truncatedFields, "links.text"),
                 Truncate(link.DisplayText, MaxLinkText, truncatedFields, "links.text"),
                 link.TargetHeading is null
@@ -66,7 +67,9 @@ public static class McpDocumentMapProjector
                     .Select(candidate => ProjectTarget(candidate, truncatedFields)!)
                     .ToArray(),
                 link.StartOffset,
-                link.EndOffset))
+                link.EndOffset,
+                link.DestinationStartOffset,
+                link.DestinationEndOffset))
             .ToArray();
 
         if (map.Headings.Count > MaxHeadings)

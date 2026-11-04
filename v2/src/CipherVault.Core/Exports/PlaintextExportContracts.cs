@@ -22,7 +22,17 @@ public sealed record PlaintextExportDocument(
     VaultDocumentFormat Format,
     int Revision,
     string Content,
+    IReadOnlyList<ExportDocumentLink> Links,
     string PathKey = "");
+
+public sealed record ExportDocumentLink(
+    DocumentLinkKind Kind,
+    string ResolutionStatus,
+    string? TargetVirtualPath,
+    string DisplayText,
+    string? TargetHeading,
+    int StartOffset,
+    int EndOffset);
 
 public sealed record PlaintextExportCursor(
     string PathKey,

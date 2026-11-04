@@ -63,7 +63,7 @@ public sealed class DocumentServiceUpdateTests
     }
 
     [Fact]
-    public async Task TitleRenameWithoutRewriteLeavesBacklinkUnresolved()
+    public async Task TitleAndPathRenameAutomaticallyRewritesResolvedWikiLink()
     {
         await using var fixture = await VaultApplicationFixture.CreateAsync();
         var actor = new VaultActorContext(VaultActorKind.UserUi);
@@ -76,7 +76,7 @@ public sealed class DocumentServiceUpdateTests
                 "# Target",
                 null),
             actor);
-        _ = await fixture.Documents.CreateAsync(
+        var source = await fixture.Documents.CreateAsync(
             new CreateDocumentRequest(
                 "Source",
                 null,
@@ -93,18 +93,24 @@ public sealed class DocumentServiceUpdateTests
                 "Renamed",
                 "Renamed.md",
                 "# Renamed",
-                [],
-                UpdateBacklinks: false),
+                []),
             actor);
 
+        var sourceMap = await fixture.Documents.GetMapAsync(source.DocumentId);
+        Assert.Equal(2, sourceMap.Metadata.Revision);
+        var chunk = await fixture.Documents.ReadContentAsync(
+            source.DocumentId,
+            0,
+            100);
+        Assert.Equal("[[Renamed]]", chunk.Content);
         var backlinks = await fixture.Documents.ListBacklinksAsync(
             target.DocumentId,
             new CursorPageRequest());
-        Assert.Empty(backlinks.Items);
+        Assert.Single(backlinks.Items);
     }
 
     [Fact]
-    public async Task ExplicitBacklinkRewriteCreatesSourceRevision()
+    public async Task DisplayTextAndHeadingArePreservedWhenWikiLinkIsRewritten()
     {
         await using var fixture = await VaultApplicationFixture.CreateAsync();
         var actor = new VaultActorContext(VaultActorKind.UserUi);
@@ -134,8 +140,7 @@ public sealed class DocumentServiceUpdateTests
                 "Renamed",
                 null,
                 "# Renamed",
-                [],
-                UpdateBacklinks: true),
+                []),
             actor);
 
         var sourceMap = await fixture.Documents.GetMapAsync(source.DocumentId);
@@ -146,6 +151,239 @@ public sealed class DocumentServiceUpdateTests
             target.DocumentId,
             new CursorPageRequest());
         Assert.Single(backlinks.Items);
+    }
+
+    [Fact]
+    public async Task TargetMoveRewritesMarkdownDestinationAndPreservesTitle()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+        var target = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Target",
+                "notes/Target.md",
+                null,
+                VaultDocumentFormat.Markdown,
+                "# Top",
+                null),
+            actor);
+        var source = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Source",
+                "docs/Source.md",
+                null,
+                VaultDocumentFormat.Markdown,
+                "[Read](../notes/Target.md#Top \"title\")",
+                null),
+            actor);
+
+        await fixture.Documents.UpdateAsync(
+            target.DocumentId,
+            1,
+            new UpdateDocumentRequest(
+                "Target",
+                "archive/Target.md",
+                "# Top",
+                []),
+            actor);
+
+        var sourceMap = await fixture.Documents.GetMapAsync(source.DocumentId);
+        Assert.Equal(2, sourceMap.Metadata.Revision);
+        var chunk = await fixture.Documents.ReadContentAsync(source.DocumentId, 0, 200);
+        Assert.Equal(
+            "[Read](../archive/Target.md#Top \"title\")",
+            chunk.Content);
+        var backlinks = await fixture.Documents.ListBacklinksAsync(
+            target.DocumentId,
+            new CursorPageRequest());
+        Assert.Single(backlinks.Items);
+    }
+
+    [Fact]
+    public async Task SourceMoveRecomputesItsOutgoingMarkdownDestinations()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+        _ = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Target",
+                "shared/Target.md",
+                null,
+                VaultDocumentFormat.Markdown,
+                "# Target",
+                null),
+            actor);
+        var source = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Source",
+                "notes/projects/Source.md",
+                null,
+                VaultDocumentFormat.Markdown,
+                "[Read](../../shared/Target.md)",
+                null),
+            actor);
+
+        await fixture.Documents.UpdateAsync(
+            source.DocumentId,
+            1,
+            new UpdateDocumentRequest(
+                "Source",
+                "shared/Source.md",
+                "Edited intro\n\n[Read](../../shared/Target.md)",
+                []),
+            actor);
+
+        var chunk = await fixture.Documents.ReadContentAsync(
+            source.DocumentId,
+            0,
+            200);
+        Assert.Equal("Edited intro\n\n[Read](Target.md)", chunk.Content);
+    }
+
+    [Fact]
+    public async Task MarkdownLinkResolvesWhenTargetIsCreatedLater()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+        var source = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Source",
+                "notes/Source.md",
+                null,
+                VaultDocumentFormat.Markdown,
+                "[Target](Target.md)",
+                null),
+            actor);
+        var before = await fixture.Documents.GetMapAsync(source.DocumentId);
+        Assert.Equal(
+            "unresolved",
+            Assert.Single(before.OutgoingLinks).ResolutionStatus);
+
+        var target = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Target",
+                "notes/Target.md",
+                null,
+                VaultDocumentFormat.Markdown,
+                "# Target",
+                null),
+            actor);
+
+        var after = await fixture.Documents.GetMapAsync(source.DocumentId);
+        var link = Assert.Single(after.OutgoingLinks);
+        Assert.Equal(DocumentLinkKind.Markdown, link.LinkKind);
+        Assert.Equal("resolved", link.ResolutionStatus);
+        Assert.Equal(target.DocumentId, link.Target?.DocumentId);
+    }
+
+    [Fact]
+    public async Task MultipleLinksAreRewrittenInOneSourceRevision()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+        var target = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Target",
+                "notes/Target.md",
+                null,
+                VaultDocumentFormat.Markdown,
+                "# Target",
+                null),
+            actor);
+        var source = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Source",
+                "docs/Source.md",
+                null,
+                VaultDocumentFormat.Markdown,
+                "[[Target]] [One](../notes/Target.md) [Two](../notes/Target.md#Target)",
+                null),
+            actor);
+
+        await fixture.Documents.UpdateAsync(
+            target.DocumentId,
+            1,
+            new UpdateDocumentRequest(
+                "Renamed",
+                "archive/Renamed.md",
+                "# Renamed",
+                []),
+            actor);
+
+        var sourceMap = await fixture.Documents.GetMapAsync(source.DocumentId);
+        Assert.Equal(2, sourceMap.Metadata.Revision);
+        var chunk = await fixture.Documents.ReadContentAsync(
+            source.DocumentId,
+            0,
+            300);
+        Assert.Equal(
+            "[[Renamed]] [One](../archive/Renamed.md) [Two](../archive/Renamed.md#Target)",
+            chunk.Content);
+    }
+
+    [Fact]
+    public async Task LinkRewriteFailureRollsBackTargetAndSourceChanges()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+        var target = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Target",
+                "notes/Target.md",
+                null,
+                VaultDocumentFormat.Markdown,
+                "# Target",
+                null),
+            actor);
+        var source = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Source",
+                "docs/Source.md",
+                null,
+                VaultDocumentFormat.Markdown,
+                "[Target](../notes/Target.md)",
+                null),
+            actor);
+        await fixture.QueryAsync(
+            async context =>
+            {
+                using var command = context.CreateCommand();
+                command.Command.CommandText =
+                    $"""
+                     CREATE TRIGGER fail_source_link_rewrite
+                     BEFORE UPDATE OF content ON documents
+                     WHEN OLD.document_id = '{source.DocumentId:D}'
+                     BEGIN
+                         SELECT RAISE(ABORT, 'forced link rewrite failure');
+                     END;
+                     """;
+                return await command.Command.ExecuteNonQueryAsync();
+            });
+
+        var exception = await Assert.ThrowsAsync<VaultException>(
+            () => fixture.Documents.UpdateAsync(
+                target.DocumentId,
+                1,
+                new UpdateDocumentRequest(
+                    "Renamed",
+                    "archive/Renamed.md",
+                    "# Renamed",
+                    []),
+                actor));
+
+        Assert.Equal(VaultErrorCode.DatabaseError, exception.Code);
+        var targetAfter = await fixture.Documents.GetAsync(target.DocumentId);
+        var sourceAfter = await fixture.Documents.GetAsync(source.DocumentId);
+        Assert.Equal(("Target", "notes/Target.md", 1), (
+            targetAfter.Title,
+            targetAfter.VirtualPath,
+            targetAfter.Revision));
+        Assert.Equal(1, sourceAfter.Revision);
+        var sourceContent = await fixture.Documents.ReadContentAsync(
+            source.DocumentId,
+            0,
+            100);
+        Assert.Equal("[Target](../notes/Target.md)", sourceContent.Content);
     }
 
     [Fact]

@@ -10,8 +10,7 @@ public static class McpPartialUpdateParser
         "title",
         "virtualPath",
         "content",
-        "tags",
-        "updateBacklinks"
+        "tags"
     ];
 
     public static DocumentPartialUpdate Parse(JsonElement changes)
@@ -39,13 +38,11 @@ public static class McpPartialUpdateParser
         var virtualPath = ReadString(changes, "virtualPath");
         var content = ReadString(changes, "content");
         var tags = ReadTags(changes);
-        var updateBacklinks = ReadBoolean(changes, "updateBacklinks");
         return new DocumentPartialUpdate(
             title,
             virtualPath,
             content,
-            tags,
-            updateBacklinks);
+            tags);
     }
 
     private static OptionalField<string> ReadString(
@@ -81,21 +78,6 @@ public static class McpPartialUpdateParser
             value.EnumerateArray()
                 .Select(item => item.GetString()!)
                 .ToArray());
-    }
-
-    private static OptionalField<bool> ReadBoolean(
-        JsonElement changes,
-        string name)
-    {
-        if (!changes.TryGetProperty(name, out var value))
-        {
-            return OptionalField<bool>.Missing;
-        }
-        if (value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
-        {
-            throw Invalid($"{name} must be a boolean.");
-        }
-        return OptionalField<bool>.Of(value.GetBoolean());
     }
 
     private static McpToolRequestException Invalid(string message) =>

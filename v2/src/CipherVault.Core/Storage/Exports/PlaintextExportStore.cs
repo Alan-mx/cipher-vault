@@ -12,41 +12,45 @@ public static class PlaintextExportStore
         VaultOperationContext context,
         CancellationToken cancellationToken)
     {
-        using var command = context.CreateCommand();
-        command.Command.CommandText =
-            """
-            SELECT count(*), coalesce(sum(length(CAST(content AS BLOB))), 0)
-            FROM documents
-            WHERE deleted_at IS NULL;
-            """;
-        await using var reader = await command.Command.ExecuteReaderAsync(
-            cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken)
-            || reader.IsDBNull(0)
-            || reader.IsDBNull(1))
+        var count = 0;
+        long bytes = 0;
+        PlaintextExportCursor? cursor = null;
+        while (true)
         {
-            throw new VaultException(
-                VaultErrorCode.DatabaseError,
-                "Unable to inspect plaintext export documents.");
-        }
-
-        var count = reader.GetInt32(0);
-        var bytes = reader.GetInt64(1);
-        if (count > PlaintextExportLimits.MaxDocuments
-            || bytes > PlaintextExportLimits.MaxContentBytes)
-        {
-            throw new VaultException(
-                VaultErrorCode.ExportTooLarge,
-                "Plaintext export exceeds the supported limit.",
-                details: new Dictionary<string, object?>
-                {
-                    ["limit"] = count > PlaintextExportLimits.MaxDocuments
-                        ? "documents"
-                        : "contentBytes",
-                    ["maximum"] = count > PlaintextExportLimits.MaxDocuments
-                        ? PlaintextExportLimits.MaxDocuments
-                        : PlaintextExportLimits.MaxContentBytes
-                });
+            var document = await ReadNextAsync(
+                context,
+                cursor,
+                cancellationToken);
+            if (document is null)
+            {
+                break;
+            }
+            count++;
+            var transformed = PlaintextExportContentTransformer.Transform(
+                document.Content,
+                document.VirtualPath,
+                document.Links);
+            bytes = checked(
+                bytes + Encoding.UTF8.GetByteCount(transformed));
+            if (count > PlaintextExportLimits.MaxDocuments
+                || bytes > PlaintextExportLimits.MaxContentBytes)
+            {
+                throw new VaultException(
+                    VaultErrorCode.ExportTooLarge,
+                    "Plaintext export exceeds the supported limit.",
+                    details: new Dictionary<string, object?>
+                    {
+                        ["limit"] = count > PlaintextExportLimits.MaxDocuments
+                            ? "documents"
+                            : "contentBytes",
+                        ["maximum"] = count > PlaintextExportLimits.MaxDocuments
+                            ? PlaintextExportLimits.MaxDocuments
+                            : PlaintextExportLimits.MaxContentBytes
+                    });
+            }
+            cursor = new PlaintextExportCursor(
+                document.PathKey,
+                document.DocumentId);
         }
 
         return new PlaintextExportPreflight(count, bytes);
@@ -60,27 +64,45 @@ public static class PlaintextExportStore
         using var command = context.CreateCommand();
         command.Command.CommandText = cursor is null
             ? """
-              SELECT document_id, path_key, path, format, revision, content
-              FROM documents
-              WHERE deleted_at IS NULL
-              ORDER BY path_key COLLATE BINARY,
-                       document_id COLLATE BINARY
-              LIMIT 1;
+              SELECT d.document_id, d.path_key, d.path, d.format, d.revision,
+                     d.content, l.link_kind, l.resolution_status, t.path,
+                     l.display_text, l.target_heading, l.start_offset,
+                     l.end_offset
+              FROM documents AS d
+              LEFT JOIN document_links AS l
+                ON l.source_document_id = d.document_id
+               AND l.source_revision = d.revision
+              LEFT JOIN documents AS t
+                ON t.document_id = l.target_document_id
+               AND t.deleted_at IS NULL
+              WHERE d.deleted_at IS NULL
+              ORDER BY d.path_key COLLATE BINARY,
+                       d.document_id COLLATE BINARY,
+                       l.start_offset;
               """
             : """
-              SELECT document_id, path_key, path, format, revision, content
-              FROM documents
-              WHERE deleted_at IS NULL
+              SELECT d.document_id, d.path_key, d.path, d.format, d.revision,
+                     d.content, l.link_kind, l.resolution_status, t.path,
+                     l.display_text, l.target_heading, l.start_offset,
+                     l.end_offset
+              FROM documents AS d
+              LEFT JOIN document_links AS l
+                ON l.source_document_id = d.document_id
+               AND l.source_revision = d.revision
+              LEFT JOIN documents AS t
+                ON t.document_id = l.target_document_id
+               AND t.deleted_at IS NULL
+              WHERE d.deleted_at IS NULL
                 AND (
-                    path_key COLLATE BINARY > $afterPath
+                    d.path_key COLLATE BINARY > $afterPath
                     OR (
-                        path_key COLLATE BINARY = $afterPath
-                        AND document_id COLLATE BINARY > $afterDocumentId
+                        d.path_key COLLATE BINARY = $afterPath
+                        AND d.document_id COLLATE BINARY > $afterDocumentId
                     )
                 )
-              ORDER BY path_key COLLATE BINARY,
-                       document_id COLLATE BINARY
-              LIMIT 1;
+              ORDER BY d.path_key COLLATE BINARY,
+                       d.document_id COLLATE BINARY,
+                       l.start_offset;
               """;
         if (cursor is not null)
         {
@@ -112,6 +134,27 @@ public static class PlaintextExportStore
             reader.GetString(3));
         var revision = reader.GetInt32(4);
         var content = reader.GetString(5);
+        var links = new List<ExportDocumentLink>();
+        do
+        {
+            if (reader.IsDBNull(6))
+            {
+                continue;
+            }
+            links.Add(new ExportDocumentLink(
+                ParseLinkKind(reader.GetString(6)),
+                reader.GetString(7),
+                reader.IsDBNull(8) ? null : reader.GetString(8),
+                reader.GetString(9),
+                reader.IsDBNull(10) ? null : reader.GetString(10),
+                reader.GetInt32(11),
+                reader.GetInt32(12)));
+        }
+        while (await reader.ReadAsync(cancellationToken)
+               && string.Equals(
+                   reader.GetString(0),
+                   documentId.ToString("D"),
+                   StringComparison.Ordinal));
 
         try
         {
@@ -137,6 +180,17 @@ public static class PlaintextExportStore
             format,
             revision,
             content,
+            links.ToArray(),
             pathKey);
     }
+
+    private static DocumentLinkKind ParseLinkKind(string value) =>
+        value switch
+        {
+            "wiki" => DocumentLinkKind.Wiki,
+            "markdown" => DocumentLinkKind.Markdown,
+            _ => throw new VaultException(
+                VaultErrorCode.DatabaseError,
+                "Plaintext export document link type is invalid.")
+        };
 }

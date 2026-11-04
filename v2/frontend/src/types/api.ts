@@ -91,6 +91,7 @@ export interface LinkTargetView {
 }
 
 export interface OutgoingLinkView {
+  linkKind: "wiki" | "markdown";
   rawTarget: string;
   displayText: string;
   targetHeading?: string | null;
@@ -99,6 +100,8 @@ export interface OutgoingLinkView {
   candidates: LinkTargetView[];
   startOffset: number;
   endOffset: number;
+  destinationStartOffset?: number | null;
+  destinationEndOffset?: number | null;
 }
 
 export interface DocumentMap {
@@ -323,7 +326,6 @@ export interface UpdateDocumentRequest {
   virtualPath?: string;
   content: string;
   tags?: string[];
-  updateBacklinks: boolean;
 }
 
 export interface TrashRestoreRequest {

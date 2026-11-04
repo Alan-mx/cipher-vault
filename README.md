@@ -224,12 +224,22 @@ Web SearchDialog 和 MCP `search_notes` 支持结构化 Frontmatter 属性过滤
 - Web 使用 `POST /api/search/query`；旧 `GET /api/search` 简单搜索合同保留。
 - MCP `search_notes` 增加 `propertyFilters` 和 `propertyMatch` 参数。
 
+## Markdown 相对链接
+
+正式知识关系同时支持 WikiLink 和 inline Markdown 相对链接：
+
+- 支持 `[文字](../folder/Note.md#标题)`、根路径 `/folder/Note.md` 和可选链接 title。
+- 仅索引 `.md` / `.txt`；外部 URL、图片、reference-style link、代码块和 HTML 注释不建立关系。
+- 路径按源文档目录解析，禁止越出 Vault 根目录；percent encoding 严格按 UTF-8 解码一次。
+- 标题和路径变化时自动在草稿或正式写入的同一事务内更新反向 WikiLink 和相对链接。
+- unresolved / ambiguous 链接在 Web 中只显示文本，不跳转到错误的站点路径。
+
 ## 明文导出
 
 Settings 页面提供“导出明文”。该操作会下载当前全部有效 Markdown/TXT 文档的未加密 ZIP：
 
 - 保持 Vault 中的虚拟目录和 `.md` / `.txt` 路径。
-- 正文逐字导出，包含 Frontmatter、标签和 WikiLink 原文。
+- 保留 Frontmatter、标签和标准 Markdown 链接；已解析 WikiLink 会转换为相对 Markdown 链接。
 - 不包含回收站、历史 Revision、Audit、备份或配置。
 - ZIP 内包含 `_cipher-vault-export.json` 清单和逐文件 SHA-256。
 - 不新增导出密码；下载后文件完全脱离 Vault 加密保护。

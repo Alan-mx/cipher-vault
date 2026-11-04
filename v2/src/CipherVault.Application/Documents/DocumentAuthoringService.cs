@@ -110,8 +110,7 @@ public sealed class DocumentAuthoringService
                                 current.Metadata.Title,
                                 current.Metadata.VirtualPath,
                                 updatedContent,
-                                current.Metadata.Tags,
-                                UpdateBacklinks: false),
+                                current.Metadata.Tags),
                             actor,
                             now,
                             token);
@@ -232,12 +231,7 @@ public sealed class DocumentAuthoringService
                                     ? RequireString(update.VirtualPath.Value, "virtualPath")
                                     : current.Metadata.VirtualPath,
                                 content,
-                                tags,
-                                update.UpdateBacklinks.IsSpecified
-                                    ? RequireBoolean(
-                                        update.UpdateBacklinks.Value,
-                                        "updateBacklinks")
-                                    : false),
+                                tags),
                             actor,
                             now,
                             token).ConfigureAwait(false);
@@ -286,8 +280,7 @@ public sealed class DocumentAuthoringService
         var any = update.Title.IsSpecified
             || update.VirtualPath.IsSpecified
             || update.Content.IsSpecified
-            || update.Tags.IsSpecified
-            || update.UpdateBacklinks.IsSpecified;
+            || update.Tags.IsSpecified;
         if (!any)
         {
             throw InvalidInput("At least one update field is required.");
@@ -318,9 +311,6 @@ public sealed class DocumentAuthoringService
     private static IReadOnlyList<string> RequireTags(
         IReadOnlyList<string>? value) =>
         value ?? throw InvalidInput("tags cannot be null.");
-
-    private static bool RequireBoolean(bool? value, string name) =>
-        value ?? throw InvalidInput($"{name} cannot be null.");
 
     private static VaultException InvalidInput(string message) =>
         new(VaultErrorCode.InvalidInput, message);

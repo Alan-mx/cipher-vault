@@ -322,6 +322,7 @@ public static class DocumentQueryStore
             var candidateIds = row.CandidateIds.Take(MaxMapCandidates).ToArray();
             linksTruncated |= row.CandidateIds.Count > MaxMapCandidates;
             links.Add(new OutgoingLinkView(
+                row.Kind,
                 row.RawTarget,
                 row.DisplayText,
                 row.TargetHeading,
@@ -334,7 +335,9 @@ public static class DocumentQueryStore
                     .Select(id => targets[id])
                     .ToArray(),
                 row.StartOffset,
-                row.EndOffset));
+                row.EndOffset,
+                row.DestinationStartOffset,
+                row.DestinationEndOffset));
         }
 
         var backlinkCount = await ReadBacklinkCountAsync(
@@ -783,9 +786,10 @@ public static class DocumentQueryStore
         using var read = context.CreateCommand();
         read.Command.CommandText =
             """
-            SELECT target_document_id, raw_target, display_text, target_heading,
+            SELECT target_document_id, link_kind, raw_target, display_text, target_heading,
                    resolution_status, candidate_document_ids_json,
-                   start_offset, end_offset
+                   start_offset, end_offset, destination_start_offset,
+                   destination_end_offset
             FROM document_links
             WHERE source_document_id = $documentId
               AND source_revision = $revision
@@ -800,19 +804,22 @@ public static class DocumentQueryStore
         await using var reader = await read.Command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            var candidateJson = reader.GetString(5);
+            var candidateJson = reader.GetString(6);
             var candidates = JsonSerializer.Deserialize<string[]>(candidateJson) ?? [];
             result.Add(new OutgoingLinkRow(
                 reader.IsDBNull(0) ? null : Guid.Parse(reader.GetString(0)),
-                reader.GetString(1),
+                ParseLinkKind(reader.GetString(1)),
                 reader.GetString(2),
-                reader.IsDBNull(3) ? null : reader.GetString(3),
-                reader.GetString(4),
+                reader.GetString(3),
+                reader.IsDBNull(4) ? null : reader.GetString(4),
+                reader.GetString(5),
                 candidates
                     .Select(Guid.Parse)
                     .ToArray(),
-                reader.GetInt32(6),
-                reader.GetInt32(7)));
+                reader.GetInt32(7),
+                reader.GetInt32(8),
+                reader.IsDBNull(9) ? null : reader.GetInt32(9),
+                reader.IsDBNull(10) ? null : reader.GetInt32(10)));
         }
         return result;
     }
@@ -942,6 +949,14 @@ public static class DocumentQueryStore
             CultureInfo.InvariantCulture,
             DateTimeStyles.RoundtripKind).ToUniversalTime();
 
+    private static DocumentLinkKind ParseLinkKind(string value) =>
+        value switch
+        {
+            "wiki" => DocumentLinkKind.Wiki,
+            "markdown" => DocumentLinkKind.Markdown,
+            _ => throw new ArgumentOutOfRangeException(nameof(value))
+        };
+
     private static VaultException NotFound() =>
         new(VaultErrorCode.DocumentNotFound, "Document was not found.");
 
@@ -970,11 +985,14 @@ public static class DocumentQueryStore
 
     private sealed record OutgoingLinkRow(
         Guid? TargetDocumentId,
+        DocumentLinkKind Kind,
         string RawTarget,
         string DisplayText,
         string? TargetHeading,
         string Status,
         IReadOnlyList<Guid> CandidateIds,
         int StartOffset,
-        int EndOffset);
+        int EndOffset,
+        int? DestinationStartOffset,
+        int? DestinationEndOffset);
 }

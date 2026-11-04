@@ -14,8 +14,7 @@ public sealed record UpdateDocumentRequest(
     string Title,
     string? VirtualPath,
     string Content,
-    IReadOnlyList<string> Tags,
-    bool UpdateBacklinks = false);
+    IReadOnlyList<string> Tags);
 
 public enum VaultPatchTargetKind
 {
@@ -87,6 +86,7 @@ public sealed record LinkTargetView(
     string VirtualPath);
 
 public sealed record OutgoingLinkView(
+    DocumentLinkKind LinkKind,
     string RawTarget,
     string DisplayText,
     string? TargetHeading,
@@ -94,7 +94,9 @@ public sealed record OutgoingLinkView(
     LinkTargetView? Target,
     IReadOnlyList<LinkTargetView> Candidates,
     int StartOffset,
-    int EndOffset);
+    int EndOffset,
+    int? DestinationStartOffset,
+    int? DestinationEndOffset);
 
 public sealed record DocumentMap(
     DocumentMetadata Metadata,

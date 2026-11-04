@@ -25,7 +25,7 @@ public static class DocumentMaintenanceStore
         {
             read.Command.CommandText =
                 """
-                SELECT document_id, revision, format, content
+                SELECT document_id, revision, format, path, content
                 FROM documents
                 WHERE deleted_at IS NULL
                 ORDER BY path_key, document_id;
@@ -37,7 +37,8 @@ public static class DocumentMaintenanceStore
                     Guid.Parse(reader.GetString(0)),
                     reader.GetInt32(1),
                     reader.GetString(2),
-                    reader.GetString(3)));
+                    reader.GetString(3),
+                    reader.GetString(4)));
             }
         }
 
@@ -50,13 +51,17 @@ public static class DocumentMaintenanceStore
         var linksIndexed = 0;
         foreach (var document in documents)
         {
+            var path = VirtualPath.Normalize(
+                document.Path,
+                VaultDocumentFormatExtensions.ParseDatabaseValue(document.Format));
             var links = document.Format == "md"
-                ? WikiLinkParser.Parse(document.Content)
+                ? DocumentLinkParser.Parse(document.Content, path)
                 : [];
             await DocumentIndexWriter.ReplaceLinksAsync(
                 context,
                 document.DocumentId,
                 document.Revision,
+                path,
                 links,
                 cancellationToken);
             linksIndexed += links.Count;
@@ -83,5 +88,6 @@ public static class DocumentMaintenanceStore
         Guid DocumentId,
         int Revision,
         string Format,
+        string Path,
         string Content);
 }

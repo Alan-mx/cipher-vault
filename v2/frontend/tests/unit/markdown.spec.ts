@@ -28,6 +28,7 @@ describe("Markdown renderer", () => {
     const map = {
       outgoingLinks: [
         {
+          linkKind: "wiki",
           rawTarget: "Target",
           displayText: "Target",
           targetHeading: null,
@@ -40,18 +41,96 @@ describe("Markdown renderer", () => {
           candidates: [],
           startOffset: 0,
           endOffset: 10,
+          destinationStartOffset: null,
+          destinationEndOffset: null,
         },
       ],
     } as DocumentMap;
 
     const html = renderMarkdown("[[Target]] body", map);
 
-    expect(html).toContain('class="wiki-link"');
+    expect(html).toContain('class="document-link"');
     expect(html).toContain(
       'data-document-id="00000000-0000-4000-8000-000000000001"',
     );
     expect(html).toContain(
       'href="/documents/00000000-0000-4000-8000-000000000001"',
     );
+  });
+
+  it("maps resolved Markdown links without changing their label or title", () => {
+    const source = '[Read](../Target.md "title")';
+    const map = {
+      outgoingLinks: [
+        {
+          linkKind: "markdown",
+          rawTarget: "../Target.md",
+          displayText: "Read",
+          targetHeading: null,
+          resolutionStatus: "resolved",
+          target: {
+            documentId: "00000000-0000-4000-8000-000000000001",
+            title: "Target",
+            virtualPath: "Target.md",
+          },
+          candidates: [],
+          startOffset: 0,
+          endOffset: source.length,
+          destinationStartOffset: source.indexOf("../Target.md"),
+          destinationEndOffset: source.indexOf("../Target.md") + 12,
+        },
+      ],
+    } as DocumentMap;
+
+    const html = renderMarkdown(source, map);
+
+    expect(html).toContain('class="document-link"');
+    expect(html).toContain(
+      'href="/documents/00000000-0000-4000-8000-000000000001"',
+    );
+    expect(html).toContain('title="title"');
+    expect(html).toContain(">Read</a>");
+  });
+
+  it("creates stable heading ids and preserves fragment navigation", () => {
+    const source =
+      "[Jump](../Target.md#Redis%20缓存)\n\n# Redis  缓存\n\n# Redis 缓存";
+    const map = {
+      outgoingLinks: [
+        {
+          linkKind: "markdown",
+          rawTarget: "../Target.md#Redis%20缓存",
+          displayText: "Jump",
+          targetHeading: "Redis 缓存",
+          resolutionStatus: "resolved",
+          target: {
+            documentId: "00000000-0000-4000-8000-000000000001",
+            title: "Target",
+            virtualPath: "Target.md",
+          },
+          candidates: [],
+          startOffset: 0,
+          endOffset: source.indexOf(")") + 1,
+          destinationStartOffset: source.indexOf("../Target.md"),
+          destinationEndOffset: source.indexOf(")"),
+        },
+      ],
+    } as DocumentMap;
+
+    const html = renderMarkdown(source, map);
+
+    expect(html).toContain(
+      'href="/documents/00000000-0000-4000-8000-000000000001#cv-heading-REDIS%20%E7%BC%93%E5%AD%98"',
+    );
+    expect(
+      html.match(/id="cv-heading-REDIS%20%E7%BC%93%E5%AD%98"/g),
+    ).toHaveLength(1);
+  });
+
+  it("renders unresolved relative Markdown links as plain text", () => {
+    const html = renderMarkdown("[Target](Target.md)");
+
+    expect(html).not.toContain("href=");
+    expect(html).toContain("Target");
   });
 });

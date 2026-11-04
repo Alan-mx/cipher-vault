@@ -47,8 +47,7 @@ public sealed record UpdateDocumentApiRequest(
     string Title,
     OptionalField<string> VirtualPath,
     string Content,
-    OptionalField<IReadOnlyList<string>> Tags,
-    bool UpdateBacklinks)
+    OptionalField<IReadOnlyList<string>> Tags)
 {
     public static UpdateDocumentApiRequest Parse(JsonElement root)
     {
@@ -56,13 +55,16 @@ public sealed record UpdateDocumentApiRequest(
         {
             throw Invalid("Request body must be a JSON object.");
         }
+        if (root.TryGetProperty("updateBacklinks", out _))
+        {
+            throw Invalid("updateBacklinks is no longer supported.");
+        }
 
         return new UpdateDocumentApiRequest(
             RequireString(root, "title"),
             ReadOptionalString(root, "virtualPath"),
             RequireString(root, "content"),
-            ReadOptionalTags(root),
-            ReadOptionalBoolean(root, "updateBacklinks"));
+            ReadOptionalTags(root));
     }
 
     public DocumentPartialUpdate ToApplicationUpdate() =>
@@ -70,8 +72,7 @@ public sealed record UpdateDocumentApiRequest(
             OptionalField<string>.Of(Title),
             VirtualPath,
             OptionalField<string>.Of(Content),
-            Tags,
-            OptionalField<bool>.Of(UpdateBacklinks));
+            Tags);
     private static string RequireString(JsonElement root, string name)
     {
         if (!root.TryGetProperty(name, out var value)
@@ -119,19 +120,6 @@ public sealed record UpdateDocumentApiRequest(
             tags.EnumerateArray()
                 .Select(item => item.GetString()!)
                 .ToArray());
-    }
-
-    private static bool ReadOptionalBoolean(JsonElement root, string name)
-    {
-        if (!root.TryGetProperty(name, out var value))
-        {
-            return false;
-        }
-        if (value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
-        {
-            throw Invalid($"{name} must be a boolean.");
-        }
-        return value.GetBoolean();
     }
 
     private static ApiRequestException Invalid(string message) =>

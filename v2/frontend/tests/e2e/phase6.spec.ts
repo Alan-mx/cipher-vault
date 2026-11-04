@@ -153,6 +153,56 @@ test("Phase 6 desktop flow, responsive layout and accessibility", async ({
       throw new Error(`Property document create failed: ${response.status}`);
     }
   });
+  const linkedDocuments = await page.evaluate(async () => {
+    const token = await fetch("/api/vault/antiforgery")
+      .then((response) => response.json())
+      .then((body: { token: string }) => body.token);
+    const create = async (body: object) => {
+      const response = await fetch("/api/documents", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-TOKEN": token,
+        },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        throw new Error(`Linked document create failed: ${response.status}`);
+      }
+      return response.json() as Promise<{ documentId: string }>;
+    };
+    const target = await create({
+      title: "Link Target",
+      virtualPath: "notes/link-target.md",
+      format: "md",
+      content: "# Link Target\n\n## Redis 缓存\n\nTarget body",
+    });
+    const source = await create({
+      title: "Link Source",
+      virtualPath: "docs/link-source.md",
+      format: "md",
+      content:
+        "[Jump](../notes/link-target.md#Redis%20缓存)\n\n[[Link Target]]\n\n[Missing](missing.md)",
+    });
+    return { targetId: target.documentId, sourceId: source.documentId };
+  });
+  await page.goto(`/documents/${linkedDocuments.sourceId}`);
+  await page.getByText("预览", { exact: true }).click();
+  const markdownLink = page.locator("a.document-link", { hasText: "Jump" });
+  await expect(markdownLink).toBeVisible();
+  await expect(
+    page.locator("a.document-link", { hasText: "Link Target" }),
+  ).toBeVisible();
+  await expect(page.locator("a", { hasText: "Missing" })).toHaveCount(0);
+  await markdownLink.click();
+  await expect(page).toHaveURL(
+    new RegExp(
+      `/documents/${linkedDocuments.targetId}#cv-heading-REDIS%20%E7%BC%93%E5%AD%98$`,
+    ),
+  );
+  await expect(
+    page.locator('[id="cv-heading-REDIS%20%E7%BC%93%E5%AD%98"]'),
+  ).toBeVisible();
   await page.getByRole("button", { name: "搜索文档" }).click();
   await page.getByPlaceholder("输入全文搜索词…").fill("Needle");
   await expect(page.getByRole("button", { name: /Alpha/ })).toBeVisible();

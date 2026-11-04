@@ -30,8 +30,7 @@ public sealed class DocumentUpdateTagsApiTests
             new
             {
                 title = "Tags",
-                content = "---\ntags: [New]\n---\nupdated",
-                updateBacklinks = false
+                content = "---\ntags: [New]\n---\nupdated"
             });
         var updatedBody = await updated.Content.ReadAsStringAsync();
         Assert.True(updated.IsSuccessStatusCode, updatedBody);
@@ -64,8 +63,7 @@ public sealed class DocumentUpdateTagsApiTests
             new
             {
                 title = "Tags",
-                content = "body 2",
-                updateBacklinks = false
+                content = "body 2"
             });
         Assert.Equal(HttpStatusCode.OK, preserved.StatusCode);
         Assert.Equal(
@@ -81,8 +79,7 @@ public sealed class DocumentUpdateTagsApiTests
             {
                 title = "Tags",
                 content = "body 3",
-                tags = Array.Empty<string>(),
-                updateBacklinks = false
+                tags = Array.Empty<string>()
             });
         Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
         Assert.Empty((await GetMetadataAsync(server, documentId)).Tags);
@@ -112,8 +109,7 @@ public sealed class DocumentUpdateTagsApiTests
                 {
                   "title": "Tags",
                   "content": "---\ntags: [New]\n---\nbody",
-                  "tags": null,
-                  "updateBacklinks": false
+                  "tags": null
                 }
                 """,
                 Encoding.UTF8,
@@ -133,10 +129,40 @@ public sealed class DocumentUpdateTagsApiTests
             {
                 title = "Tags",
                 content = "---\ntags: [New]\n---\nbody",
-                tags = new[] { "Other" },
-                updateBacklinks = false
+                tags = new[] { "Other" }
             });
         Assert.Equal(HttpStatusCode.BadRequest, mismatch.StatusCode);
+        Assert.Equal(1, (await GetMetadataAsync(server, documentId)).Revision);
+    }
+
+    [Fact]
+    public async Task RemovedUpdateBacklinksFieldIsRejected()
+    {
+        await using var server = await ServerTestApplication.CreateAsync(
+            initializeVault: true);
+        using var unlock = await server.Client.UnlockAsync();
+        Assert.Equal(HttpStatusCode.OK, unlock.StatusCode);
+        var token = await server.Client.GetAntiforgeryTokenAsync();
+        var documentId = await CreateAsync(
+            server,
+            token,
+            VaultDocumentFormat.Markdown,
+            "body",
+            null);
+
+        using var response = await server.Client.SendWithRevisionAsync(
+            HttpMethod.Put,
+            $"/api/documents/{documentId:D}",
+            token,
+            1,
+            new
+            {
+                title = "Tags",
+                content = "updated",
+                updateBacklinks = false
+            });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal(1, (await GetMetadataAsync(server, documentId)).Revision);
     }
 

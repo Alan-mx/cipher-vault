@@ -31,6 +31,11 @@
       "version": 6,
       "name": "knowledge_drafts",
       "sha256": "6cd4ef28d2b9d5f3cfa1aee1ed5016f114380c10c7f831e3226182e535f04113"
+    },
+    {
+      "version": 7,
+      "name": "markdown_links",
+      "sha256": "8902d824df72779fc443d3681b00be95e7c31de58f0ce9ad779d2cc42c9c2cfc"
     }
   ]
 }

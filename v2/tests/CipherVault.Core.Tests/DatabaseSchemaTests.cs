@@ -18,7 +18,7 @@ public sealed class DatabaseSchemaTests
         var verified = await SqliteMcVaultStore.VerifyAsync(fixture.Root, fixture.Material);
 
         Assert.Equal(fixture.Material.VaultId, initialized.VaultId);
-        Assert.Equal(6, initialized.SchemaVersion);
+        Assert.Equal(7, initialized.SchemaVersion);
         Assert.Equal(initialized, verified);
     }
 
@@ -36,8 +36,8 @@ public sealed class DatabaseSchemaTests
             create: false);
         using var command = connection.Connection.CreateCommand();
         command.CommandText = "SELECT count(*) FROM schema_migrations;";
-        Assert.Equal(6, Convert.ToInt32(await command.ExecuteScalarAsync()));
-        Assert.Equal(6, second.SchemaVersion);
+        Assert.Equal(7, Convert.ToInt32(await command.ExecuteScalarAsync()));
+        Assert.Equal(7, second.SchemaVersion);
     }
 
     [Fact]
@@ -117,11 +117,11 @@ public sealed class DatabaseSchemaTests
                 CancellationToken.None);
             await SqliteMcDatabaseFactory.ExecuteNonQueryAsync(
                 session.Connection,
-                "UPDATE vault_meta SET value = '7' WHERE key = 'schema_version';",
+                "UPDATE vault_meta SET value = '8' WHERE key = 'schema_version';",
                 CancellationToken.None);
 
-            var migration7 = new DatabaseMigration(
-                7,
+            var migration8 = new DatabaseMigration(
+                8,
                 "must_not_apply",
                 "CREATE TABLE must_not_apply(id INTEGER PRIMARY KEY) STRICT;",
                 new string('a', 64));
@@ -130,13 +130,13 @@ public sealed class DatabaseSchemaTests
                     session.Connection,
                     material.VaultId,
                     DateTimeOffset.UtcNow,
-                    [.. migrations, migration7],
+                    [.. migrations, migration8],
                     CancellationToken.None));
 
             Assert.Equal(VaultErrorCode.CorruptVault, exception.Code);
             using var command = session.Connection.CreateCommand();
             command.CommandText = """
-                SELECT count(*) FROM schema_migrations WHERE version = 7;
+                SELECT count(*) FROM schema_migrations WHERE version = 8;
                 """;
             Assert.Equal(0, Convert.ToInt32(await command.ExecuteScalarAsync()));
             command.CommandText = """
@@ -245,7 +245,7 @@ public sealed class DatabaseSchemaTests
                 migrations,
                 CancellationToken.None);
 
-            Assert.Equal(6, upgraded.SchemaVersion);
+            Assert.Equal(7, upgraded.SchemaVersion);
         }
         finally
         {
@@ -331,7 +331,7 @@ public sealed class DatabaseSchemaTests
                 migrations,
                 CancellationToken.None);
 
-            Assert.Equal(6, upgraded.SchemaVersion);
+            Assert.Equal(7, upgraded.SchemaVersion);
             using var command = session.Connection.CreateCommand();
             command.CommandText =
                 """
@@ -351,7 +351,7 @@ public sealed class DatabaseSchemaTests
                 """;
             Assert.Equal(9, Convert.ToInt32(await command.ExecuteScalarAsync()));
             command.CommandText = "SELECT count(*) FROM schema_migrations;";
-            Assert.Equal(6, Convert.ToInt32(await command.ExecuteScalarAsync()));
+            Assert.Equal(7, Convert.ToInt32(await command.ExecuteScalarAsync()));
         }
         finally
         {
@@ -424,19 +424,19 @@ public sealed class DatabaseSchemaTests
                 DateTimeOffset.UtcNow,
                 migrations,
                 CancellationToken.None);
-            Assert.Equal(6, upgraded.SchemaVersion);
+            Assert.Equal(7, upgraded.SchemaVersion);
 
-            var failedMigration7 = new DatabaseMigration(
-                7,
-                "six_to_seven_failure",
-                "CREATE TABLE six_to_seven_rollback_probe(id INTEGER); INSERT INTO missing_table VALUES(1);",
+            var failedMigration8 = new DatabaseMigration(
+                8,
+                "seven_to_eight_failure",
+                "CREATE TABLE seven_to_eight_rollback_probe(id INTEGER); INSERT INTO missing_table VALUES(1);",
                 new string('b', 64));
             await Assert.ThrowsAnyAsync<SqliteException>(() =>
                 DatabaseInitializer.EnsureSchemaAsync(
                     session.Connection,
                     material.VaultId,
                     DateTimeOffset.UtcNow,
-                    [.. migrations, failedMigration7],
+                    [.. migrations, failedMigration8],
                     CancellationToken.None));
 
             using (var verification = session.Connection.CreateCommand())
@@ -445,14 +445,14 @@ public sealed class DatabaseSchemaTests
                     SELECT value FROM vault_meta WHERE key = 'schema_version';
                     """;
                 Assert.Equal(
-                    "6",
+                    "7",
                     Convert.ToString(await verification.ExecuteScalarAsync()));
                 verification.CommandText =
-                    "SELECT count(*) FROM schema_migrations WHERE version = 7;";
+                    "SELECT count(*) FROM schema_migrations WHERE version = 8;";
                 Assert.Equal(0, Convert.ToInt32(await verification.ExecuteScalarAsync()));
                 verification.CommandText = """
                     SELECT count(*) FROM sqlite_master
-                    WHERE name = 'six_to_seven_rollback_probe';
+                    WHERE name = 'seven_to_eight_rollback_probe';
                     """;
                 Assert.Equal(0, Convert.ToInt32(await verification.ExecuteScalarAsync()));
                 verification.CommandText =
@@ -473,6 +473,95 @@ public sealed class DatabaseSchemaTests
             finalCheck.CommandText =
                 $"SELECT count(*) FROM documents WHERE document_id = '{documentId}';";
             Assert.Equal(1, Convert.ToInt32(await finalCheck.ExecuteScalarAsync()));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task MigrationSixToSevenPreservesWikiLinks()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-six-to-seven-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        VaultFilePermissions.ProtectDirectory(root);
+        using var material = new VaultKeyMaterial(
+            Guid.NewGuid(),
+            RandomNumberGenerator.GetBytes(32),
+            RandomNumberGenerator.GetBytes(32));
+        var sourceId = Guid.NewGuid().ToString("D");
+        var targetId = Guid.NewGuid().ToString("D");
+        var linkId = Guid.NewGuid().ToString("D");
+        try
+        {
+            await using var session =
+                await SqliteMcDatabaseFactory.OpenUninitializedSessionAsync(
+                    root,
+                    material,
+                    create: true);
+            var migrations = DatabaseMigrationCatalog.Load();
+            _ = await DatabaseInitializer.EnsureSchemaAsync(
+                session.Connection,
+                material.VaultId,
+                DateTimeOffset.UtcNow,
+                migrations.Take(6).ToArray(),
+                CancellationToken.None);
+            await SqliteMcDatabaseFactory.ExecuteNonQueryAsync(
+                session.Connection,
+                $"""
+                INSERT INTO documents(
+                    document_id, title, title_key, path, path_key, format,
+                    content, frontmatter_json, headings_json, revision,
+                    created_at, updated_at)
+                VALUES
+                    ('{sourceId}', 'Source', 'source', 'source.md', 'source.md',
+                     'md', '[[Target]]', json_object(), '[]', 1,
+                     '2026-11-04T00:00:00Z', '2026-11-04T00:00:00Z'),
+                    ('{targetId}', 'Target', 'target', 'target.md', 'target.md',
+                     'md', '# Target', json_object(), '[]', 1,
+                     '2026-11-04T00:00:00Z', '2026-11-04T00:00:00Z');
+                INSERT INTO document_links(
+                    link_id, source_document_id, source_revision,
+                    target_document_id, raw_target, raw_target_key,
+                    display_text, relation_type, resolution_status,
+                    candidate_document_ids_json, start_offset, end_offset)
+                VALUES(
+                    '{linkId}', '{sourceId}', 1, '{targetId}',
+                    'Target', 'TARGET', 'Target', 'references', 'resolved',
+                    '[]', 0, 10);
+                """,
+                CancellationToken.None);
+
+            var upgraded = await DatabaseInitializer.EnsureSchemaAsync(
+                session.Connection,
+                material.VaultId,
+                DateTimeOffset.UtcNow,
+                migrations,
+                CancellationToken.None);
+
+            Assert.Equal(7, upgraded.SchemaVersion);
+            using var command = session.Connection.CreateCommand();
+            command.CommandText =
+                """
+                SELECT link_kind, canonical_target_key,
+                       destination_start_offset, destination_end_offset,
+                       resolution_status, target_document_id, raw_target_key
+                FROM document_links
+                WHERE link_id = $linkId;
+                """;
+            command.Parameters.AddWithValue("$linkId", linkId);
+            await using var reader = await command.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal("wiki", reader.GetString(0));
+            Assert.True(reader.IsDBNull(1));
+            Assert.True(reader.IsDBNull(2));
+            Assert.True(reader.IsDBNull(3));
+            Assert.Equal("resolved", reader.GetString(4));
+            Assert.Equal(targetId, reader.GetString(5));
+            Assert.Equal("TARGET", reader.GetString(6));
         }
         finally
         {
@@ -531,7 +620,7 @@ public sealed class DatabaseSchemaTests
                 migrations,
                 CancellationToken.None);
 
-            Assert.Equal(6, upgraded.SchemaVersion);
+            Assert.Equal(7, upgraded.SchemaVersion);
             using (var selectHistorical = session.Connection.CreateCommand())
             {
                 selectHistorical.CommandText = """

@@ -57,7 +57,11 @@ internal static class PlaintextExportWriter
                     break;
                 }
 
-                var bytes = EncodeContent(document.Content);
+                var content = PlaintextExportContentTransformer.Transform(
+                    document.Content,
+                    document.VirtualPath,
+                    document.Links);
+                var bytes = EncodeContent(content);
                 actualBytes = checked(actualBytes + bytes.LongLength);
                 if (actualBytes > PlaintextExportLimits.MaxContentBytes)
                 {

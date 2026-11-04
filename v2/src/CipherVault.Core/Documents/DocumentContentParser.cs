@@ -13,7 +13,7 @@ internal sealed record ParsedDocumentInput(
     string FrontMatterJson,
     string HeadingsJson,
     IReadOnlyList<NormalizedTag> Tags,
-    IReadOnlyList<ParsedWikiLink> WikiLinks);
+    IReadOnlyList<ParsedDocumentLink> Links);
 
 internal enum DocumentContentLimitMode
 {
@@ -75,7 +75,7 @@ internal static class DocumentContentParser
             content,
             explicitTags);
         var links = isMarkdown
-            ? WikiLinkParser.Parse(content)
+            ? DocumentLinkParser.Parse(content, normalizedPath)
             : [];
 
         return new ParsedDocumentInput(

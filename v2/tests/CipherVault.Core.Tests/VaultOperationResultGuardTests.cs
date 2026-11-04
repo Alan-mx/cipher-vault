@@ -72,6 +72,7 @@ public sealed class VaultOperationResultGuardTests
             new[]
             {
                 new OutgoingLinkView(
+                    DocumentLinkKind.Wiki,
                     "Target",
                     "Target",
                     null,
@@ -79,8 +80,11 @@ public sealed class VaultOperationResultGuardTests
                     target,
                     sharedCandidates,
                     0,
-                    8),
+                    8,
+                    null,
+                    null),
                 new OutgoingLinkView(
+                    DocumentLinkKind.Wiki,
                     "Target",
                     "Target",
                     null,
@@ -88,7 +92,9 @@ public sealed class VaultOperationResultGuardTests
                     target,
                     sharedCandidates,
                     9,
-                    17)
+                    17,
+                    null,
+                    null)
             },
             0,
             false,

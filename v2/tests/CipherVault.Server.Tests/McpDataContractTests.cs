@@ -29,7 +29,6 @@ public sealed class McpDataContractTests
         Assert.Equal(string.Empty, parsed.Content.Value);
         Assert.True(parsed.Tags.IsSpecified);
         Assert.Empty(parsed.Tags.Value!);
-        Assert.False(parsed.UpdateBacklinks.IsSpecified);
     }
 
     [Fact]

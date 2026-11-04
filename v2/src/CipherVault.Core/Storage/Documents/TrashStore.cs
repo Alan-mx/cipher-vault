@@ -162,8 +162,8 @@ public static class TrashStore
             }
 
             var tags = TagNormalizer.NormalizeMany(current.TagNames);
-            var wikiLinks = format == VaultDocumentFormat.Markdown
-                ? WikiLinkParser.Parse(current.Content)
+            var links = format == VaultDocumentFormat.Markdown
+                ? DocumentLinkParser.Parse(current.Content, path)
                 : [];
             await DocumentIndexWriter.ReplaceFtsAsync(
                 context,
@@ -178,7 +178,8 @@ public static class TrashStore
                 context,
                 documentId,
                 newRevision,
-                wikiLinks,
+                path,
+                links,
                 cancellationToken);
             await DocumentIndexWriter.ReconcileIncomingLinksAsync(
                 context,

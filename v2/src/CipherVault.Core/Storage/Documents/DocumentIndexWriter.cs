@@ -13,11 +13,11 @@ internal static class DocumentIndexWriter
         Guid documentId,
         int revision,
         string title,
-        string path,
+        NormalizedVirtualPath path,
         string headingsJson,
         string content,
         IReadOnlyList<NormalizedTag> tags,
-        IReadOnlyList<ParsedWikiLink> wikiLinks,
+        IReadOnlyList<ParsedDocumentLink> links,
         CancellationToken cancellationToken)
     {
         await TagStore.ReplaceAsync(context, documentId, tags, cancellationToken);
@@ -25,7 +25,7 @@ internal static class DocumentIndexWriter
             context,
             documentId,
             title,
-            path,
+            path.Path,
             headingsJson,
             tags,
             content,
@@ -34,7 +34,8 @@ internal static class DocumentIndexWriter
             context,
             documentId,
             revision,
-            wikiLinks,
+            path,
+            links,
             cancellationToken);
     }
 
@@ -96,7 +97,8 @@ internal static class DocumentIndexWriter
         VaultOperationContext context,
         Guid sourceDocumentId,
         int sourceRevision,
-        IReadOnlyList<ParsedWikiLink> wikiLinks,
+        NormalizedVirtualPath sourcePath,
+        IReadOnlyList<ParsedDocumentLink> links,
         CancellationToken cancellationToken)
     {
         using (var delete = context.CreateCommand())
@@ -109,12 +111,13 @@ internal static class DocumentIndexWriter
             await delete.Command.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        foreach (var link in wikiLinks)
+        foreach (var link in links)
         {
             await InsertLinkAsync(
                 context,
                 sourceDocumentId,
                 sourceRevision,
+                sourcePath,
                 link,
                 cancellationToken);
         }
@@ -122,61 +125,73 @@ internal static class DocumentIndexWriter
 
     internal static async Task ReconcileIncomingLinksAsync(
         VaultOperationContext context,
-        IEnumerable<string> aliases,
+        DocumentResolutionAliases aliases,
         CancellationToken cancellationToken)
     {
-        var rawTargetKeys = aliases
-            .Where(alias => !string.IsNullOrWhiteSpace(alias))
-            .Select(alias => alias.ToUpperInvariant())
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
-        if (rawTargetKeys.Length == 0)
-        {
-            return;
-        }
-
-        var placeholders = string.Join(
-            ", ",
-            rawTargetKeys.Select((_, index) => $"$key{index}"));
-        var rows = new List<(Guid LinkId, Guid SourceId, int SourceRevision, string RawTarget)>();
+        var rows = new List<ReconcileLinkRow>();
         using (var read = context.CreateCommand())
         {
             read.Command.CommandText =
-                $"""
-                 SELECT l.link_id, l.source_document_id, l.source_revision, l.raw_target
+                """
+                 SELECT l.link_id, l.link_kind, l.raw_target,
+                        l.raw_target_key, l.canonical_target_key
                  FROM document_links AS l
                  JOIN documents AS d ON d.document_id = l.source_document_id
                  WHERE d.deleted_at IS NULL
-                   AND l.raw_target_key IN ({placeholders})
+                   AND (
+                       (
+                           l.link_kind = 'wiki'
+                           AND l.raw_target_key IN ($titleKey, $pathKey)
+                       )
+                       OR
+                       (
+                           l.link_kind = 'markdown'
+                           AND l.canonical_target_key = $canonicalPathKey
+                           AND (
+                               l.resolution_status <> 'resolved'
+                               OR l.target_document_id IS NULL
+                           )
+                       )
+                   )
                  ORDER BY l.link_id;
                  """;
-            for (var index = 0; index < rawTargetKeys.Length; index++)
-            {
-                read.Command.Parameters.AddWithValue($"$key{index}", rawTargetKeys[index]);
-            }
+            read.Command.Parameters.AddWithValue("$titleKey", aliases.TitleKey);
+            read.Command.Parameters.AddWithValue(
+                "$pathKey",
+                aliases.PathWithoutExtensionKey);
+            read.Command.Parameters.AddWithValue(
+                "$canonicalPathKey",
+                aliases.PathKey);
 
             await using var reader = await read.Command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
-                rows.Add((
+                rows.Add(new ReconcileLinkRow(
                     Guid.Parse(reader.GetString(0)),
-                    Guid.Parse(reader.GetString(1)),
-                    reader.GetInt32(2),
-                    reader.GetString(3)));
+                    ParseKind(reader.GetString(1)),
+                    reader.GetString(2),
+                    reader.IsDBNull(3) ? null : reader.GetString(3),
+                    reader.IsDBNull(4) ? null : reader.GetString(4)));
             }
         }
 
         foreach (var row in rows)
         {
-            var parsed = WikiLinkParser.Parse($"[[{row.RawTarget}]]");
-            if (parsed.Count != 1)
-            {
-                continue;
-            }
-
+            var parsed = new ParsedDocumentLink(
+                row.Kind,
+                row.RawTarget,
+                row.RawTargetKey,
+                row.CanonicalTargetKey,
+                string.Empty,
+                null,
+                null,
+                0,
+                1,
+                row.Kind == DocumentLinkKind.Markdown ? 1 : null,
+                row.Kind == DocumentLinkKind.Markdown ? 2 : null);
             var resolution = await ResolveAsync(
                 context,
-                parsed[0].RawTarget,
+                parsed,
                 cancellationToken);
             using var update = context.CreateCommand();
             update.Command.CommandText =
@@ -200,7 +215,7 @@ internal static class DocumentIndexWriter
         }
     }
 
-    internal static IReadOnlyList<string> ResolutionAliases(
+    internal static DocumentResolutionAliases ResolutionAliases(
         string title,
         string path,
         string format)
@@ -211,37 +226,39 @@ internal static class DocumentIndexWriter
             StringComparison.OrdinalIgnoreCase)
             ? path[..^extension.Length]
             : path;
-        return
-        [
+        return new DocumentResolutionAliases(
             TitleNormalizer.NormalizeKey(title),
-            pathWithoutExtension.ToUpperInvariant()
-        ];
+            pathWithoutExtension.ToUpperInvariant(),
+            path);
     }
 
     private static async Task InsertLinkAsync(
         VaultOperationContext context,
         Guid sourceDocumentId,
         int sourceRevision,
-        ParsedWikiLink link,
+        NormalizedVirtualPath sourcePath,
+        ParsedDocumentLink link,
         CancellationToken cancellationToken)
     {
         var resolution = await ResolveAsync(
             context,
-            link.RawTarget,
+            link,
             cancellationToken);
         using var insert = context.CreateCommand();
         insert.Command.CommandText =
             """
             INSERT INTO document_links(
                 link_id, source_document_id, source_revision, target_document_id,
-                raw_target, raw_target_key, display_text, target_heading,
-                target_heading_key, relation_type, resolution_status,
-                candidate_document_ids_json, start_offset, end_offset)
+                link_kind, raw_target, raw_target_key, canonical_target_key,
+                display_text, target_heading, target_heading_key, relation_type,
+                resolution_status, candidate_document_ids_json, start_offset,
+                end_offset, destination_start_offset, destination_end_offset)
             VALUES(
                 $linkId, $sourceId, $sourceRevision, $targetId,
-                $rawTarget, $rawTargetKey, $displayText, $targetHeading,
-                $targetHeadingKey, 'references', $status,
-                $candidates, $startOffset, $endOffset);
+                $linkKind, $rawTarget, $rawTargetKey, $canonicalTargetKey,
+                $displayText, $targetHeading, $targetHeadingKey, 'references',
+                $status, $candidates, $startOffset, $endOffset,
+                $destinationStartOffset, $destinationEndOffset);
             """;
         insert.Command.Parameters.AddWithValue(
             "$linkId",
@@ -253,19 +270,23 @@ internal static class DocumentIndexWriter
         insert.Command.Parameters.AddWithValue(
             "$targetId",
             resolution.TargetDocumentId?.ToString("D") ?? (object)DBNull.Value);
+        insert.Command.Parameters.AddWithValue(
+            "$linkKind",
+            ToDatabaseValue(link.Kind));
         insert.Command.Parameters.AddWithValue("$rawTarget", link.RawTarget);
         insert.Command.Parameters.AddWithValue(
             "$rawTargetKey",
-            NormalizeRawTargetKey(link.RawTarget));
+            link.RawTargetKey ?? (object)DBNull.Value);
+        insert.Command.Parameters.AddWithValue(
+            "$canonicalTargetKey",
+            link.CanonicalTargetKey ?? (object)DBNull.Value);
         insert.Command.Parameters.AddWithValue("$displayText", link.DisplayText);
         insert.Command.Parameters.AddWithValue(
             "$targetHeading",
             link.TargetHeading ?? (object)DBNull.Value);
         insert.Command.Parameters.AddWithValue(
             "$targetHeadingKey",
-            link.TargetHeading is null
-                ? (object)DBNull.Value
-                : UnicodeText.CollapseWhitespace(link.TargetHeading).ToUpperInvariant());
+            link.TargetHeadingKey ?? (object)DBNull.Value);
         insert.Command.Parameters.AddWithValue("$status", resolution.Status);
         insert.Command.Parameters.AddWithValue(
             "$candidates",
@@ -273,46 +294,32 @@ internal static class DocumentIndexWriter
                 resolution.CandidateDocumentIds.Select(id => id.ToString("D"))));
         insert.Command.Parameters.AddWithValue("$startOffset", link.StartOffset);
         insert.Command.Parameters.AddWithValue("$endOffset", link.EndOffset);
+        insert.Command.Parameters.AddWithValue(
+            "$destinationStartOffset",
+            link.DestinationStartOffset ?? (object)DBNull.Value);
+        insert.Command.Parameters.AddWithValue(
+            "$destinationEndOffset",
+            link.DestinationEndOffset ?? (object)DBNull.Value);
         await insert.Command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task<LinkResolution> ResolveAsync(
         VaultOperationContext context,
-        string rawTarget,
+        ParsedDocumentLink link,
         CancellationToken cancellationToken)
     {
-        var trimmed = rawTarget.Normalize().Trim().Trim('/');
-        if (trimmed.Length == 0 || trimmed.Contains('\\'))
+        var candidates = link.Kind switch
         {
-            return LinkResolution.Unresolved;
-        }
-
-        var titleKey = NormalizeRawTargetKey(trimmed);
-        var pathCandidates = BuildPathCandidates(trimmed);
-        var placeholders = string.Join(
-            ", ",
-            pathCandidates.Select((_, index) => $"$path{index}"));
-        using var query = context.CreateCommand();
-        query.Command.CommandText =
-            $"""
-             SELECT document_id
-             FROM documents
-             WHERE deleted_at IS NULL
-               AND (title_key = $titleKey OR path_key IN ({placeholders}))
-             ORDER BY path_key, document_id;
-             """;
-        query.Command.Parameters.AddWithValue("$titleKey", titleKey);
-        for (var index = 0; index < pathCandidates.Length; index++)
-        {
-            query.Command.Parameters.AddWithValue($"$path{index}", pathCandidates[index]);
-        }
-
-        var candidates = new List<Guid>();
-        await using var reader = await query.Command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            candidates.Add(Guid.Parse(reader.GetString(0)));
-        }
+            DocumentLinkKind.Markdown => await ResolveMarkdownAsync(
+                context,
+                link.CanonicalTargetKey,
+                cancellationToken),
+            DocumentLinkKind.Wiki => await ResolveWikiAsync(
+                context,
+                link.RawTargetKey,
+                cancellationToken),
+            _ => throw new ArgumentOutOfRangeException(nameof(link))
+        };
 
         return candidates.Count switch
         {
@@ -322,32 +329,96 @@ internal static class DocumentIndexWriter
         };
     }
 
-    private static string[] BuildPathCandidates(string rawTarget)
+    private static async Task<IReadOnlyList<Guid>> ResolveMarkdownAsync(
+        VaultOperationContext context,
+        string? canonicalTargetKey,
+        CancellationToken cancellationToken)
     {
-        var normalized = rawTarget.Normalize(System.Text.NormalizationForm.FormC);
-        if (normalized.EndsWith(".md", StringComparison.OrdinalIgnoreCase)
-            || normalized.EndsWith(".txt", StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrEmpty(canonicalTargetKey))
         {
-            return [normalized];
+            return [];
         }
 
-        return [normalized + ".md", normalized + ".txt"];
+        using var query = context.CreateCommand();
+        query.Command.CommandText =
+            """
+            SELECT document_id
+            FROM documents
+            WHERE deleted_at IS NULL AND path_key = $pathKey
+            ORDER BY document_id
+            LIMIT 2;
+            """;
+        query.Command.Parameters.AddWithValue("$pathKey", canonicalTargetKey);
+        return await ReadCandidateIdsAsync(query, cancellationToken);
     }
 
-    private static string NormalizeRawTargetKey(string rawTarget)
+    private static async Task<IReadOnlyList<Guid>> ResolveWikiAsync(
+        VaultOperationContext context,
+        string? rawTargetKey,
+        CancellationToken cancellationToken)
     {
-        var normalized = rawTarget
-            .Normalize(System.Text.NormalizationForm.FormC)
-            .Trim()
-            .Trim('/');
-        if (normalized.EndsWith(".md", StringComparison.OrdinalIgnoreCase)
-            || normalized.EndsWith(".txt", StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrEmpty(rawTargetKey))
         {
-            normalized = normalized[..^4];
+            return [];
         }
 
-        return UnicodeText.CollapseWhitespace(normalized).ToUpperInvariant();
+        using var query = context.CreateCommand();
+        query.Command.CommandText =
+            """
+            SELECT document_id
+            FROM documents
+            WHERE deleted_at IS NULL
+              AND (
+                  title_key = $key
+                  OR upper(
+                      CASE
+                          WHEN substr(path_key, -3) = '.md'
+                              THEN substr(path_key, 1, length(path_key) - 3)
+                          WHEN substr(path_key, -4) = '.txt'
+                              THEN substr(path_key, 1, length(path_key) - 4)
+                          ELSE path_key
+                      END
+                  ) = $key
+              )
+            ORDER BY path_key, document_id;
+            """;
+        query.Command.Parameters.AddWithValue("$key", rawTargetKey);
+        return await ReadCandidateIdsAsync(query, cancellationToken);
     }
+
+    private static async Task<IReadOnlyList<Guid>> ReadCandidateIdsAsync(
+        VaultCommandLease command,
+        CancellationToken cancellationToken)
+    {
+        var candidates = new List<Guid>();
+        await using var reader = await command.Command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            candidates.Add(Guid.Parse(reader.GetString(0)));
+        }
+        return candidates;
+    }
+
+    private static string ToDatabaseValue(DocumentLinkKind kind) =>
+        kind switch
+        {
+            DocumentLinkKind.Wiki => "wiki",
+            DocumentLinkKind.Markdown => "markdown",
+            _ => throw new ArgumentOutOfRangeException(nameof(kind))
+        };
+
+    private static DocumentLinkKind ParseKind(string value) =>
+        value switch
+        {
+            "wiki" => DocumentLinkKind.Wiki,
+            "markdown" => DocumentLinkKind.Markdown,
+            _ => throw new ArgumentOutOfRangeException(nameof(value))
+        };
+
+    internal sealed record DocumentResolutionAliases(
+        string TitleKey,
+        string PathWithoutExtensionKey,
+        string PathKey);
 
     private sealed record LinkResolution(
         string Status,
@@ -359,4 +430,11 @@ internal static class DocumentIndexWriter
             null,
             []);
     }
+
+    private sealed record ReconcileLinkRow(
+        Guid LinkId,
+        DocumentLinkKind Kind,
+        string RawTarget,
+        string? RawTargetKey,
+        string? CanonicalTargetKey);
 }

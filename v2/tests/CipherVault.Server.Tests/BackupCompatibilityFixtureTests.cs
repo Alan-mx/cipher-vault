@@ -99,7 +99,7 @@ public sealed class BackupCompatibilityFixtureTests
             Assert.NotNull(restoreResult);
             Assert.Equal(5, restoreResult.SchemaVersion);
             Assert.Equal(5, restoreResult.SourceSchemaVersion);
-            Assert.Equal(6, restoreResult.CurrentSchemaVersion);
+            Assert.Equal(7, restoreResult.CurrentSchemaVersion);
             Assert.True(restoreResult.SchemaMigrationPending);
             Assert.Equal(
                 BackupMigrationTriggers.FirstUnlock,
@@ -168,7 +168,7 @@ public sealed class BackupCompatibilityFixtureTests
                     Assert.True(await reader.ReadAsync(token));
                     return (reader.GetString(0), reader.GetInt32(1));
                 });
-            Assert.Equal(("6", 2), upgradedSchema);
+            Assert.Equal(("7", 2), upgradedSchema);
             Assert.Equal(
                 fixtureHashBefore,
                 await HashFileAsync(BackupCompatibilityFixture.PackagePath));
@@ -180,7 +180,7 @@ public sealed class BackupCompatibilityFixtureTests
     }
 
     [Fact]
-    public async Task SchemaFiveFixtureUpgradesWithPublishedMigrationSix()
+    public async Task SchemaFiveFixtureUpgradesWithPublishedMigrations()
     {
         var metadata = await BackupCompatibilityFixture.ReadMetadataAsync(
             CancellationToken.None);
@@ -218,7 +218,7 @@ public sealed class BackupCompatibilityFixtureTests
                 DatabaseMigrationCatalog.Load(),
                 CancellationToken.None);
 
-            Assert.Equal(6, upgraded.SchemaVersion);
+            Assert.Equal(7, upgraded.SchemaVersion);
             using var command = session.Connection.CreateCommand();
             command.CommandText =
                 "SELECT count(*) FROM documents WHERE path = 'fixtures/compatibility-fixture.md';";

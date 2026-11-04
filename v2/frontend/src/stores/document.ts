@@ -353,7 +353,6 @@ export const useDocumentStore = defineStore("document", () => {
         virtualPath: current.virtualPath,
         content: current.content,
         ...(info.format === "txt" ? { tags: current.tags } : {}),
-        updateBacklinks: false,
       });
       if (documentGeneration === requestGeneration && documentId.value === id) {
         metadata.value = {

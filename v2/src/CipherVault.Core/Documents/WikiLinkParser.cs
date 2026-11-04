@@ -118,7 +118,7 @@ internal static class WikiLinkParser
         return true;
     }
 
-    private static bool IsEscaped(string content, int index)
+    internal static bool IsEscaped(string content, int index)
     {
         var slashCount = 0;
         for (var cursor = index - 1;
@@ -138,6 +138,21 @@ internal static class WikiLinkParser
         AddDelimitedRanges(content, "<!--", "-->", ranges);
         AddInlineCodeRanges(content, ranges);
         return MergeRanges(ranges);
+    }
+
+    internal static string NormalizeRawTargetKey(string rawTarget)
+    {
+        var normalized = rawTarget
+            .Normalize(System.Text.NormalizationForm.FormC)
+            .Trim()
+            .Trim('/');
+        if (normalized.EndsWith(".md", StringComparison.OrdinalIgnoreCase)
+            || normalized.EndsWith(".txt", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[..^4];
+        }
+
+        return UnicodeText.CollapseWhitespace(normalized).ToUpperInvariant();
     }
 
     private static void AddFencedCodeRanges(

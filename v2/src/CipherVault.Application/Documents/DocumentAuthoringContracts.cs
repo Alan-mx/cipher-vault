@@ -13,5 +13,4 @@ public sealed record DocumentPartialUpdate(
     OptionalField<string> Title,
     OptionalField<string> VirtualPath,
     OptionalField<string> Content,
-    OptionalField<IReadOnlyList<string>> Tags,
-    OptionalField<bool> UpdateBacklinks);
+    OptionalField<IReadOnlyList<string>> Tags);

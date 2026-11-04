@@ -162,8 +162,7 @@ public static class DocumentDraftPayloadEngine
             workingCopy.Title,
             workingCopy.VirtualPath,
             workingCopy.Content,
-            workingCopy.Tags,
-            UpdateBacklinks: true);
+            workingCopy.Tags);
 
     public static string FormatToDatabaseValue(VaultDocumentFormat format) =>
         format switch

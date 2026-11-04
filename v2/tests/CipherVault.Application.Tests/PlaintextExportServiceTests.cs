@@ -184,6 +184,75 @@ public sealed class PlaintextExportServiceTests
     }
 
     [Fact]
+    public async Task ConvertsResolvedWikiLinksAndKeepsUnresolvedLinks()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+        _ = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Target",
+                "notes/Target Name.md",
+                null,
+                VaultDocumentFormat.Markdown,
+                "# Target",
+                null),
+            actor);
+        _ = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Source",
+                "docs/Source.md",
+                null,
+                VaultDocumentFormat.Markdown,
+                "[[Target|Read]] [[Missing]]",
+                null),
+            actor);
+        const string expected =
+            "[Read](../notes/Target%20Name.md) [[Missing]]";
+        var service = new PlaintextExportService(
+            fixture.Manager,
+            fixture.TimeProvider);
+        var preflight = await service.PreflightAsync();
+        using var destination = new MemoryStream();
+
+        var result = await service.WriteAsync(
+            destination,
+            _ => { },
+            actor);
+
+        Assert.Equal(
+            Encoding.UTF8.GetByteCount("# Target")
+            + Encoding.UTF8.GetByteCount(expected),
+            preflight.TotalContentBytes);
+        destination.Position = 0;
+        using var archive = new ZipArchive(
+            destination,
+            ZipArchiveMode.Read,
+            leaveOpen: true);
+        Assert.Equal(expected, ReadEntry(archive, "docs/Source.md"));
+        using var manifest = JsonDocument.Parse(
+            ReadEntry(
+                archive,
+                PlaintextExportLimits.ManifestFileName));
+        var sourceManifest = manifest.RootElement
+            .GetProperty("documents")
+            .EnumerateArray()
+            .Single(item =>
+                item.GetProperty("virtualPath").GetString()
+                == "docs/Source.md");
+        Assert.Equal(
+            Encoding.UTF8.GetByteCount(expected),
+            sourceManifest.GetProperty("bytes").GetInt64());
+        Assert.Equal(
+            Convert.ToHexString(
+                    SHA256.HashData(Encoding.UTF8.GetBytes(expected)))
+                .ToLowerInvariant(),
+            sourceManifest.GetProperty("sha256").GetString());
+        Assert.Equal(
+            result.TotalContentBytes,
+            preflight.TotalContentBytes);
+    }
+
+    [Fact]
     public async Task StreamCancellationRecordsCancelledAudit()
     {
         await using var fixture = await VaultApplicationFixture.CreateAsync();

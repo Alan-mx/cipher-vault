@@ -15,7 +15,7 @@ const html = computed(() => renderMarkdown(props.markdown, props.map));
 
 const handleClick = (event: MouseEvent): void => {
   const anchor = (event.target as HTMLElement).closest<HTMLAnchorElement>(
-    "a.wiki-link",
+    "a.document-link",
   );
   if (!anchor) {
     return;
@@ -25,7 +25,12 @@ const handleClick = (event: MouseEvent): void => {
     return;
   }
   event.preventDefault();
-  void router.push({ name: "document", params: { id: documentId } });
+  const location = {
+    name: "document",
+    params: { id: documentId },
+  };
+  const hash = anchor.hash ? decodeURIComponent(anchor.hash) : "";
+  void router.push(hash ? { ...location, hash } : location);
 };
 </script>
 
@@ -87,7 +92,7 @@ const handleClick = (event: MouseEvent): void => {
   color: var(--cv-accent);
 }
 
-.markdown-preview .wiki-link {
+.markdown-preview .document-link {
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
 }

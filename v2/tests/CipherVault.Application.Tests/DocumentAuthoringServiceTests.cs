@@ -49,8 +49,7 @@ public sealed class DocumentAuthoringServiceTests
                 OptionalField<string>.Of("Large Renamed"),
                 OptionalField<string>.Missing,
                 OptionalField<string>.Missing,
-                OptionalField<IReadOnlyList<string>>.Missing,
-                OptionalField<bool>.Missing),
+                OptionalField<IReadOnlyList<string>>.Missing),
             actor);
         Assert.Equal(4, renamed.Revision);
         Assert.Equal(
@@ -81,8 +80,7 @@ public sealed class DocumentAuthoringServiceTests
                 OptionalField<string>.Missing,
                 OptionalField<string>.Missing,
                 OptionalField<string>.Missing,
-                OptionalField<IReadOnlyList<string>>.Of(["New"]),
-                OptionalField<bool>.Missing),
+                OptionalField<IReadOnlyList<string>>.Of(["New"])),
             actor);
 
         Assert.Equal(2, updated.Revision);
@@ -100,8 +98,7 @@ public sealed class DocumentAuthoringServiceTests
                 OptionalField<string>.Missing,
                 OptionalField<string>.Missing,
                 OptionalField<string>.Missing,
-                OptionalField<IReadOnlyList<string>>.Of([]),
-                OptionalField<bool>.Missing),
+                OptionalField<IReadOnlyList<string>>.Of([])),
             actor);
 
         Assert.Equal(3, cleared.Revision);
@@ -136,8 +133,7 @@ public sealed class DocumentAuthoringServiceTests
                     OptionalField<string>.Missing,
                     OptionalField<string>.Missing,
                     OptionalField<string>.Missing,
-                    OptionalField<IReadOnlyList<string>>.Missing,
-                    OptionalField<bool>.Missing),
+                    OptionalField<IReadOnlyList<string>>.Missing),
                 actor));
         Assert.Equal(VaultErrorCode.InvalidInput, empty.Code);
 
@@ -149,8 +145,7 @@ public sealed class DocumentAuthoringServiceTests
                     OptionalField<string>.Of(null!),
                     OptionalField<string>.Missing,
                     OptionalField<string>.Missing,
-                    OptionalField<IReadOnlyList<string>>.Missing,
-                    OptionalField<bool>.Missing),
+                    OptionalField<IReadOnlyList<string>>.Missing),
                 actor));
         Assert.Equal(VaultErrorCode.InvalidInput, explicitNull.Code);
     }
@@ -178,8 +173,7 @@ public sealed class DocumentAuthoringServiceTests
                 OptionalField<string>.Missing,
                 OptionalField<string>.Missing,
                 OptionalField<string>.Missing,
-                OptionalField<IReadOnlyList<string>>.Of(["New"]),
-                OptionalField<bool>.Missing),
+                OptionalField<IReadOnlyList<string>>.Of(["New"])),
             actor);
 
         var metadata = await fixture.Documents.GetAsync(created.DocumentId);
@@ -209,8 +203,7 @@ public sealed class DocumentAuthoringServiceTests
                 OptionalField<string>.Of("Content Only"),
                 OptionalField<string>.Missing,
                 OptionalField<string>.Of("---\ntags: [New]\n---\nupdated"),
-                OptionalField<IReadOnlyList<string>>.Missing,
-                OptionalField<bool>.Of(false)),
+                OptionalField<IReadOnlyList<string>>.Missing),
             actor);
 
         Assert.Equal(2, updated.Revision);
@@ -244,8 +237,7 @@ public sealed class DocumentAuthoringServiceTests
                     OptionalField<string>.Missing,
                     OptionalField<string>.Of(
                         "---\ntags: [New]\n---\nbody"),
-                    OptionalField<IReadOnlyList<string>>.Of(["Other"]),
-                    OptionalField<bool>.Missing),
+                    OptionalField<IReadOnlyList<string>>.Of(["Other"])),
                 actor));
 
         Assert.Equal(VaultErrorCode.InvalidInput, exception.Code);
@@ -279,8 +271,7 @@ public sealed class DocumentAuthoringServiceTests
                     OptionalField<string>.Missing,
                     OptionalField<string>.Of(
                         new string('x', (256 * 1024) + 1)),
-                    OptionalField<IReadOnlyList<string>>.Missing,
-                    OptionalField<bool>.Missing),
+                    OptionalField<IReadOnlyList<string>>.Missing),
                 actor));
         Assert.Equal(VaultErrorCode.DocumentTooLarge, tooLarge.Code);
 
@@ -291,8 +282,7 @@ public sealed class DocumentAuthoringServiceTests
                 OptionalField<string>.Missing,
                 OptionalField<string>.Missing,
                 OptionalField<string>.Of("body"),
-                OptionalField<IReadOnlyList<string>>.Missing,
-                OptionalField<bool>.Missing),
+                OptionalField<IReadOnlyList<string>>.Missing),
             actor);
         Assert.Equal(1, noOp.Revision);
         Assert.Null(noOp.AuditEventId);
@@ -331,8 +321,7 @@ public sealed class DocumentAuthoringServiceTests
                 OptionalField<string>.Missing,
                 OptionalField<string>.Of(
                     "---\ntags: [New]\n---\n# Updated\nsearchable-heartbeat"),
-                OptionalField<IReadOnlyList<string>>.Of(["New"]),
-                OptionalField<bool>.Missing),
+                OptionalField<IReadOnlyList<string>>.Of(["New"])),
             actor);
 
         Assert.Equal(2, updated.Revision);

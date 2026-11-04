@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from "vue";
+import { nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   NAlert,
@@ -20,6 +20,19 @@ const router = useRouter();
 const documents = useDocumentStore();
 const inspectorOpen = ref(false);
 
+const scrollToHeading = async (): Promise<void> => {
+  await nextTick();
+  const hash = route.hash.replace(/^#/, "");
+  if (!hash) {
+    return;
+  }
+  const id = decodeURIComponent(hash);
+  document.getElementById(id)?.scrollIntoView({
+    block: "start",
+    behavior: "auto",
+  });
+};
+
 const load = async (): Promise<void> => {
   const id = typeof route.params.id === "string" ? route.params.id : "";
   if (!isGuid(id)) {
@@ -29,11 +42,13 @@ const load = async (): Promise<void> => {
   await documents.open(id);
   if (!documents.error) {
     await documents.loadInspector();
+    await scrollToHeading();
   }
 };
 
 onMounted(load);
 watch(() => route.params.id, load);
+watch(() => route.hash, scrollToHeading);
 </script>
 
 <template>

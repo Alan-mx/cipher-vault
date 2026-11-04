@@ -15,12 +15,13 @@ public sealed class BackupSchemaCompatibilityTests
         Assert.False(BackupCompatibilityPolicy.IsSupported(4));
         Assert.True(BackupCompatibilityPolicy.IsSupported(5));
         Assert.True(BackupCompatibilityPolicy.IsSupported(6));
-        Assert.False(BackupCompatibilityPolicy.IsSupported(7));
+        Assert.True(BackupCompatibilityPolicy.IsSupported(7));
+        Assert.False(BackupCompatibilityPolicy.IsSupported(8));
     }
 
     [Theory]
     [InlineData(4)]
-    [InlineData(7)]
+    [InlineData(8)]
     public async Task RestoreRejectsSchemaOutsideSupportedRange(
         int schemaVersion)
     {
@@ -34,16 +35,19 @@ public sealed class BackupSchemaCompatibilityTests
         Assert.Equal("restore_schema_unsupported", exception.Code);
     }
 
-    [Fact]
-    public async Task RestoreAcceptsSchemaFiveWithCompatibilityPolicy()
+    [Theory]
+    [InlineData(5)]
+    [InlineData(6)]
+    public async Task RestoreAcceptsSupportedOlderSchemaWithCompatibilityPolicy(
+        int schemaVersion)
     {
-        await using var fixture = await BackupFixture.CreateAsync(5);
+        await using var fixture = await BackupFixture.CreateAsync(schemaVersion);
 
         var result = await VerifyAsync(
             fixture.PackagePath,
             BackupSchemaPolicy.AllowSupportedOlderVersions);
 
-        Assert.Equal(5, result.SchemaVersion);
+        Assert.Equal(schemaVersion, result.SchemaVersion);
         Assert.Equal(BackupConstants.FormatVersion, result.Manifest.FormatVersion);
     }
 

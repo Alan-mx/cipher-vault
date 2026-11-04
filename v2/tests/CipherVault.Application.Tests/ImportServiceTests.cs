@@ -8,6 +8,53 @@ namespace CipherVault.Application.Tests;
 
 public sealed class ImportServiceTests
 {
+    [Theory]
+    [InlineData("a/Source.md", "z/Target.md", "../z/Target.md")]
+    [InlineData("z/Source.md", "a/Target.md", "../a/Target.md")]
+    public async Task MarkdownLinksResolveRegardlessOfImportOrder(
+        string sourcePath,
+        string targetPath,
+        string markdownTarget)
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var sourceRoot = Path.Combine(
+            Path.GetTempPath(),
+            $"cipher-vault-import-links-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(sourceRoot);
+        try
+        {
+            WriteFile(
+                sourceRoot,
+                sourcePath,
+                $"[Target]({markdownTarget})");
+            WriteFile(sourceRoot, targetPath, "# Target");
+            var actor = new VaultActorContext(VaultActorKind.UserUi);
+            var preview = await fixture.Import.PreviewAsync(
+                new ImportPreviewRequest(sourceRoot),
+                actor);
+            _ = await fixture.Import.CommitAsync(
+                new ImportCommitRequest(preview.Token),
+                actor);
+            var catalog = await fixture.Documents.ListAsync(
+                new CatalogQuery(
+                    null,
+                    VaultDocumentFormat.Markdown,
+                    new CursorPageRequest(100, null)));
+            var source = Assert.Single(
+                catalog.Items,
+                item => item.Title == "Source");
+            var map = await fixture.Documents.GetMapAsync(source.DocumentId);
+            var link = Assert.Single(map.OutgoingLinks);
+            Assert.Equal(DocumentLinkKind.Markdown, link.LinkKind);
+            Assert.Equal("resolved", link.ResolutionStatus);
+            Assert.Equal("Target", link.Target?.Title);
+        }
+        finally
+        {
+            Directory.Delete(sourceRoot, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task PreviewAndCommitImportUtf8FilesRecursively()
     {
@@ -259,5 +306,17 @@ public sealed class ImportServiceTests
                 new ImportPreviewRequest(sourceRoot),
                 actor));
         Assert.Equal(VaultErrorCode.ImportPreviewInvalid, exception.Code);
+    }
+
+    private static void WriteFile(
+        string sourceRoot,
+        string relativePath,
+        string content)
+    {
+        var path = Path.Combine(
+            sourceRoot,
+            relativePath.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, content, new UTF8Encoding(false));
     }
 }
