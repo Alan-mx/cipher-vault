@@ -8,8 +8,9 @@ import { apiClient } from "./client";
 
 export const knowledgeApi = {
   search: (query: SearchQuery, signal?: AbortSignal) =>
-    apiClient.request<SearchPage>("/api/search", {
-      query: {
+    apiClient.request<SearchPage>("/api/search/query", {
+      method: "POST",
+      body: {
         query: query.query,
         tags: query.tags,
         format: query.format,
@@ -17,6 +18,8 @@ export const knowledgeApi = {
         updatedBefore: query.updatedBefore,
         hasBacklinks: query.hasBacklinks,
         orphanOnly: query.orphanOnly,
+        propertyMatch: query.propertyMatch,
+        propertyFilters: query.propertyFilters,
         pageSize: query.pageSize,
         cursor: query.cursor,
       },

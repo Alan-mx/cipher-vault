@@ -338,8 +338,21 @@ export interface SearchQuery {
   updatedBefore?: UtcTimestamp;
   hasBacklinks?: boolean;
   orphanOnly?: boolean;
+  propertyMatch?: SearchPropertyMatch;
+  propertyFilters?: SearchPropertyFilter[];
   pageSize?: number;
   cursor?: string;
+}
+
+export type SearchPropertyOperator =
+  "exists" | "eq" | "contains" | "in" | "gte" | "lte";
+
+export type SearchPropertyMatch = "all" | "any";
+
+export interface SearchPropertyFilter {
+  field: string;
+  operator: SearchPropertyOperator;
+  value: unknown;
 }
 
 export interface LocalGraphQuery {

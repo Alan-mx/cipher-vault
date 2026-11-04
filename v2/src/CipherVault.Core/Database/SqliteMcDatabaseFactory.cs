@@ -296,6 +296,7 @@ public static class SqliteMcDatabaseFactory
 
     internal static void ConfigureConnection(SqliteConnection connection)
     {
+        RegisterSearchFunctions(connection);
         ExecuteNonQuery(
             connection,
             """
@@ -323,6 +324,7 @@ public static class SqliteMcDatabaseFactory
     private static void ConfigureReadOnlyConnection(
         SqliteConnection connection)
     {
+        RegisterSearchFunctions(connection);
         ExecuteNonQuery(
             connection,
             """
@@ -331,6 +333,21 @@ public static class SqliteMcDatabaseFactory
             PRAGMA busy_timeout = 5000;
             PRAGMA query_only = ON;
             """);
+    }
+
+    private static void RegisterSearchFunctions(SqliteConnection connection)
+    {
+        connection.CreateFunction<string?, string?, long?>(
+            "cv_ordinal_ignore_case_contains",
+            (value, search) =>
+                value is null || search is null
+                    ? null
+                    : value.Contains(
+                        search,
+                        StringComparison.OrdinalIgnoreCase)
+                        ? 1L
+                        : 0L,
+            isDeterministic: true);
     }
 
     public static int ShutdownProcess()

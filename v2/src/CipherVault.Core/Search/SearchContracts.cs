@@ -1,4 +1,5 @@
 using CipherVault.Core.Documents;
+using System.Text.Json;
 
 namespace CipherVault.Core.Search;
 
@@ -10,7 +11,30 @@ public sealed record SearchQuery(
     DateTimeOffset? UpdatedBefore,
     bool? HasBacklinks,
     bool OrphanOnly,
-    CursorPageRequest Page);
+    CursorPageRequest Page,
+    IReadOnlyList<SearchPropertyFilter>? PropertyFilters = null,
+    SearchPropertyMatch PropertyMatch = SearchPropertyMatch.All);
+
+public enum SearchPropertyOperator
+{
+    Exists,
+    Eq,
+    Contains,
+    In,
+    Gte,
+    Lte
+}
+
+public enum SearchPropertyMatch
+{
+    All,
+    Any
+}
+
+public sealed record SearchPropertyFilter(
+    string Field,
+    SearchPropertyOperator Operator,
+    JsonElement Value);
 
 public sealed record SearchCoverage(
     int TotalActiveDocuments,

@@ -1,6 +1,7 @@
 using CipherVault.Application.Documents;
 using CipherVault.Application.Graph;
 using CipherVault.Application.Search;
+using CipherVault.Server.Api.Contracts;
 using CipherVault.Core.Documents;
 using CipherVault.Core.KnowledgeGraph;
 using CipherVault.Core.Search;
@@ -69,6 +70,18 @@ public static class KnowledgeEndpoints
                 })
             .RequireAuthorization()
             .WithName("SearchDocuments");
+
+        endpoints.MapPost(
+                "/api/search/query",
+                async (
+                    StructuredSearchApiRequest request,
+                    SearchService search,
+                    CancellationToken cancellationToken) =>
+                    Results.Ok(await search.SearchAsync(
+                        request.ToApplicationQuery(),
+                        cancellationToken)))
+            .RequireAuthorization()
+            .WithName("SearchDocumentsStructured");
 
         endpoints.MapGet(
                 "/api/graph/local",

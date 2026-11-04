@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Json;
 using CipherVault.Application.Documents;
 using CipherVault.Application.Graph;
 using CipherVault.Application.Search;
@@ -31,15 +32,17 @@ public sealed class KnowledgeTools
     }
 
     [McpServerTool(Name = McpToolNames.SearchNotes)]
-    [Description("Search active Markdown/TXT documents with optional tag, format, time, backlink and orphan filters. Short queries scan at most the 10000 most recently updated documents.")]
+    [Description("Search active documents by optional keyword and/or structured filters. Empty keywords are allowed when at least one filter is active. Short keyword queries scan at most 10000 recent documents; pure filter queries use direct database filtering.")]
     public Task<CallToolResult> SearchNotes(
-        string query,
+        string? query = null,
         string[]? tags = null,
         string? format = null,
         DateTimeOffset? updatedAfter = null,
         DateTimeOffset? updatedBefore = null,
         bool? hasBacklinks = null,
         bool orphanOnly = false,
+        JsonElement[]? propertyFilters = null,
+        string propertyMatch = "all",
         string? cursor = null,
         int pageSize = 20,
         CancellationToken cancellationToken = default) =>
@@ -47,21 +50,20 @@ public sealed class KnowledgeTools
             McpToolNames.SearchNotes,
             async (_, token) =>
             {
-                if (string.IsNullOrWhiteSpace(query))
-                {
-                    throw InvalidInput("query is required.");
-                }
-
                 return await search.SearchAsync(
                     new SearchQuery(
-                        query,
+                        query ?? string.Empty,
                         tags,
                         DocumentReadTools.ParseFormat(format),
                         updatedAfter,
                         updatedBefore,
                         hasBacklinks,
                         orphanOnly,
-                        new CursorPageRequest(pageSize, cursor)),
+                        new CursorPageRequest(pageSize, cursor),
+                        propertyFilters?
+                            .Select(ParsePropertyFilter)
+                            .ToArray(),
+                        ParsePropertyMatch(propertyMatch)),
                     token);
             },
             cancellationToken);
@@ -150,4 +152,42 @@ public sealed class KnowledgeTools
 
     private static McpToolRequestException InvalidInput(string message) =>
         new("invalid_input", message);
+
+    private static SearchPropertyFilter ParsePropertyFilter(
+        JsonElement element)
+    {
+        if (element.ValueKind != JsonValueKind.Object
+            || !element.TryGetProperty("field", out var fieldElement)
+            || fieldElement.ValueKind != JsonValueKind.String
+            || !element.TryGetProperty("operator", out var operatorElement)
+            || operatorElement.ValueKind != JsonValueKind.String
+            || !element.TryGetProperty("value", out var valueElement))
+        {
+            throw InvalidInput(
+                "Each property filter requires field, operator and value.");
+        }
+
+        var operation = operatorElement.GetString() switch
+        {
+            "exists" => SearchPropertyOperator.Exists,
+            "eq" => SearchPropertyOperator.Eq,
+            "contains" => SearchPropertyOperator.Contains,
+            "in" => SearchPropertyOperator.In,
+            "gte" => SearchPropertyOperator.Gte,
+            "lte" => SearchPropertyOperator.Lte,
+            _ => throw InvalidInput("Property operator is invalid.")
+        };
+        return new SearchPropertyFilter(
+            fieldElement.GetString() ?? string.Empty,
+            operation,
+            valueElement.Clone());
+    }
+
+    private static SearchPropertyMatch ParsePropertyMatch(string value) =>
+        value switch
+        {
+            "all" => SearchPropertyMatch.All,
+            "any" => SearchPropertyMatch.Any,
+            _ => throw InvalidInput("propertyMatch must be all or any.")
+        };
 }

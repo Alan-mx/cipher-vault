@@ -8,6 +8,63 @@ namespace CipherVault.Server.Tests;
 public sealed class McpToolsIntegrationTests
 {
     [Fact]
+    public async Task SearchNotesSupportsPureFrontmatterPropertyFilters()
+    {
+        await using var server = await ServerTestApplication.CreateAsync(
+            initializeVault: true);
+        using var unlock = await server.Client.UnlockAsync();
+        Assert.Equal(HttpStatusCode.OK, unlock.StatusCode);
+        var token = await CreateTokenAsync(server.Client);
+        await server.Client.SetMcpWriteModeAsync("direct");
+
+        _ = await CallToolAsync(server.Client, token, "create_note", new
+        {
+            title = "Verified",
+            content = "---\nstatus: verified\nsource:\n  kind: project\n---\n# Verified",
+            folder = "McpProperties"
+        });
+        _ = await CallToolAsync(server.Client, token, "create_note", new
+        {
+            title = "Raw",
+            content = "---\nstatus: raw\nsource:\n  kind: conversation\n---\n# Raw",
+            folder = "McpProperties"
+        });
+
+        var found = await CallToolAsync(server.Client, token, "search_notes", new
+        {
+            propertyMatch = "all",
+            propertyFilters = new[]
+            {
+                new
+                {
+                    field = "source.kind",
+                    @operator = "eq",
+                    value = "project"
+                }
+            }
+        });
+        Assert.Single(found.GetProperty("hits").EnumerateArray());
+        Assert.Equal(
+            "Verified",
+            found.GetProperty("hits")[0].GetProperty("title").GetString());
+
+        var invalid = await CallToolAsync(server.Client, token, "search_notes", new
+        {
+            propertyMatch = "all",
+            propertyFilters = new[]
+            {
+                new
+                {
+                    field = "tags",
+                    @operator = "exists",
+                    value = true
+                }
+            }
+        });
+        Assert.Equal("invalid_input", invalid.GetProperty("code").GetString());
+    }
+
+    [Fact]
     public async Task FifteenToolsCoverReadSearchKnowledgeAndWritePaths()
     {
         await using var server = await ServerTestApplication.CreateAsync(

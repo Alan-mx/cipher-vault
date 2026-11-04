@@ -131,9 +131,40 @@ test("Phase 6 desktop flow, responsive layout and accessibility", async ({
   await page.getByRole("button", { name: "对比", exact: true }).click();
   await expect(page.locator(".revision-diff")).toContainText("+Needle one");
 
+  await page.evaluate(async () => {
+    const token = await fetch("/api/vault/antiforgery")
+      .then((response) => response.json())
+      .then((body: { token: string }) => body.token);
+    const response = await fetch("/api/documents", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-TOKEN": token,
+      },
+      body: JSON.stringify({
+        title: "PropertyDoc",
+        virtualPath: "notes/property-doc.md",
+        format: "md",
+        content:
+          "---\nstatus: verified\nsource:\n  kind: project\n---\n\n# PropertyDoc\n\nNeedle property",
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`Property document create failed: ${response.status}`);
+    }
+  });
   await page.getByRole("button", { name: "搜索文档" }).click();
   await page.getByPlaceholder("输入全文搜索词…").fill("Needle");
   await expect(page.getByRole("button", { name: /Alpha/ })).toBeVisible();
+  await page.getByPlaceholder("输入全文搜索词…").fill("");
+  await page.getByRole("button", { name: "添加属性条件" }).click();
+  await page.getByPlaceholder("例如 status / source.kind").fill("source.kind");
+  await page
+    .locator('.property-row input[aria-label="属性值"]')
+    .fill("project");
+  await page.getByText("任一满足", { exact: true }).click();
+  await expect(page.getByRole("button", { name: /PropertyDoc/ })).toBeVisible();
+  await page.getByRole("button", { name: "删除属性条件" }).click();
   await page.getByRole("button", { name: "关闭搜索" }).click();
 
   await page.getByRole("button", { name: "知识网络" }).first().click();

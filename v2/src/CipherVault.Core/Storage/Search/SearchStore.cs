@@ -19,25 +19,29 @@ public static class SearchStore
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(query);
-        var normalizedQuery = query.Query
+        var normalizedQuery = (query.Query ?? string.Empty)
             .Normalize(System.Text.NormalizationForm.FormC)
             .Trim();
-        int scalarCount;
-        try
+        var queryIsEmpty = normalizedQuery.Length == 0;
+        var scalarCount = 0;
+        if (!queryIsEmpty)
         {
-            scalarCount = UnicodeText.CountScalars(normalizedQuery);
-        }
-        catch (ArgumentException)
-        {
-            throw new VaultException(
-                VaultErrorCode.InvalidInput,
-                "Search query contains invalid Unicode data.");
-        }
-        if (scalarCount is < 1 or > 200)
-        {
-            throw new VaultException(
-                VaultErrorCode.InvalidInput,
-                "Search query must contain 1 to 200 Unicode characters.");
+            try
+            {
+                scalarCount = UnicodeText.CountScalars(normalizedQuery);
+            }
+            catch (ArgumentException)
+            {
+                throw new VaultException(
+                    VaultErrorCode.InvalidInput,
+                    "Search query contains invalid Unicode data.");
+            }
+            if (scalarCount is < 1 or > 200)
+            {
+                throw new VaultException(
+                    VaultErrorCode.InvalidInput,
+                    "Search query must contain 1 to 200 Unicode characters.");
+            }
         }
         if (query.OrphanOnly && query.HasBacklinks == true)
         {
@@ -49,6 +53,27 @@ public static class SearchStore
         var pageSize = NormalizePageSize(query.Page?.PageSize);
         var tags = TagNormalizer.NormalizeMany(query.Tags);
         var format = query.Format?.ToDatabaseValue();
+        var properties = SearchPropertyFilterNormalizer.Normalize(
+            query.PropertyFilters);
+        var propertyFingerprint =
+            SearchPropertyFilterNormalizer.BuildFingerprintKey(
+                properties,
+                query.PropertyMatch);
+        var hasEffectiveFilter =
+            !queryIsEmpty
+            || tags.Count > 0
+            || format is not null
+            || query.UpdatedAfter is not null
+            || query.UpdatedBefore is not null
+            || query.HasBacklinks is not null
+            || query.OrphanOnly
+            || properties.Count > 0;
+        if (!hasEffectiveFilter)
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "Search requires a query or at least one active filter.");
+        }
         var filterFingerprint = CursorCodec.Fingerprint(
             normalizedQuery,
             string.Join('\u001F', tags.Select(tag => tag.NormalizedKey)),
@@ -56,7 +81,8 @@ public static class SearchStore
             query.UpdatedAfter?.ToUniversalTime().ToString("O"),
             query.UpdatedBefore?.ToUniversalTime().ToString("O"),
             query.HasBacklinks?.ToString(),
-            query.OrphanOnly.ToString());
+            query.OrphanOnly.ToString(),
+            propertyFingerprint);
         var fingerprint = CursorCodec.Fingerprint(
             "search",
             filterFingerprint);
@@ -72,6 +98,22 @@ public static class SearchStore
         var snapshotAt = cursor?.SnapshotAt ?? now.ToUniversalTime();
         var totalActive = await CountTotalActiveAsync(context, cancellationToken);
 
+        if (queryIsEmpty)
+        {
+            return await SearchFilteredAsync(
+                context,
+                tags,
+                format,
+                query,
+                properties,
+                pageSize,
+                fingerprint,
+                cursor,
+                snapshotAt,
+                totalActive,
+                cancellationToken);
+        }
+
         return scalarCount >= 3
             ? await SearchFtsAsync(
                 context,
@@ -79,6 +121,7 @@ public static class SearchStore
                 tags,
                 format,
                 query,
+                properties,
                 pageSize,
                 fingerprint,
                 cursor,
@@ -91,6 +134,7 @@ public static class SearchStore
                 tags,
                 format,
                 query,
+                properties,
                 pageSize,
                 fingerprint,
                 cursor,
@@ -105,6 +149,7 @@ public static class SearchStore
         IReadOnlyList<NormalizedTag> tags,
         string? format,
         SearchQuery request,
+        IReadOnlyList<NormalizedSearchPropertyFilter> properties,
         int pageSize,
         string fingerprint,
         SearchCursor? cursor,
@@ -118,6 +163,7 @@ public static class SearchStore
             tags,
             format,
             request,
+            properties,
             snapshotAt,
             cancellationToken);
         using var read = context.CreateCommand();
@@ -140,6 +186,8 @@ public static class SearchStore
             request,
             tags,
             format,
+            properties,
+            request.PropertyMatch,
             ref parameterIndex);
         if (cursor is not null)
         {
@@ -222,6 +270,7 @@ public static class SearchStore
         IReadOnlyList<NormalizedTag> tags,
         string? format,
         SearchQuery request,
+        IReadOnlyList<NormalizedSearchPropertyFilter> properties,
         DateTimeOffset snapshotAt,
         CancellationToken cancellationToken)
     {
@@ -242,6 +291,8 @@ public static class SearchStore
             request,
             tags,
             format,
+            properties,
+            request.PropertyMatch,
             ref parameterIndex);
         count.Command.CommandText = sql.ToString();
         count.Command.Parameters.AddWithValue("$match", FtsPhrase(query));
@@ -259,6 +310,7 @@ public static class SearchStore
         IReadOnlyList<NormalizedTag> tags,
         string? format,
         SearchQuery request,
+        IReadOnlyList<NormalizedSearchPropertyFilter> properties,
         int pageSize,
         string fingerprint,
         SearchCursor? cursor,
@@ -281,6 +333,8 @@ public static class SearchStore
             request,
             tags,
             format,
+            properties,
+            request.PropertyMatch,
             ref parameterIndex);
         sql.Append(" ORDER BY d.updated_at DESC, d.document_id LIMIT $shortLimit;");
         read.Command.CommandText = sql.ToString();
@@ -356,12 +410,164 @@ public static class SearchStore
             nextCursor);
     }
 
+    private static async Task<SearchPage> SearchFilteredAsync(
+        VaultOperationContext context,
+        IReadOnlyList<NormalizedTag> tags,
+        string? format,
+        SearchQuery request,
+        IReadOnlyList<NormalizedSearchPropertyFilter> properties,
+        int pageSize,
+        string fingerprint,
+        SearchCursor? cursor,
+        DateTimeOffset snapshotAt,
+        int totalActive,
+        CancellationToken cancellationToken)
+    {
+        var totalMatches = await CountFilteredMatchesAsync(
+            context,
+            request,
+            tags,
+            format,
+            properties,
+            snapshotAt,
+            cancellationToken);
+
+        using var read = context.CreateCommand();
+        var sql = new StringBuilder(
+            """
+            SELECT d.document_id, d.title, d.path, d.revision,
+                   d.content, d.updated_at
+            FROM documents AS d
+            WHERE d.deleted_at IS NULL
+              AND d.updated_at <= $snapshotAt
+            """);
+        var parameterIndex = 0;
+        AppendCommonFilters(
+            sql,
+            read,
+            request,
+            tags,
+            format,
+            properties,
+            request.PropertyMatch,
+            ref parameterIndex);
+        if (cursor is not null)
+        {
+            sql.Append(
+                """
+                 AND (
+                    d.updated_at < $afterUpdated
+                    OR (
+                        d.updated_at = $afterUpdated
+                        AND d.document_id > $afterDocumentId
+                    )
+                 )
+                """);
+            read.Command.Parameters.AddWithValue(
+                "$afterUpdated",
+                cursor.UpdatedAt.ToUniversalTime().ToString("O"));
+            read.Command.Parameters.AddWithValue(
+                "$afterDocumentId",
+                cursor.DocumentId.ToString("D"));
+        }
+        sql.Append(
+            """
+             ORDER BY d.updated_at DESC, d.document_id ASC
+             LIMIT $limit;
+            """);
+        read.Command.CommandText = sql.ToString();
+        read.Command.Parameters.AddWithValue(
+            "$snapshotAt",
+            snapshotAt.ToString("O"));
+        read.Command.Parameters.AddWithValue("$limit", pageSize + 1);
+
+        var hits = new List<(SearchHit Hit, SearchCursor Cursor)>();
+        await using var reader =
+            await read.Command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var updatedAt = ParseTimestamp(reader.GetString(5));
+            var id = Guid.Parse(reader.GetString(0));
+            var itemCursor = new SearchCursor(
+                1.0,
+                updatedAt,
+                id,
+                snapshotAt);
+            hits.Add((
+                new SearchHit(
+                    id,
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.GetInt32(3),
+                    BoundSnippet(reader.GetString(4)),
+                    1.0),
+                itemCursor));
+        }
+
+        var hasMore = hits.Count > pageSize;
+        if (hasMore)
+        {
+            hits.RemoveAt(hits.Count - 1);
+        }
+        var nextCursor = hasMore
+            ? CursorCodec.Encode("search", fingerprint, hits[^1].Cursor)
+            : null;
+        var returned = hits.Select(hit => hit.Hit).ToArray();
+        return new SearchPage(
+            returned,
+            new SearchCoverage(
+                totalActive,
+                totalActive,
+                totalMatches,
+                returned.Length,
+                false),
+            nextCursor);
+    }
+
+    private static async Task<int> CountFilteredMatchesAsync(
+        VaultOperationContext context,
+        SearchQuery request,
+        IReadOnlyList<NormalizedTag> tags,
+        string? format,
+        IReadOnlyList<NormalizedSearchPropertyFilter> properties,
+        DateTimeOffset snapshotAt,
+        CancellationToken cancellationToken)
+    {
+        using var count = context.CreateCommand();
+        var sql = new StringBuilder(
+            """
+            SELECT count(*)
+            FROM documents AS d
+            WHERE d.deleted_at IS NULL
+              AND d.updated_at <= $snapshotAt
+            """);
+        var parameterIndex = 0;
+        AppendCommonFilters(
+            sql,
+            count,
+            request,
+            tags,
+            format,
+            properties,
+            request.PropertyMatch,
+            ref parameterIndex);
+        count.Command.CommandText = sql.ToString();
+        count.Command.Parameters.AddWithValue(
+            "$snapshotAt",
+            snapshotAt.ToString("O"));
+        return Convert.ToInt32(
+            await count.Command.ExecuteScalarAsync(cancellationToken),
+            CultureInfo.InvariantCulture);
+    }
+
     private static void AppendCommonFilters(
         StringBuilder sql,
         VaultCommandLease lease,
         SearchQuery query,
         IReadOnlyList<NormalizedTag> tags,
         string? format,
+        IReadOnlyList<NormalizedSearchPropertyFilter> properties,
+        SearchPropertyMatch propertyMatch,
         ref int parameterIndex)
     {
         if (format is not null)
@@ -459,6 +665,12 @@ public static class SearchStore
                  )
                 """);
         }
+        SearchPropertySqlBuilder.AppendGroup(
+            sql,
+            lease,
+            properties,
+            propertyMatch,
+            ref parameterIndex);
     }
 
     private static async Task<int> CountTotalActiveAsync(

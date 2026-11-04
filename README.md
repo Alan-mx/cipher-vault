@@ -212,6 +212,18 @@ Vault Lock；Token 不是 Vault Password，也不能替代 Web Unlock。
 }
 ```
 
+## 搜索与 Frontmatter 属性过滤
+
+Web SearchDialog 和 MCP `search_notes` 支持结构化 Frontmatter 属性过滤，例如
+`status=verified`、`project=CipherVault` 或 `source.kind=project`。
+
+- 关键词可以为空，但必须至少提供一个标签、格式、时间、链接、孤立或属性过滤条件。
+- 属性条件支持 `exists/eq/contains/in/gte/lte`，最多 16 条，组内支持 `all/any`。
+- 字段路径最多 4 层；顶层 `tags` 继续使用现有标签过滤。
+- 属性查询使用 SQLite JSON1，不新增属性索引；纯过滤查询可能扫描候选文档。
+- Web 使用 `POST /api/search/query`；旧 `GET /api/search` 简单搜索合同保留。
+- MCP `search_notes` 增加 `propertyFilters` 和 `propertyMatch` 参数。
+
 ## 明文导出
 
 Settings 页面提供“导出明文”。该操作会下载当前全部有效 Markdown/TXT 文档的未加密 ZIP：

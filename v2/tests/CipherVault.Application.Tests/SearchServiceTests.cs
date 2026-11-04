@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Text.Json;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
 using CipherVault.Core.Search;
@@ -289,7 +291,7 @@ public sealed class SearchServiceTests
                         printf('bulk/%05d.txt', value),
                         'txt',
                         'body without the short query token',
-                        '{}',
+                        json_object('status', 'verified'),
                         '[]',
                         1,
                         '2026-10-31T00:00:00.0000000+00:00',
@@ -316,5 +318,125 @@ public sealed class SearchServiceTests
         Assert.Equal(10001, page.Coverage.TotalActiveDocuments);
         Assert.Equal(10000, page.Coverage.ScannedDocuments);
         Assert.True(page.Coverage.Truncated);
+
+        using var value = JsonDocument.Parse("\"verified\"");
+        var filtered = await fixture.Search.SearchAsync(
+            new SearchQuery(
+                string.Empty,
+                null,
+                null,
+                null,
+                null,
+                null,
+                false,
+                new CursorPageRequest(100),
+                [
+                    new SearchPropertyFilter(
+                        "status",
+                        SearchPropertyOperator.Eq,
+                        value.RootElement.Clone())
+                ],
+                SearchPropertyMatch.All));
+        Assert.Equal(100, filtered.Hits.Count);
+        Assert.Equal(10001, filtered.Coverage.MatchedDocuments);
+        Assert.False(filtered.Coverage.Truncated);
+        Assert.NotNull(filtered.NextCursor);
+    }
+
+    [Fact]
+    public async Task PropertyFilterPerformanceScalesAcrossDocumentCounts()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        using var value = JsonDocument.Parse("\"project\"");
+        var filter = new SearchPropertyFilter(
+            "source.kind",
+            SearchPropertyOperator.Eq,
+            value.RootElement.Clone());
+
+        await InsertPerformanceDocumentsAsync(fixture, 1, 100);
+        var hundred = await MeasureAsync(fixture, filter);
+        Assert.Equal(100, hundred.Matched);
+        Assert.True(
+            hundred.Elapsed < TimeSpan.FromSeconds(10),
+            $"100-document property query took {hundred.Elapsed}.");
+
+        await InsertPerformanceDocumentsAsync(fixture, 101, 1_000);
+        var thousand = await MeasureAsync(fixture, filter);
+        Assert.Equal(1_000, thousand.Matched);
+        Assert.True(
+            thousand.Elapsed < TimeSpan.FromSeconds(10),
+            $"1000-document property query took {thousand.Elapsed}.");
+    }
+
+    private static async Task InsertPerformanceDocumentsAsync(
+        VaultApplicationFixture fixture,
+        int start,
+        int end)
+    {
+        await fixture.QueryAsync(
+            async context =>
+            {
+                using var command = context.CreateCommand();
+                command.Command.CommandText =
+                    """
+                    WITH RECURSIVE seq(value) AS (
+                        VALUES($start)
+                        UNION ALL
+                        SELECT value + 1 FROM seq WHERE value < $end
+                    )
+                    INSERT INTO documents(
+                        document_id, title, title_key, path, path_key, format,
+                        content, frontmatter_json, headings_json, revision,
+                        created_at, updated_at, deleted_at, purge_eligible_at)
+                    SELECT
+                        lower(hex(randomblob(4))) || '-'
+                        || lower(hex(randomblob(2))) || '-'
+                        || lower(hex(randomblob(2))) || '-'
+                        || lower(hex(randomblob(2))) || '-'
+                        || lower(hex(randomblob(6))),
+                        printf('Perf %05d', value),
+                        printf('PERF %05d', value),
+                        printf('perf/%05d.md', value),
+                        printf('perf/%05d.md', value),
+                        'md',
+                        '# Perf',
+                        json_object(
+                            'status', 'verified',
+                            'source', json_object('kind', 'project')
+                        ),
+                        '[]',
+                        1,
+                        '2026-10-31T00:00:00.0000000+00:00',
+                        '2026-10-31T00:00:00.0000000+00:00',
+                        NULL,
+                        NULL
+                    FROM seq;
+                    """;
+                command.Command.Parameters.AddWithValue("$start", start);
+                command.Command.Parameters.AddWithValue("$end", end);
+                return await command.Command.ExecuteNonQueryAsync();
+            });
+    }
+
+    private static async Task<(int Matched, TimeSpan Elapsed)> MeasureAsync(
+        VaultApplicationFixture fixture,
+        SearchPropertyFilter filter)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var page = await fixture.Search.SearchAsync(
+            new SearchQuery(
+                string.Empty,
+                null,
+                null,
+                null,
+                null,
+                null,
+                false,
+                new CursorPageRequest(20),
+                [filter],
+                SearchPropertyMatch.All));
+        stopwatch.Stop();
+        Assert.Equal(20, page.Hits.Count);
+        return (page.Coverage.MatchedDocuments, stopwatch.Elapsed);
     }
 }

@@ -6,15 +6,23 @@ import {
   NCheckbox,
   NDatePicker,
   NIcon,
+  NInput,
   NModal,
+  NRadioButton,
+  NRadioGroup,
   NSelect,
   NSpin,
   NTag,
 } from "naive-ui";
-import { X } from "@lucide/vue";
+import { Plus, Trash2, X } from "@lucide/vue";
 import { useCatalogStore } from "../../stores/catalog";
-import { useSearchStore } from "../../stores/search";
+import {
+  useSearchStore,
+  type SearchPropertyFilterDraft,
+  type SearchPropertyValueType,
+} from "../../stores/search";
 import type { VaultFormat } from "../../types/domain";
+import type { SearchPropertyOperator } from "../../types/api";
 
 const props = defineProps<{
   show: boolean;
@@ -40,6 +48,27 @@ const formatOptions = [
   { label: "Markdown", value: "md" },
   { label: "纯文本", value: "txt" },
 ] satisfies Array<{ label: string; value: VaultFormat }>;
+const operatorOptions = [
+  { label: "存在", value: "exists" },
+  { label: "等于", value: "eq" },
+  { label: "包含", value: "contains" },
+  { label: "属于", value: "in" },
+  { label: "大于等于", value: "gte" },
+  { label: "小于等于", value: "lte" },
+] satisfies Array<{ label: string; value: SearchPropertyOperator }>;
+const valueTypeOptions = [
+  { label: "字符串", value: "string" },
+  { label: "数字", value: "number" },
+  { label: "布尔", value: "boolean" },
+  { label: "null", value: "null" },
+] satisfies Array<{ label: string; value: SearchPropertyValueType }>;
+const numericTypeOptions = valueTypeOptions.filter(
+  (option) => option.value === "string" || option.value === "number",
+);
+const booleanOptions = [
+  { label: "true", value: "true" },
+  { label: "false", value: "false" },
+];
 
 const open = async (): Promise<void> => {
   await catalog.loadTags();
@@ -63,6 +92,20 @@ const updateUpdatedBefore = (value: number | null): void => {
   search.setFilters({
     updatedBefore: value === null ? null : new Date(value).toISOString(),
   });
+};
+
+const updateOperator = (
+  filter: SearchPropertyFilterDraft,
+  operator: SearchPropertyOperator,
+): void => {
+  const valueType =
+    operator === "exists"
+      ? "boolean"
+      : (operator === "gte" || operator === "lte") &&
+          filter.valueType !== "number"
+        ? "string"
+        : filter.valueType;
+  search.updatePropertyFilter(filter.id, { operator, valueType });
 };
 
 watch(
@@ -180,6 +223,133 @@ watch(
         </NCheckbox>
       </div>
 
+      <section class="property-filters">
+        <div class="property-heading">
+          <strong>属性条件</strong>
+          <NRadioGroup
+            v-if="search.filters.propertyFilters.length"
+            :value="search.filters.propertyMatch"
+            size="small"
+            @update:value="search.setPropertyMatch($event as 'all' | 'any')"
+          >
+            <NRadioButton value="all">全部满足</NRadioButton>
+            <NRadioButton value="any">任一满足</NRadioButton>
+          </NRadioGroup>
+        </div>
+        <div
+          v-for="filter in search.filters.propertyFilters"
+          :key="filter.id"
+          class="property-row"
+        >
+          <NInput
+            :value="filter.field"
+            size="small"
+            placeholder="例如 status / source.kind"
+            :input-props="{ 'aria-label': '属性字段' }"
+            @update:value="
+              search.updatePropertyFilter(filter.id, { field: $event })
+            "
+          />
+          <NSelect
+            :value="filter.operator"
+            :options="operatorOptions"
+            size="small"
+            :input-props="{ 'aria-label': '属性操作符' }"
+            @update:value="
+              updateOperator(filter, $event as SearchPropertyOperator)
+            "
+          />
+          <template v-if="filter.operator === 'exists'">
+            <NSelect
+              :value="String(filter.booleanValue)"
+              :options="booleanOptions"
+              size="small"
+              :input-props="{ 'aria-label': '属性是否存在' }"
+              @update:value="
+                search.updatePropertyFilter(filter.id, {
+                  booleanValue: $event === 'true',
+                })
+              "
+            />
+          </template>
+          <template v-else>
+            <NSelect
+              :value="filter.valueType"
+              :options="
+                filter.operator === 'gte' || filter.operator === 'lte'
+                  ? numericTypeOptions
+                  : valueTypeOptions
+              "
+              size="small"
+              :input-props="{ 'aria-label': '属性值类型' }"
+              @update:value="
+                search.updatePropertyFilter(filter.id, {
+                  valueType: $event as SearchPropertyValueType,
+                })
+              "
+            />
+            <NSelect
+              v-if="filter.valueType === 'boolean'"
+              :value="String(filter.booleanValue)"
+              :options="booleanOptions"
+              size="small"
+              :input-props="{ 'aria-label': '属性布尔值' }"
+              @update:value="
+                search.updatePropertyFilter(filter.id, {
+                  booleanValue: $event === 'true',
+                })
+              "
+            />
+            <span v-else-if="filter.valueType === 'null'" class="property-null">
+              null
+            </span>
+            <NInput
+              v-else
+              :value="
+                filter.operator === 'in' ? filter.valuesText : filter.value
+              "
+              size="small"
+              :placeholder="
+                filter.operator === 'in' ? '多个值用逗号分隔' : '属性值'
+              "
+              :input-props="{
+                'aria-label':
+                  filter.operator === 'in' ? '属性值列表' : '属性值',
+              }"
+              @update:value="
+                search.updatePropertyFilter(
+                  filter.id,
+                  filter.operator === 'in'
+                    ? { valuesText: $event }
+                    : { value: $event },
+                )
+              "
+            />
+          </template>
+          <NButton
+            quaternary
+            circle
+            aria-label="删除属性条件"
+            @click="search.removePropertyFilter(filter.id)"
+          >
+            <template #icon>
+              <NIcon :component="Trash2" aria-hidden="true" />
+            </template>
+          </NButton>
+        </div>
+        <NButton
+          text
+          size="small"
+          :disabled="search.filters.propertyFilters.length >= 16"
+          @click="search.addPropertyFilter()"
+        >
+          <template #icon>
+            <NIcon :component="Plus" aria-hidden="true" />
+          </template>
+          添加属性条件
+        </NButton>
+      </section>
+
       <NAlert
         v-if="search.error"
         class="search-status"
@@ -197,8 +367,8 @@ watch(
           <NSpin size="small" />
           <span>正在搜索…</span>
         </div>
-        <p v-else-if="!search.query.trim()" class="search-empty">
-          输入关键词后开始搜索。查询词只保留在当前页面内存中。
+        <p v-else-if="!search.canSearch" class="search-empty">
+          输入关键词或至少一个过滤条件后开始搜索。
         </p>
         <p
           v-else-if="!search.hits.length && !search.loading"
@@ -217,7 +387,13 @@ watch(
             <p>{{ hit.snippet }}</p>
             <div>
               <NTag size="tiny" :bordered="false"> R{{ hit.revision }} </NTag>
-              <span>score {{ hit.score.toFixed(2) }}</span>
+              <span>
+                {{
+                  search.query.trim()
+                    ? `score ${hit.score.toFixed(2)}`
+                    : "属性筛选"
+                }}
+              </span>
             </div>
           </button>
         </div>
@@ -283,6 +459,43 @@ watch(
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   margin: 12px 0;
+}
+
+.property-filters {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--cv-border);
+}
+
+.property-heading {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.property-row {
+  display: grid;
+  grid-template-columns:
+    minmax(150px, 1.4fr) minmax(100px, 0.8fr)
+    minmax(90px, 0.7fr) minmax(130px, 1.2fr) 32px;
+  align-items: center;
+  gap: 6px;
+}
+
+.property-null {
+  display: flex;
+  height: 28px;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid var(--cv-border);
+  border-radius: 4px;
+  color: var(--cv-muted);
+  font-size: 12px;
 }
 
 .search-status {
@@ -361,6 +574,20 @@ watch(
 @media (max-width: 699px) {
   .search-filters {
     grid-template-columns: 1fr;
+  }
+
+  .property-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .property-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .property-row > :nth-child(1),
+  .property-row > :nth-child(4) {
+    grid-column: 1 / -1;
   }
 }
 </style>
