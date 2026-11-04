@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using CipherVault.Core.Crypto;
 using CipherVault.Core.Errors;
+using CipherVault.Core.Knowledge;
 using CipherVault.Core.Security;
 using Microsoft.Data.Sqlite;
 using SQLitePCL;
@@ -337,6 +338,18 @@ public static class SqliteMcDatabaseFactory
 
     private static void RegisterSearchFunctions(SqliteConnection connection)
     {
+        connection.CreateFunction<string?, string?>(
+            "cv_knowledge_view_label",
+            KnowledgeViewKey.NormalizeLabel,
+            isDeterministic: true);
+        connection.CreateFunction<string?, string?>(
+            "cv_knowledge_view_key",
+            KnowledgeViewKey.NormalizeKey,
+            isDeterministic: true);
+        connection.CreateFunction<string?, byte[]>(
+            "cv_knowledge_view_ordinal_key",
+            value => KnowledgeViewKey.OrdinalSortKey(value ?? string.Empty),
+            isDeterministic: true);
         connection.CreateFunction<string?, string?, long?>(
             "cv_ordinal_ignore_case_equals",
             (left, right) =>

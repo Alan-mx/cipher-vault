@@ -92,6 +92,45 @@ public sealed class DatabaseFactoryTests
     }
 
     [Fact]
+    public async Task KnowledgeViewFunctionsAreRegisteredForEveryConnection()
+    {
+        using var fixture = await DatabaseFixture.CreateAsync();
+        await using var ordinary = await SqliteMcDatabaseFactory.OpenConnectionAsync(
+            new DatabaseOpenRequest(
+                fixture.Root,
+                fixture.Material.DatabaseKey,
+                CreateIfMissing: false));
+        await using var readOnly =
+            await SqliteMcDatabaseFactory.OpenReadOnlyConnectionAsync(
+                fixture.Root,
+                fixture.Material.DatabaseKey);
+
+        foreach (var connection in new[] { ordinary, readOnly })
+        {
+            Assert.Equal(
+                "Ä",
+                await ScalarAsync(
+                    connection,
+                    "SELECT cv_knowledge_view_label('  Ä  ');"));
+            Assert.Equal(
+                "Ä",
+                await ScalarAsync(
+                    connection,
+                    "SELECT cv_knowledge_view_key('  ä  ');"));
+            Assert.Equal(
+                "1",
+                await ScalarAsync(
+                    connection,
+                    "SELECT cv_knowledge_view_label('   ') IS NULL;"));
+            Assert.Equal(
+                "0041",
+                await ScalarAsync(
+                    connection,
+                    "SELECT hex(cv_knowledge_view_ordinal_key('A'));"));
+        }
+    }
+
+    [Fact]
     public async Task OrdinarySqliteProcessCannotOpenDatabase()
     {
         using var fixture = await DatabaseFixture.CreateAsync();

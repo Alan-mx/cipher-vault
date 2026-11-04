@@ -561,3 +561,162 @@ test("M13 export ticket flow and M09 pageshow revalidation", async ({
   await expect(page).toHaveURL(/\/settings$/);
   expect(lockRequests).toEqual([]);
 });
+
+test("Knowledge views support facets, active projects and deep links", async ({
+  page,
+}) => {
+  await ensureUnlocked(page);
+  await page.evaluate(async (unlockPassword) => {
+    const response = await fetch("/api/vault/unlock", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: unlockPassword }),
+    });
+    if (!response.ok) {
+      throw new Error(`Knowledge view auth failed: ${response.status}`);
+    }
+  }, password);
+  const documents = await page.evaluate(async () => {
+    const token = await fetch("/api/vault/antiforgery")
+      .then((response) => response.json())
+      .then((body: { token: string }) => body.token);
+    const create = async (body: object) => {
+      const response = await fetch("/api/documents", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-TOKEN": token,
+        },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        throw new Error(`Knowledge view fixture failed: ${response.status}`);
+      }
+      return response.json() as Promise<{ documentId: string }>;
+    };
+    const first = await create({
+      title: "Views Project A One",
+      virtualPath: "views/project-a-one.md",
+      format: "md",
+      content:
+        "---\nproject: Views Project A\nstatus: active\n" +
+        "type: technical-note\nmaturity: verified\n---\n\nOne.",
+    });
+    const second = await create({
+      title: "Views Project A Two",
+      virtualPath: "views/project-a-two.md",
+      format: "md",
+      content:
+        "---\nproject: views project a\nstatus: active\n" +
+        "type: experience\nmaturity: organized\n---\n\nTwo.",
+    });
+    const planned = await create({
+      title: "Views Project B",
+      virtualPath: "views/project-b.md",
+      format: "md",
+      content:
+        "---\nproject: Views Project B\nstatus: planned\n" +
+        "type: technical-note\nmaturity: raw\n---\n\nPlanned.",
+    });
+    const missing = await create({
+      title: "Views Missing",
+      virtualPath: "views/missing.md",
+      format: "md",
+      content: "---\nstatus: active\n---\n\nMissing.",
+    });
+    const blank = await create({
+      title: "Views Blank",
+      virtualPath: "views/blank.md",
+      format: "md",
+      content: '---\nproject: "   "\nstatus: active\n---\n\nBlank.',
+    });
+    return {
+      first: first.documentId,
+      second: second.documentId,
+      planned: planned.documentId,
+      missing: missing.documentId,
+      blank: blank.documentId,
+    };
+  });
+
+  await page.goto("/views");
+  await expect(page.getByRole("heading", { name: "知识视图" })).toBeVisible();
+  const facets = page.locator(".facets-panel");
+  const projectA = facets.getByRole("button", {
+    name: /Views Project A 2/,
+  });
+  await expect(projectA).toBeVisible();
+  await expect(
+    facets.getByRole("button", { name: /Views Project B 1/ }),
+  ).toBeVisible();
+  await expect(facets.getByRole("button", { name: /未设置/ })).toBeVisible();
+
+  await page.getByRole("switch", { name: "仅显示进行中项目" }).click();
+  await expect(page).toHaveURL(/activeOnly=true/);
+  await expect(
+    facets.getByRole("button", { name: /Views Project B/ }),
+  ).toHaveCount(0);
+
+  await facets.getByRole("button", { name: /Views Project A 2/ }).click();
+  await expect(page).toHaveURL(/value=VIEWS\+PROJECT\+A/);
+  const documentsPanel = page.locator(".documents-panel");
+  await expect(
+    documentsPanel.getByText("Views Project A One", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    documentsPanel.getByText("Views Project A Two", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    documentsPanel.getByText("Views Project B", { exact: true }),
+  ).toHaveCount(0);
+
+  await page.reload();
+  await expect(
+    documentsPanel.getByText("Views Project A One", { exact: true }),
+  ).toBeVisible();
+
+  await page
+    .locator(".knowledge-views .n-tabs-tab__label", {
+      hasText: /^类型$/,
+    })
+    .click();
+  await expect(page).toHaveURL(/view=types/);
+  await expect(
+    facets.getByRole("button", { name: /technical-note 2/ }),
+  ).toBeVisible();
+  await expect(
+    facets.getByRole("button", { name: /experience 1/ }),
+  ).toBeVisible();
+
+  await page
+    .locator(".knowledge-views .n-tabs-tab__label", {
+      hasText: /^成熟度$/,
+    })
+    .click();
+  await expect(page).toHaveURL(/view=maturity/);
+  await expect(
+    facets.getByRole("button", { name: /verified 1/ }),
+  ).toBeVisible();
+  await expect(
+    facets.getByRole("button", { name: /organized 1/ }),
+  ).toBeVisible();
+
+  await page.goto("/views?view=projects&value=DOES%20NOT%20EXIST");
+  await expect(page.getByText(/分类已不存在/)).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/documents");
+  await page.getByRole("button", { name: "打开导航" }).click();
+  await page.getByRole("button", { name: "知识视图" }).click();
+  await expect(page.getByRole("heading", { name: "知识视图" })).toBeVisible();
+  await assertNoHorizontalOverflow(page);
+  await assertNoSeriousAxeViolations(page, "knowledge views mobile");
+
+  expect(documents).toEqual({
+    first: expect.stringMatching(/^[0-9a-f-]+$/),
+    second: expect.stringMatching(/^[0-9a-f-]+$/),
+    planned: expect.stringMatching(/^[0-9a-f-]+$/),
+    missing: expect.stringMatching(/^[0-9a-f-]+$/),
+    blank: expect.stringMatching(/^[0-9a-f-]+$/),
+  });
+});

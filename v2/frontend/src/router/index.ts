@@ -70,6 +70,17 @@ export const router = createRouter({
       },
     },
     {
+      path: "/views",
+      name: "knowledge-views",
+      component: () => import("../views/KnowledgeViewsView.vue"),
+      meta: {
+        vault: "unlocked",
+        sensitive: true,
+        layout: "workspace",
+        title: "知识视图",
+      },
+    },
+    {
       path: "/graph",
       name: "graph",
       component: () => import("../views/GraphView.vue"),

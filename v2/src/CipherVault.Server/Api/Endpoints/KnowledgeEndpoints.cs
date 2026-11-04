@@ -1,9 +1,11 @@
 using CipherVault.Application.Documents;
 using CipherVault.Application.Graph;
+using CipherVault.Application.Knowledge;
 using CipherVault.Application.Search;
 using CipherVault.Server.Api.Contracts;
 using CipherVault.Core.Documents;
 using CipherVault.Core.KnowledgeGraph;
+using CipherVault.Core.Knowledge;
 using CipherVault.Core.Search;
 
 namespace CipherVault.Server.Api.Endpoints;
@@ -116,6 +118,66 @@ public static class KnowledgeEndpoints
                 })
             .RequireAuthorization()
             .WithName("GetLocalGraph");
+
+        var views = endpoints
+            .MapGroup("/api/knowledge/views")
+            .RequireAuthorization();
+        views.MapGet(
+                "/{field}/facets",
+                async (
+                    string field,
+                    HttpRequest request,
+                    KnowledgeViewService viewsService,
+                    CancellationToken cancellationToken) =>
+                {
+                    var viewField = KnowledgeViewApiBinding.ParseField(field);
+                    var activeOnly = KnowledgeViewApiBinding.ParseActiveOnly(
+                        request,
+                        viewField,
+                        "activeOnly");
+                    return Results.Ok(await viewsService.GetFacetsAsync(
+                        viewField,
+                        activeOnly,
+                        cancellationToken));
+                })
+            .WithName("GetKnowledgeViewFacets");
+        views.MapGet(
+                "/{field}/documents",
+                async (
+                    string field,
+                    HttpRequest request,
+                    KnowledgeViewService viewsService,
+                    CancellationToken cancellationToken) =>
+                {
+                    KnowledgeViewApiBinding.EnsureOnlyQueryKeys(
+                        request,
+                        "facetKey",
+                        "unset",
+                        "activeOnly",
+                        "pageSize",
+                        "cursor");
+                    var viewField = KnowledgeViewApiBinding.ParseField(field);
+                    var activeOnly =
+                        KnowledgeViewApiBinding.ParseActiveOnlyValue(
+                            request,
+                            viewField);
+                    var selection =
+                        KnowledgeViewApiBinding.ParseDocumentSelection(
+                            request);
+                    var page = new CursorPageRequest(
+                        KnowledgeViewApiBinding.ParseOptionalPageSize(
+                            request),
+                        KnowledgeViewApiBinding.ParseOptionalCursor(
+                            request));
+                    return Results.Ok(await viewsService.GetDocumentsAsync(
+                        viewField,
+                        selection.FacetKey,
+                        selection.Unset,
+                        activeOnly,
+                        page,
+                        cancellationToken));
+                })
+            .WithName("GetKnowledgeViewDocuments");
         return endpoints;
     }
 }

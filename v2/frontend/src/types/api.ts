@@ -155,6 +155,44 @@ export interface RelatedDocumentsResponse {
   items: RelatedDocumentItem[];
 }
 
+export type KnowledgeViewField = "project" | "type" | "maturity";
+
+export interface KnowledgeFacetItem {
+  key: string | null;
+  label: string;
+  documentCount: number;
+  isUnset: boolean;
+}
+
+export interface KnowledgeFacetPage {
+  field: KnowledgeViewField;
+  items: KnowledgeFacetItem[];
+  truncated: boolean;
+}
+
+export interface KnowledgeViewItem {
+  documentId: GuidString;
+  title: string;
+  virtualPath: string;
+  format: VaultFormat;
+  revision: number;
+  tags: string[];
+  updatedAt: UtcTimestamp;
+}
+
+export interface KnowledgeViewPage {
+  items: KnowledgeViewItem[];
+  nextCursor: string | null;
+}
+
+export interface KnowledgeViewDocumentQuery {
+  facetKey?: string | undefined;
+  unset?: boolean | undefined;
+  activeOnly?: boolean | undefined;
+  pageSize?: number | undefined;
+  cursor?: string | undefined;
+}
+
 export interface UnlinkedMentionOccurrence {
   startOffset: number;
   endOffset: number;

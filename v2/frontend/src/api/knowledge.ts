@@ -1,6 +1,10 @@
 import type {
   LocalGraphQuery,
   LocalGraphResult,
+  KnowledgeFacetPage,
+  KnowledgeViewDocumentQuery,
+  KnowledgeViewField,
+  KnowledgeViewPage,
   SearchPage,
   SearchQuery,
 } from "../types/api";
@@ -37,4 +41,38 @@ export const knowledgeApi = {
         maxEdges: query.maxEdges,
       },
     }),
+
+  viewFacets: (
+    field: KnowledgeViewField,
+    activeOnly: boolean,
+    signal?: AbortSignal,
+  ) =>
+    apiClient.request<KnowledgeFacetPage>(
+      `/api/knowledge/views/${field}/facets`,
+      {
+        query: {
+          activeOnly: field === "project" ? activeOnly : undefined,
+        },
+        ...(signal ? { signal } : {}),
+      },
+    ),
+
+  viewDocuments: (
+    field: KnowledgeViewField,
+    query: KnowledgeViewDocumentQuery,
+    signal?: AbortSignal,
+  ) =>
+    apiClient.request<KnowledgeViewPage>(
+      `/api/knowledge/views/${field}/documents`,
+      {
+        query: {
+          facetKey: query.facetKey,
+          unset: query.unset ? "true" : undefined,
+          activeOnly: field === "project" ? query.activeOnly : undefined,
+          pageSize: query.pageSize,
+          cursor: query.cursor,
+        },
+        ...(signal ? { signal } : {}),
+      },
+    ),
 };
