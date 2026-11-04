@@ -8,6 +8,7 @@ using CipherVault.Application.Graph;
 using CipherVault.Application.Import;
 using CipherVault.Application.Knowledge;
 using CipherVault.Application.RelatedKnowledge;
+using CipherVault.Application.Relations;
 using CipherVault.Application.Search;
 using CipherVault.Application.Semantic;
 using CipherVault.Core.Semantic;
@@ -77,6 +78,9 @@ public static class ServerWebApplication
         builder.Services.AddSingleton<IdempotencyService>();
         builder.Services.AddSingleton<McpWriteModeService>();
         builder.Services.AddSingleton<DocumentDraftService>();
+        builder.Services.AddSingleton<RelationSuggestionService>();
+        builder.Services.AddSingleton<RelationReviewService>();
+        builder.Services.AddSingleton<RelationMaintenanceService>();
         builder.Services.AddSingleton<DocumentService>();
         builder.Services.AddSingleton<DocumentAuthoringService>();
         builder.Services.AddSingleton<DocumentRevisionService>();
@@ -144,6 +148,7 @@ public static class ServerWebApplication
         app.MapVersionEndpoints();
         app.MapDocumentEndpoints();
         app.MapDraftEndpoints();
+        app.MapRelationSuggestionEndpoints();
         app.MapTrashEndpoints();
         app.MapRevisionEndpoints();
         app.MapKnowledgeEndpoints();

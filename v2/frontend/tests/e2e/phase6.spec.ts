@@ -1,5 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
+import { randomUUID } from "node:crypto";
 import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,6 +51,85 @@ const ensureUnlocked = async (page: Page): Promise<void> => {
   }
   await expect(page).toHaveURL(/\/documents$/);
   await page.waitForLoadState("networkidle");
+};
+
+const callMcpTool = async (
+  page: Page,
+  token: string,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<Record<string, unknown>> =>
+  page.evaluate(
+    async ({ token, name, args }) => {
+      const response = await fetch("/mcp", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1001,
+          method: "tools/call",
+          params: { name, arguments: args },
+        }),
+      });
+      const raw = await response.text();
+      if (!response.ok) {
+        throw new Error(`MCP ${name} failed: ${response.status} ${raw}`);
+      }
+      const jsonText = raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1);
+      const body = JSON.parse(jsonText) as {
+        result?: {
+          structuredContent?: Record<string, unknown>;
+          isError?: boolean;
+        };
+      };
+      if (body.result?.isError || !body.result?.structuredContent) {
+        throw new Error(`MCP ${name} returned an invalid result.`);
+      }
+      return body.result.structuredContent;
+    },
+    { token, name, args },
+  );
+
+const createRelationSuggestion = async (
+  page: Page,
+  token: string,
+  request: {
+    relationType: string;
+    sourceId: string;
+    targetId: string;
+    reason: string;
+    sourceRevision?: number;
+    targetRevision?: number;
+  },
+): Promise<{ suggestionId: string; suggestionRevision: number }> => {
+  const detail = await callMcpTool(page, token, "create_relation_suggestion", {
+    relationType: request.relationType,
+    sourceDocumentId: request.sourceId,
+    sourceDocumentRevision: request.sourceRevision ?? 1,
+    targetDocumentId: request.targetId,
+    targetDocumentRevision: request.targetRevision ?? 1,
+    reason: request.reason,
+    modelName: "e2e-model",
+    evidence: [],
+    idempotencyKey: randomUUID(),
+  });
+  const metadata = detail.metadata;
+  if (
+    !metadata ||
+    typeof metadata !== "object" ||
+    !("suggestionId" in metadata) ||
+    typeof metadata.suggestionId !== "string"
+  ) {
+    throw new Error("MCP create_relation_suggestion returned no suggestionId.");
+  }
+  return metadata as {
+    suggestionId: string;
+    suggestionRevision: number;
+  };
 };
 
 test("Phase 6 desktop flow, responsive layout and accessibility", async ({
@@ -353,6 +433,7 @@ test("Phase 6 desktop flow, responsive layout and accessibility", async ({
   await page.getByRole("button", { name: /生成 Token|轮换 Token/ }).click();
   await page.getByRole("button", { name: "确认" }).click();
   await expect(page.getByText("MCP Token 已轮换")).toBeVisible();
+  const mcpToken = await page.locator(".token-value input").inputValue();
   await expect(page.locator(".token-value input")).not.toHaveValue("");
   await page.getByRole("button", { name: "我已保存，关闭" }).click();
   await expect(page.getByText(/已配置 · Version/)).toBeVisible();
@@ -369,6 +450,205 @@ test("Phase 6 desktop flow, responsive layout and accessibility", async ({
   await expect(page.getByText("MCP 直接写入已开启。")).toBeVisible();
   await page.getByRole("button", { name: "草稿模式" }).click();
   await expect(page.getByText("MCP 已恢复草稿模式。")).toBeVisible();
+
+  const relationSuggestion = await createRelationSuggestion(page, mcpToken, {
+    relationType: "related",
+    sourceId: relatedDocuments.candidateId,
+    targetId: relatedDocuments.directId,
+    reason: "E2E confirmed relation.",
+  });
+  const staleSuggestion = await createRelationSuggestion(page, mcpToken, {
+    relationType: "depends_on",
+    sourceId: relatedDocuments.candidateId,
+    targetId: relatedDocuments.sourceId,
+    reason: "E2E stale relation.",
+  });
+  expect(relationSuggestion.suggestionId).toMatch(/^[0-9a-f-]+$/);
+  expect(staleSuggestion.suggestionId).toMatch(/^[0-9a-f-]+$/);
+
+  await page.evaluate(
+    async ({ documentId }) => {
+      const token = await fetch("/api/vault/antiforgery")
+        .then((response) => response.json())
+        .then((body: { token: string }) => body.token);
+      const response = await fetch(`/api/documents/${documentId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-TOKEN": token,
+          "If-Match": '"1"',
+        },
+        body: JSON.stringify({
+          title: "Related Source",
+          virtualPath: "related/source.md",
+          content:
+            "---\nproject: CipherVault\n---\n\n[[Related Direct]]\n\nUpdated for stale check.",
+          tags: [],
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(
+          `Stale relation source update failed: ${response.status}`,
+        );
+      }
+    },
+    { documentId: relatedDocuments.sourceId },
+  );
+  const rejectedSuggestion = await createRelationSuggestion(page, mcpToken, {
+    relationType: "implements",
+    sourceId: relatedDocuments.candidateId,
+    targetId: relatedDocuments.sourceId,
+    reason: "E2E rejected relation.",
+    targetRevision: 2,
+  });
+  expect(rejectedSuggestion.suggestionId).toMatch(/^[0-9a-f-]+$/);
+
+  await page.goto("/review");
+  await page.getByRole("button", { name: "关系建议" }).click();
+  const relationSuggestionButton = page
+    .locator(".suggestion-list")
+    .getByRole("button", { name: /相关 · Related Candidate/ });
+  await expect(relationSuggestionButton).toBeVisible();
+  await expect(relationSuggestionButton).toContainText("↔");
+  await relationSuggestionButton.click();
+  await expect(page.getByText("E2E confirmed relation.")).toBeVisible();
+  await expect(page.getByText("与 Related Direct 相互关联")).toBeVisible();
+  await expect(page.getByText("提交方提供，未经核实")).toBeVisible();
+  await assertNoSeriousAxeViolations(page, "relation review desktop");
+
+  const initialApplyResponsePromise = page.waitForResponse(
+    (response) =>
+      response
+        .url()
+        .endsWith(
+          `/api/relation-suggestions/${relationSuggestion.suggestionId}/apply`,
+        ) && response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "应用关系" }).click();
+  await page.getByRole("button", { name: "确认" }).click();
+  await expect(page.getByText("关系建议已应用。").last()).toBeVisible();
+  const initialApplyBody = (await (
+    await initialApplyResponsePromise
+  ).json()) as { applyResult: string; relationId: string };
+  expect(initialApplyBody.applyResult).toBe("inserted");
+
+  const graphAfterApply = (await page.evaluate(
+    async ({ documentId }) => {
+      const response = await fetch(
+        `/api/graph/local?centerDocumentId=${documentId}` +
+          "&depth=1&maxNodes=50&maxEdges=100",
+      );
+      if (!response.ok) {
+        throw new Error(`Typed relation graph failed: ${response.status}`);
+      }
+      return response.json();
+    },
+    { documentId: relatedDocuments.candidateId },
+  )) as {
+    edges: Array<{
+      edgeKind: string;
+      relationType: string;
+      relationId: string;
+      isDirected: boolean;
+    }>;
+  };
+  expect(graphAfterApply.edges).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        edgeKind: "typed_relation",
+        relationType: "related",
+        relationId: initialApplyBody.relationId,
+        isDirected: false,
+      }),
+    ]),
+  );
+
+  const duplicateSuggestion = await createRelationSuggestion(page, mcpToken, {
+    relationType: "related",
+    sourceId: relatedDocuments.candidateId,
+    targetId: relatedDocuments.directId,
+    reason: "E2E already exists relation.",
+  });
+  await page.getByRole("button", { name: "刷新关系建议" }).click();
+  const duplicateButton = page
+    .locator(".suggestion-list")
+    .getByRole("button", { name: /相关 · Related Candidate/ });
+  await expect(duplicateButton).toBeVisible();
+  await duplicateButton.click();
+  await expect(page.getByText("E2E already exists relation.")).toBeVisible();
+  const duplicateApplyResponsePromise = page.waitForResponse(
+    (response) =>
+      response
+        .url()
+        .endsWith(
+          `/api/relation-suggestions/${duplicateSuggestion.suggestionId}/apply`,
+        ) && response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "应用关系" }).click();
+  await page.getByRole("button", { name: "确认" }).click();
+  await expect(page.getByText("关系建议已应用。").last()).toBeVisible();
+  const duplicateApplyBody = (await (
+    await duplicateApplyResponsePromise
+  ).json()) as { applyResult: string; relationId: string };
+  expect(duplicateApplyBody.applyResult).toBe("already_exists");
+  expect(duplicateApplyBody.relationId).toBe(initialApplyBody.relationId);
+
+  const rejectedButton = page
+    .locator(".suggestion-list")
+    .getByRole("button", { name: /实现 · Related Candidate/ });
+  await expect(rejectedButton).toBeVisible();
+  await rejectedButton.click();
+  await expect(page.getByText("E2E rejected relation.")).toBeVisible();
+  await page.getByRole("button", { name: "拒绝", exact: true }).click();
+  await page.getByRole("button", { name: "确认" }).click();
+  await expect(page.getByText("关系建议已拒绝。")).toBeVisible();
+
+  await page.locator(".relation-filters .n-base-selection").first().click();
+  await page.getByText("需要更新", { exact: true }).last().click();
+  const staleButton = page
+    .locator(".suggestion-list")
+    .getByRole("button", { name: /依赖 · Related Candidate/ });
+  await expect(staleButton).toBeVisible();
+  await staleButton.click();
+  await expect(page.getByText("E2E stale relation.")).toBeVisible();
+  await expect(page.getByText(/目标文档版本已变化/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "应用关系" })).toHaveCount(0);
+
+  await page.goto(`/documents/${relatedDocuments.candidateId}`);
+  await page.getByText("相关", { exact: true }).click();
+  await expect(
+    page
+      .locator(".confirmed-relations")
+      .getByText("Related Direct", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "撤销正式关系" }).click();
+  await page.getByRole("button", { name: "确认" }).click();
+  await expect(page.getByText("已撤销正式关系。")).toBeVisible();
+  await expect(
+    page
+      .locator(".confirmed-relations")
+      .getByText("Related Direct", { exact: true }),
+  ).toHaveCount(0);
+  const graphAfterRetract = (await page.evaluate(
+    async ({ documentId }) => {
+      const response = await fetch(
+        `/api/graph/local?centerDocumentId=${documentId}` +
+          "&depth=1&maxNodes=50&maxEdges=100",
+      );
+      if (!response.ok) {
+        throw new Error(`Retracted relation graph failed: ${response.status}`);
+      }
+      return response.json();
+    },
+    { documentId: relatedDocuments.candidateId },
+  )) as {
+    edges: Array<{ edgeKind: string }>;
+  };
+  expect(
+    graphAfterRetract.edges.filter(
+      (edge) => edge.edgeKind === "typed_relation",
+    ),
+  ).toHaveLength(0);
 
   const draftSetup = await page.evaluate(async () => {
     const token = await fetch("/api/vault/antiforgery")
@@ -455,6 +735,13 @@ test("Phase 6 desktop flow, responsive layout and accessibility", async ({
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/review");
   await expect(page.getByRole("heading", { name: "AI 工作区" })).toBeVisible();
+  await page.getByRole("button", { name: "关系建议" }).click();
+  await expect(
+    page.getByRole("region", { name: "关系建议审核" }),
+  ).toBeVisible();
+  await assertNoHorizontalOverflow(page);
+  await assertNoSeriousAxeViolations(page, "relation review mobile");
+  await page.getByRole("button", { name: "文档草稿" }).click();
   await page.getByRole("button", { name: /历史/ }).click();
   await page.getByRole("button", { name: /Review Draft/ }).click();
   await expect(page.locator(".detail-heading")).toContainText("已提交");

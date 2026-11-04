@@ -61,6 +61,20 @@ public static class ApiErrorCodes
     public const string SemanticProfileMismatch = "semantic_profile_mismatch";
     public const string SemanticRemoteNotAllowed = "semantic_remote_not_allowed";
     public const string SemanticRebuildInProgress = "semantic_rebuild_in_progress";
+    public const string RelationSuggestionNotFound =
+        "relation_suggestion_not_found";
+    public const string RelationSuggestionRevisionConflict =
+        "relation_suggestion_revision_conflict";
+    public const string RelationSuggestionNotEditable =
+        "relation_suggestion_not_editable";
+    public const string RelationSuggestionExists =
+        "relation_suggestion_exists";
+    public const string RelationSuggestionLimitExceeded =
+        "relation_suggestion_limit_exceeded";
+    public const string RelationSuggestionStale =
+        "relation_suggestion_stale";
+    public const string DocumentRelationNotFound =
+        "document_relation_not_found";
     public const string InvalidIfMatch = "invalid_if_match";
     public const string UnsupportedMediaType = "unsupported_media_type";
     public const string InternalError = "internal_error";

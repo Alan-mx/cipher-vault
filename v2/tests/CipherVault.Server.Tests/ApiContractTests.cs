@@ -44,6 +44,34 @@ public sealed class ApiContractTests
         400,
         "unsupported_manifest_version")]
     [InlineData(VaultErrorCode.InvalidManifest, 400, "invalid_manifest")]
+    [InlineData(
+        VaultErrorCode.RelationSuggestionNotFound,
+        404,
+        "relation_suggestion_not_found")]
+    [InlineData(
+        VaultErrorCode.RelationSuggestionRevisionConflict,
+        409,
+        "relation_suggestion_revision_conflict")]
+    [InlineData(
+        VaultErrorCode.RelationSuggestionNotEditable,
+        409,
+        "relation_suggestion_not_editable")]
+    [InlineData(
+        VaultErrorCode.RelationSuggestionExists,
+        409,
+        "relation_suggestion_exists")]
+    [InlineData(
+        VaultErrorCode.RelationSuggestionLimitExceeded,
+        409,
+        "relation_suggestion_limit_exceeded")]
+    [InlineData(
+        VaultErrorCode.RelationSuggestionStale,
+        409,
+        "relation_suggestion_stale")]
+    [InlineData(
+        VaultErrorCode.DocumentRelationNotFound,
+        404,
+        "document_relation_not_found")]
     public void VaultErrorsMapToStableHttpStatuses(
         VaultErrorCode code,
         int expectedStatus,
@@ -75,6 +103,9 @@ public sealed class ApiContractTests
             new Dictionary<string, object?>
             {
                 ["currentRevision"] = 7,
+                ["currentSuggestionRevision"] = 3,
+                ["suggestionId"] = Guid.NewGuid().ToString("D"),
+                ["relationId"] = Guid.NewGuid().ToString("D"),
                 ["reasonCode"] = "provider_timeout",
                 ["content"] = "secret"
             });
@@ -83,6 +114,9 @@ public sealed class ApiContractTests
         Assert.Equal(
             "provider_timeout",
             error.Details["reasonCode"]);
+        Assert.Equal(3, error.Details["currentSuggestionRevision"]);
+        Assert.True(error.Details.ContainsKey("suggestionId"));
+        Assert.True(error.Details.ContainsKey("relationId"));
         Assert.False(error.Details.ContainsKey("content"));
     }
 

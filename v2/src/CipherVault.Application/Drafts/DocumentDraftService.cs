@@ -693,7 +693,7 @@ public sealed class DocumentDraftService
 
     public Task<DocumentDraftCleanupResult> CleanupAsync(
         CancellationToken cancellationToken = default) =>
-        sessionManager.ExecuteAsync(
+        sessionManager.ExecuteMaintenanceAsync(
             async (context, token) =>
             {
                 await context.BeginTransactionAsync(token);
@@ -728,6 +728,7 @@ public sealed class DocumentDraftService
                     drafts,
                     idempotencyRecords);
             },
+            TimeSpan.FromSeconds(30),
             cancellationToken).AsTask();
 
     private async Task<DocumentDraftMutationResult> TransitionAsync(

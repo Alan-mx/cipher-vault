@@ -1,4 +1,12 @@
+using CipherVault.Core.Relations;
+
 namespace CipherVault.Core.KnowledgeGraph;
+
+public enum GraphEdgeKind
+{
+    ExplicitLink,
+    TypedRelation
+}
 
 public sealed record LocalGraphQuery(
     Guid CenterDocumentId,
@@ -21,7 +29,11 @@ public sealed record GraphNode(
 public sealed record GraphEdge(
     Guid SourceDocumentId,
     Guid TargetDocumentId,
-    int LinkCount);
+    GraphEdgeKind EdgeKind,
+    int LinkCount,
+    Guid? RelationId,
+    RelationType? RelationType,
+    bool IsDirected);
 
 public sealed record LocalGraphResult(
     IReadOnlyList<GraphNode> Nodes,

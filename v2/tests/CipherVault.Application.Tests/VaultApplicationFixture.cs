@@ -4,6 +4,7 @@ using CipherVault.Application.Documents;
 using CipherVault.Application.Graph;
 using CipherVault.Application.Import;
 using CipherVault.Application.Search;
+using CipherVault.Application.Relations;
 using CipherVault.Application.Vault;
 
 namespace CipherVault.Application.Tests;
@@ -34,6 +35,18 @@ internal sealed class VaultApplicationFixture : IAsyncDisposable
             Idempotency,
             timeProvider);
         WriteMode = new McpWriteModeService(
+            manager,
+            Idempotency,
+            timeProvider);
+        RelationSuggestions = new RelationSuggestionService(
+            manager,
+            Idempotency,
+            timeProvider);
+        RelationReview = new RelationReviewService(
+            manager,
+            Idempotency,
+            timeProvider);
+        RelationMaintenance = new RelationMaintenanceService(
             manager,
             Idempotency,
             timeProvider);
@@ -68,6 +81,12 @@ internal sealed class VaultApplicationFixture : IAsyncDisposable
     internal DocumentDraftService Drafts { get; }
 
     internal McpWriteModeService WriteMode { get; }
+
+    internal RelationSuggestionService RelationSuggestions { get; }
+
+    internal RelationReviewService RelationReview { get; }
+
+    internal RelationMaintenanceService RelationMaintenance { get; }
 
     internal static async Task<VaultApplicationFixture> CreateAsync(
         TimeProvider? timeProvider = null)

@@ -17,6 +17,7 @@ import {
   useMessage,
 } from "naive-ui";
 import { Link2, RefreshCw, ShieldAlert, ShieldCheck } from "@lucide/vue";
+import RelationSuggestionPanel from "../components/review/RelationSuggestionPanel.vue";
 import { documentApi } from "../api/documents";
 import { registerSensitiveStore } from "../session/lifecycle";
 import { useDocumentDraftsStore } from "../stores/drafts";
@@ -45,6 +46,7 @@ const virtualPath = ref("");
 const format = ref<VaultFormat>("md");
 const content = ref("");
 const tags = ref("");
+const reviewSection = ref<"documents" | "relations">("documents");
 let unregisterDrafts: (() => void) | null = null;
 let unregisterWriteMode: (() => void) | null = null;
 
@@ -450,6 +452,7 @@ const openSource = async (documentId: string): Promise<void> => {
         <h1>AI 工作区</h1>
       </div>
       <NButton
+        v-if="reviewSection === 'documents'"
         secondary
         :loading="drafts.loading || drafts.summaryLoading"
         @click="refreshWorkspace"
@@ -461,462 +464,496 @@ const openSource = async (documentId: string): Promise<void> => {
       </NButton>
     </header>
 
-    <section class="summary-strip" aria-label="草稿队列统计">
-      <div>
-        <span>待审核</span>
-        <strong>{{ drafts.summary?.pendingReview ?? "-" }}</strong>
-      </div>
-      <div>
-        <span>整理中</span>
-        <strong>{{ drafts.summary?.working ?? "-" }}</strong>
-      </div>
-      <div>
-        <span>历史</span>
-        <strong>{{ drafts.summary?.history ?? "-" }}</strong>
-      </div>
-    </section>
-
-    <NAlert v-if="drafts.summaryError" type="error" :show-icon="false">
-      {{ drafts.summaryError.message }}
-      <NButton text type="primary" @click="drafts.loadSummary()">重试</NButton>
-    </NAlert>
-    <NAlert v-if="drafts.error" type="error" :show-icon="false">
-      {{ drafts.error.message }}
-    </NAlert>
-
-    <div class="queue-bar">
+    <div class="workspace-switch">
       <NButtonGroup>
         <NButton
-          v-for="option in queueOptions"
-          :key="option.key"
-          :type="drafts.queue === option.key ? 'primary' : 'default'"
-          @click="changeQueue(option.key)"
+          :type="reviewSection === 'documents' ? 'primary' : 'default'"
+          @click="reviewSection = 'documents'"
         >
-          {{ option.label }}
-          <span class="queue-count">{{ queueCount(option.key) }}</span>
+          文档草稿
+        </NButton>
+        <NButton
+          :type="reviewSection === 'relations' ? 'primary' : 'default'"
+          @click="reviewSection = 'relations'"
+        >
+          关系建议
         </NButton>
       </NButtonGroup>
-      <span class="selection-count">已选 {{ selectedCount }} / 50</span>
     </div>
 
-    <section v-if="drafts.queue !== 'pending_review'" class="filter-bar">
-      <NSelect
-        clearable
-        placeholder="状态"
-        :value="drafts.filters.status"
-        :options="currentStatusOptions"
-        @update:value="changeStatusFilter"
-      />
-      <NSelect
-        clearable
-        placeholder="类型"
-        :value="drafts.filters.type"
-        :options="[...typeOptions]"
-        @update:value="changeTypeFilter"
-      />
-      <NSelect
-        clearable
-        placeholder="来源"
-        :value="drafts.filters.sourceActor"
-        :options="[...actorOptions]"
-        @update:value="changeActorFilter"
-      />
-      <NDatePicker
-        clearable
-        type="datetime"
-        placeholder="更新起"
-        :value="dateValue(drafts.filters.updatedAfter)"
-        @update:value="changeAfterFilter"
-      />
-      <NDatePicker
-        clearable
-        type="datetime"
-        placeholder="更新止"
-        :value="dateValue(drafts.filters.updatedBefore)"
-        @update:value="changeBeforeFilter"
-      />
-    </section>
+    <RelationSuggestionPanel v-if="reviewSection === 'relations'" />
 
-    <section v-if="selectedCount > 0" class="batch-bar">
-      <NCheckbox
-        :checked="allVisibleSelected"
-        @update:checked="toggleAllVisible"
-      >
-        全选当前页
-      </NCheckbox>
-      <div class="batch-actions">
-        <NButton
-          size="small"
-          :disabled="!canBatchSubmit"
-          :loading="drafts.batchRunning"
-          @click="runBatch('submit_review')"
-        >
-          批量送审
-        </NButton>
-        <NPopconfirm @positive-click="runBatch('reject')">
-          <template #trigger>
-            <NButton
-              size="small"
-              type="error"
-              secondary
-              :disabled="!canBatchReject"
-              :loading="drafts.batchRunning"
-            >
-              批量拒绝
-            </NButton>
-          </template>
-          将拒绝选中的待审核草稿，确定继续吗？
-        </NPopconfirm>
-        <NPopconfirm @positive-click="runBatch('discard')">
-          <template #trigger>
-            <NButton
-              size="small"
-              secondary
-              :disabled="!canBatchDiscard"
-              :loading="drafts.batchRunning"
-            >
-              批量放弃
-            </NButton>
-          </template>
-          将放弃选中的未终态草稿，确定继续吗？
-        </NPopconfirm>
-      </div>
-    </section>
-
-    <section
-      v-if="batchResultList.length"
-      class="batch-results"
-      aria-live="polite"
-    >
-      <span
-        v-for="result in batchResultList"
-        :key="`${result.action}:${result.draftId}`"
-        class="batch-result"
-        :class="`batch-result--${result.kind}`"
-      >
-        {{ result.draftId.slice(0, 8) }} · {{ batchResultLabel(result) }}
-      </span>
-    </section>
-
-    <div class="review-grid">
-      <section class="draft-list" aria-label="草稿列表">
-        <div v-if="drafts.loading && !drafts.items.length" class="loading">
-          <NSpin size="small" />
-          <span>正在读取草稿...</span>
+    <template v-else>
+      <section class="summary-strip" aria-label="草稿队列统计">
+        <div>
+          <span>待审核</span>
+          <strong>{{ drafts.summary?.pendingReview ?? "-" }}</strong>
         </div>
-        <NEmpty v-else-if="!drafts.items.length" description="暂无草稿" />
-        <template v-else>
-          <div
-            v-for="item in drafts.items"
-            :key="item.draftId"
-            class="draft-row"
-            :class="{
-              'draft-row--active': selected?.metadata.draftId === item.draftId,
-            }"
-          >
-            <NCheckbox
-              :checked="drafts.selectedDraftIds.includes(item.draftId)"
-              :aria-label="`选择 ${item.title || '未命名草稿'}`"
-              @update:checked="toggleDraft(item.draftId)"
-            />
-            <button
-              type="button"
-              class="draft-row__main"
-              @click="selectDraft(item)"
-            >
-              <span class="draft-row__title">
-                {{ item.title || "未命名草稿" }}
-              </span>
-              <span>{{ item.virtualPath || "新文档" }}</span>
-              <span class="draft-row__meta">
-                {{ statusLabel(item.status) }} · R{{ item.draftRevision }} ·
-                {{ item.sourceActor }}
-              </span>
-              <span>
-                {{ item.draftType }} ·
-                {{ new Date(item.updatedAt).toLocaleString() }}
-              </span>
-            </button>
-          </div>
-        </template>
-        <NButton
-          v-if="drafts.nextCursor"
-          secondary
-          size="small"
-          :loading="drafts.loading"
-          @click="drafts.load(true)"
-        >
-          加载更多
-        </NButton>
+        <div>
+          <span>整理中</span>
+          <strong>{{ drafts.summary?.working ?? "-" }}</strong>
+        </div>
+        <div>
+          <span>历史</span>
+          <strong>{{ drafts.summary?.history ?? "-" }}</strong>
+        </div>
       </section>
 
-      <section class="draft-detail">
-        <div v-if="drafts.detailLoading" class="loading">
-          <NSpin size="small" />
-          <span>正在读取详情...</span>
-        </div>
-        <NEmpty v-else-if="!selected" description="选择一份草稿查看预览" />
-        <template v-else>
-          <header class="detail-heading">
-            <div>
-              <h2>{{ selected.metadata.title || "未命名草稿" }}</h2>
-              <p>
-                {{ statusLabel(selected.metadata.status) }} ·
-                {{ selected.metadata.sourceActor }} · R{{
-                  selected.metadata.draftRevision
-                }}
-              </p>
-              <p v-if="selected.metadata.futureDocumentId">
-                正式 ID：{{ selected.metadata.futureDocumentId }}
-              </p>
-            </div>
-            <NTag size="small" :bordered="false">
-              {{ selected.metadata.draftType }}
-            </NTag>
-          </header>
+      <NAlert v-if="drafts.summaryError" type="error" :show-icon="false">
+        {{ drafts.summaryError.message }}
+        <NButton text type="primary" @click="drafts.loadSummary()"
+          >重试</NButton
+        >
+      </NAlert>
+      <NAlert v-if="drafts.error" type="error" :show-icon="false">
+        {{ drafts.error.message }}
+      </NAlert>
 
-          <NAlert
-            v-if="writeModeState === 'direct'"
-            type="warning"
-            :show-icon="false"
+      <div class="queue-bar">
+        <NButtonGroup>
+          <NButton
+            v-for="option in queueOptions"
+            :key="option.key"
+            :type="drafts.queue === option.key ? 'primary' : 'default'"
+            @click="changeQueue(option.key)"
           >
-            <template #icon>
-              <NIcon :component="ShieldAlert" aria-hidden="true" />
-            </template>
-            MCP 可能直接修改正式知识，相关变更不一定经过审核队列。
-          </NAlert>
-          <div v-else class="write-mode-line">
-            <NIcon
-              :component="
-                writeModeState === 'draft' ? ShieldCheck : ShieldAlert
-              "
-              aria-hidden="true"
-            />
-            <span v-if="writeModeState === 'loading'">写入模式状态读取中</span>
-            <span v-else-if="writeModeState === 'draft'">当前为草稿模式</span>
-            <span v-else>写入模式未知</span>
-          </div>
+            {{ option.label }}
+            <span class="queue-count">{{ queueCount(option.key) }}</span>
+          </NButton>
+        </NButtonGroup>
+        <span class="selection-count">已选 {{ selectedCount }} / 50</span>
+      </div>
 
-          <section v-if="selected.reviewContext" class="context-section">
-            <header>
-              <h3>来源信息 · 提交方提供，未经核实</h3>
-            </header>
-            <p v-if="selected.reviewContext.summary" class="context-summary">
-              {{ selected.reviewContext.summary }}
-            </p>
-            <ul
-              v-if="selected.reviewContext.sources.length"
-              class="source-list"
-            >
-              <li
-                v-for="(source, index) in selected.reviewContext.sources"
-                :key="`${source.documentId ?? 'source'}:${index}`"
-              >
-                <div class="source-heading">
-                  <strong>{{ source.title || "未命名来源" }}</strong>
-                  <NButton
-                    v-if="source.documentId"
-                    text
-                    type="primary"
-                    size="tiny"
-                    @click="openSource(source.documentId)"
-                  >
-                    <template #icon>
-                      <NIcon :component="Link2" aria-hidden="true" />
-                    </template>
-                    打开
-                  </NButton>
-                </div>
-                <span v-if="source.virtualPath">{{ source.virtualPath }}</span>
-                <blockquote>{{ source.excerpt }}</blockquote>
-                <small v-if="source.reference">{{ source.reference }}</small>
-              </li>
-            </ul>
-          </section>
+      <section v-if="drafts.queue !== 'pending_review'" class="filter-bar">
+        <NSelect
+          clearable
+          placeholder="状态"
+          :value="drafts.filters.status"
+          :options="currentStatusOptions"
+          @update:value="changeStatusFilter"
+        />
+        <NSelect
+          clearable
+          placeholder="类型"
+          :value="drafts.filters.type"
+          :options="[...typeOptions]"
+          @update:value="changeTypeFilter"
+        />
+        <NSelect
+          clearable
+          placeholder="来源"
+          :value="drafts.filters.sourceActor"
+          :options="[...actorOptions]"
+          @update:value="changeActorFilter"
+        />
+        <NDatePicker
+          clearable
+          type="datetime"
+          placeholder="更新起"
+          :value="dateValue(drafts.filters.updatedAfter)"
+          @update:value="changeAfterFilter"
+        />
+        <NDatePicker
+          clearable
+          type="datetime"
+          placeholder="更新止"
+          :value="dateValue(drafts.filters.updatedBefore)"
+          @update:value="changeBeforeFilter"
+        />
+      </section>
 
-          <section class="changes-section">
-            <header>
-              <h3>字段变化</h3>
-              <span>
-                {{ selected.preview.structuredChanges.totalChangeCount }} 项
-              </span>
-            </header>
-            <p
-              v-if="selected.preview.structuredChanges.truncated"
-              class="truncated-note"
-            >
-              仅显示前 100 项变化。
-            </p>
-            <ul
-              v-if="selected.preview.structuredChanges.changes.length"
-              class="change-list"
-            >
-              <li
-                v-for="(change, index) in selected.preview.structuredChanges
-                  .changes"
-                :key="`${change.fieldKind}:${change.key}:${index}`"
-              >
-                <div class="change-name">
-                  <strong>{{ changeLabel(change) }}</strong>
-                  <small v-if="change.beforeValueType || change.afterValueType">
-                    {{ change.beforeValueType || "不存在" }} ->
-                    {{ change.afterValueType || "不存在" }}
-                  </small>
-                </div>
-                <div class="change-values">
-                  <span
-                    :class="{ 'change-value--missing': !change.beforeExists }"
-                  >
-                    {{ changeValue(change, "before") }}
-                  </span>
-                  <span aria-hidden="true">-></span>
-                  <span
-                    :class="{ 'change-value--missing': !change.afterExists }"
-                  >
-                    {{ changeValue(change, "after") }}
-                  </span>
-                </div>
-              </li>
-            </ul>
-            <NEmpty v-else description="没有字段变化" size="small" />
-          </section>
-
-          <section class="operation-section">
-            <h3>操作摘要</h3>
-            <div class="operation-tags">
-              <NTag
-                v-for="item in selected.preview.operationSummary.items"
-                :key="item.type"
+      <section v-if="selectedCount > 0" class="batch-bar">
+        <NCheckbox
+          :checked="allVisibleSelected"
+          @update:checked="toggleAllVisible"
+        >
+          全选当前页
+        </NCheckbox>
+        <div class="batch-actions">
+          <NButton
+            size="small"
+            :disabled="!canBatchSubmit"
+            :loading="drafts.batchRunning"
+            @click="runBatch('submit_review')"
+          >
+            批量送审
+          </NButton>
+          <NPopconfirm @positive-click="runBatch('reject')">
+            <template #trigger>
+              <NButton
                 size="small"
-                :bordered="false"
+                type="error"
+                secondary
+                :disabled="!canBatchReject"
+                :loading="drafts.batchRunning"
               >
-                {{ item.type }} x {{ item.count }}
-              </NTag>
-              <span v-if="!selected.preview.operationSummary.items.length">
-                无类型化操作
-              </span>
-            </div>
-          </section>
+                批量拒绝
+              </NButton>
+            </template>
+            将拒绝选中的待审核草稿，确定继续吗？
+          </NPopconfirm>
+          <NPopconfirm @positive-click="runBatch('discard')">
+            <template #trigger>
+              <NButton
+                size="small"
+                secondary
+                :disabled="!canBatchDiscard"
+                :loading="drafts.batchRunning"
+              >
+                批量放弃
+              </NButton>
+            </template>
+            将放弃选中的未终态草稿，确定继续吗？
+          </NPopconfirm>
+        </div>
+      </section>
 
-          <template v-if="selected.metadata.draftType === 'create'">
-            <label>
-              标题
-              <NInput v-model:value="title" :disabled="!editable" />
-            </label>
-            <label>
-              路径
-              <NInput v-model:value="virtualPath" :disabled="!editable" />
-            </label>
-            <label>
-              格式
-              <NSelect
-                v-model:value="format"
-                :disabled="!editable"
-                :options="[
-                  { label: 'Markdown', value: 'md' },
-                  { label: 'Text', value: 'txt' },
-                ]"
+      <section
+        v-if="batchResultList.length"
+        class="batch-results"
+        aria-live="polite"
+      >
+        <span
+          v-for="result in batchResultList"
+          :key="`${result.action}:${result.draftId}`"
+          class="batch-result"
+          :class="`batch-result--${result.kind}`"
+        >
+          {{ result.draftId.slice(0, 8) }} · {{ batchResultLabel(result) }}
+        </span>
+      </section>
+
+      <div class="review-grid">
+        <section class="draft-list" aria-label="草稿列表">
+          <div v-if="drafts.loading && !drafts.items.length" class="loading">
+            <NSpin size="small" />
+            <span>正在读取草稿...</span>
+          </div>
+          <NEmpty v-else-if="!drafts.items.length" description="暂无草稿" />
+          <template v-else>
+            <div
+              v-for="item in drafts.items"
+              :key="item.draftId"
+              class="draft-row"
+              :class="{
+                'draft-row--active':
+                  selected?.metadata.draftId === item.draftId,
+              }"
+            >
+              <NCheckbox
+                :checked="drafts.selectedDraftIds.includes(item.draftId)"
+                :aria-label="`选择 ${item.title || '未命名草稿'}`"
+                @update:checked="toggleDraft(item.draftId)"
+              />
+              <button
+                type="button"
+                class="draft-row__main"
+                @click="selectDraft(item)"
+              >
+                <span class="draft-row__title">
+                  {{ item.title || "未命名草稿" }}
+                </span>
+                <span>{{ item.virtualPath || "新文档" }}</span>
+                <span class="draft-row__meta">
+                  {{ statusLabel(item.status) }} · R{{ item.draftRevision }} ·
+                  {{ item.sourceActor }}
+                </span>
+                <span>
+                  {{ item.draftType }} ·
+                  {{ new Date(item.updatedAt).toLocaleString() }}
+                </span>
+              </button>
+            </div>
+          </template>
+          <NButton
+            v-if="drafts.nextCursor"
+            secondary
+            size="small"
+            :loading="drafts.loading"
+            @click="drafts.load(true)"
+          >
+            加载更多
+          </NButton>
+        </section>
+
+        <section class="draft-detail">
+          <div v-if="drafts.detailLoading" class="loading">
+            <NSpin size="small" />
+            <span>正在读取详情...</span>
+          </div>
+          <NEmpty v-else-if="!selected" description="选择一份草稿查看预览" />
+          <template v-else>
+            <header class="detail-heading">
+              <div>
+                <h2>{{ selected.metadata.title || "未命名草稿" }}</h2>
+                <p>
+                  {{ statusLabel(selected.metadata.status) }} ·
+                  {{ selected.metadata.sourceActor }} · R{{
+                    selected.metadata.draftRevision
+                  }}
+                </p>
+                <p v-if="selected.metadata.futureDocumentId">
+                  正式 ID：{{ selected.metadata.futureDocumentId }}
+                </p>
+              </div>
+              <NTag size="small" :bordered="false">
+                {{ selected.metadata.draftType }}
+              </NTag>
+            </header>
+
+            <NAlert
+              v-if="writeModeState === 'direct'"
+              type="warning"
+              :show-icon="false"
+            >
+              <template #icon>
+                <NIcon :component="ShieldAlert" aria-hidden="true" />
+              </template>
+              MCP 可能直接修改正式知识，相关变更不一定经过审核队列。
+            </NAlert>
+            <div v-else class="write-mode-line">
+              <NIcon
+                :component="
+                  writeModeState === 'draft' ? ShieldCheck : ShieldAlert
+                "
+                aria-hidden="true"
+              />
+              <span v-if="writeModeState === 'loading'"
+                >写入模式状态读取中</span
+              >
+              <span v-else-if="writeModeState === 'draft'">当前为草稿模式</span>
+              <span v-else>写入模式未知</span>
+            </div>
+
+            <section v-if="selected.reviewContext" class="context-section">
+              <header>
+                <h3>来源信息 · 提交方提供，未经核实</h3>
+              </header>
+              <p v-if="selected.reviewContext.summary" class="context-summary">
+                {{ selected.reviewContext.summary }}
+              </p>
+              <ul
+                v-if="selected.reviewContext.sources.length"
+                class="source-list"
+              >
+                <li
+                  v-for="(source, index) in selected.reviewContext.sources"
+                  :key="`${source.documentId ?? 'source'}:${index}`"
+                >
+                  <div class="source-heading">
+                    <strong>{{ source.title || "未命名来源" }}</strong>
+                    <NButton
+                      v-if="source.documentId"
+                      text
+                      type="primary"
+                      size="tiny"
+                      @click="openSource(source.documentId)"
+                    >
+                      <template #icon>
+                        <NIcon :component="Link2" aria-hidden="true" />
+                      </template>
+                      打开
+                    </NButton>
+                  </div>
+                  <span v-if="source.virtualPath">{{
+                    source.virtualPath
+                  }}</span>
+                  <blockquote>{{ source.excerpt }}</blockquote>
+                  <small v-if="source.reference">{{ source.reference }}</small>
+                </li>
+              </ul>
+            </section>
+
+            <section class="changes-section">
+              <header>
+                <h3>字段变化</h3>
+                <span>
+                  {{ selected.preview.structuredChanges.totalChangeCount }} 项
+                </span>
+              </header>
+              <p
+                v-if="selected.preview.structuredChanges.truncated"
+                class="truncated-note"
+              >
+                仅显示前 100 项变化。
+              </p>
+              <ul
+                v-if="selected.preview.structuredChanges.changes.length"
+                class="change-list"
+              >
+                <li
+                  v-for="(change, index) in selected.preview.structuredChanges
+                    .changes"
+                  :key="`${change.fieldKind}:${change.key}:${index}`"
+                >
+                  <div class="change-name">
+                    <strong>{{ changeLabel(change) }}</strong>
+                    <small
+                      v-if="change.beforeValueType || change.afterValueType"
+                    >
+                      {{ change.beforeValueType || "不存在" }} ->
+                      {{ change.afterValueType || "不存在" }}
+                    </small>
+                  </div>
+                  <div class="change-values">
+                    <span
+                      :class="{ 'change-value--missing': !change.beforeExists }"
+                    >
+                      {{ changeValue(change, "before") }}
+                    </span>
+                    <span aria-hidden="true">-></span>
+                    <span
+                      :class="{ 'change-value--missing': !change.afterExists }"
+                    >
+                      {{ changeValue(change, "after") }}
+                    </span>
+                  </div>
+                </li>
+              </ul>
+              <NEmpty v-else description="没有字段变化" size="small" />
+            </section>
+
+            <section class="operation-section">
+              <h3>操作摘要</h3>
+              <div class="operation-tags">
+                <NTag
+                  v-for="item in selected.preview.operationSummary.items"
+                  :key="item.type"
+                  size="small"
+                  :bordered="false"
+                >
+                  {{ item.type }} x {{ item.count }}
+                </NTag>
+                <span v-if="!selected.preview.operationSummary.items.length">
+                  无类型化操作
+                </span>
+              </div>
+            </section>
+
+            <template v-if="selected.metadata.draftType === 'create'">
+              <label>
+                标题
+                <NInput v-model:value="title" :disabled="!editable" />
+              </label>
+              <label>
+                路径
+                <NInput v-model:value="virtualPath" :disabled="!editable" />
+              </label>
+              <label>
+                格式
+                <NSelect
+                  v-model:value="format"
+                  :disabled="!editable"
+                  :options="[
+                    { label: 'Markdown', value: 'md' },
+                    { label: 'Text', value: 'txt' },
+                  ]"
+                />
+              </label>
+              <label>
+                标签
+                <NInput v-model:value="tags" :disabled="!editable" />
+              </label>
+            </template>
+
+            <label
+              v-if="selected.metadata.draftType !== 'trash'"
+              class="content-field"
+            >
+              正文
+              <NInput
+                v-model:value="content"
+                type="textarea"
+                :autosize="{ minRows: 14, maxRows: 28 }"
+                :disabled="!contentEditable"
               />
             </label>
-            <label>
-              标签
-              <NInput v-model:value="tags" :disabled="!editable" />
-            </label>
-          </template>
-
-          <label
-            v-if="selected.metadata.draftType !== 'trash'"
-            class="content-field"
-          >
-            正文
-            <NInput
-              v-model:value="content"
-              type="textarea"
-              :autosize="{ minRows: 14, maxRows: 28 }"
-              :disabled="!contentEditable"
-            />
-          </label>
-          <p
-            v-if="
-              editable &&
-              selected.metadata.draftType === 'update' &&
-              !selected.preview.bodyEdit.canSave
-            "
-            class="edit-warning"
-          >
-            {{ bodyEditReason(selected.preview.bodyEdit.reason) }}
-          </p>
-          <p
-            v-else-if="editable && selected.metadata.draftType === 'update'"
-            class="edit-note"
-          >
-            保存编辑会归一化正文操作，但保留其他类型的变更。
-          </p>
-
-          <details v-if="selected.preview.unifiedDiff" class="diff-section">
-            <summary>查看完整 Diff</summary>
-            <pre>{{ selected.preview.unifiedDiff }}</pre>
-            <p v-if="selected.preview.diffTruncated">Diff 已截断。</p>
-          </details>
-
-          <footer v-if="!isTerminal" class="detail-actions">
-            <NButton
-              v-if="editable"
-              :disabled="
-                !contentEditable && selected.metadata.draftType !== 'create'
+            <p
+              v-if="
+                editable &&
+                selected.metadata.draftType === 'update' &&
+                !selected.preview.bodyEdit.canSave
               "
-              :loading="drafts.actionLoading"
-              @click="save"
+              class="edit-warning"
             >
-              保存编辑
-            </NButton>
-            <NButton
-              v-if="selected.metadata.status === 'draft'"
-              type="primary"
-              :loading="drafts.actionLoading"
-              @click="submitReview"
+              {{ bodyEditReason(selected.preview.bodyEdit.reason) }}
+            </p>
+            <p
+              v-else-if="editable && selected.metadata.draftType === 'update'"
+              class="edit-note"
             >
-              送审
-            </NButton>
-            <NButton
-              v-if="canRebase"
-              type="warning"
-              :loading="drafts.actionLoading"
-              @click="rebase"
-            >
-              基于最新版本重建
-            </NButton>
-            <NPopconfirm
-              v-if="selected.metadata.status === 'pending_review'"
-              @positive-click="reject"
-            >
-              <template #trigger>
-                <NButton type="error" secondary :loading="drafts.actionLoading">
-                  拒绝
-                </NButton>
-              </template>
-              拒绝后该草稿进入终态，确定继续吗？
-            </NPopconfirm>
-            <NPopconfirm v-if="canDiscard" @positive-click="discard">
-              <template #trigger>
-                <NButton secondary :loading="drafts.actionLoading">
-                  放弃
-                </NButton>
-              </template>
-              放弃后该草稿进入终态，确定继续吗？
-            </NPopconfirm>
-            <NPopconfirm v-if="canApply" @positive-click="apply">
-              <template #trigger>
-                <NButton type="primary" :loading="drafts.actionLoading">
-                  提交正式文档
-                </NButton>
-              </template>
-              提交后会生成正式修订和审计记录，确定继续吗？
-            </NPopconfirm>
-          </footer>
-        </template>
-      </section>
-    </div>
+              保存编辑会归一化正文操作，但保留其他类型的变更。
+            </p>
+
+            <details v-if="selected.preview.unifiedDiff" class="diff-section">
+              <summary>查看完整 Diff</summary>
+              <pre>{{ selected.preview.unifiedDiff }}</pre>
+              <p v-if="selected.preview.diffTruncated">Diff 已截断。</p>
+            </details>
+
+            <footer v-if="!isTerminal" class="detail-actions">
+              <NButton
+                v-if="editable"
+                :disabled="
+                  !contentEditable && selected.metadata.draftType !== 'create'
+                "
+                :loading="drafts.actionLoading"
+                @click="save"
+              >
+                保存编辑
+              </NButton>
+              <NButton
+                v-if="selected.metadata.status === 'draft'"
+                type="primary"
+                :loading="drafts.actionLoading"
+                @click="submitReview"
+              >
+                送审
+              </NButton>
+              <NButton
+                v-if="canRebase"
+                type="warning"
+                :loading="drafts.actionLoading"
+                @click="rebase"
+              >
+                基于最新版本重建
+              </NButton>
+              <NPopconfirm
+                v-if="selected.metadata.status === 'pending_review'"
+                @positive-click="reject"
+              >
+                <template #trigger>
+                  <NButton
+                    type="error"
+                    secondary
+                    :loading="drafts.actionLoading"
+                  >
+                    拒绝
+                  </NButton>
+                </template>
+                拒绝后该草稿进入终态，确定继续吗？
+              </NPopconfirm>
+              <NPopconfirm v-if="canDiscard" @positive-click="discard">
+                <template #trigger>
+                  <NButton secondary :loading="drafts.actionLoading">
+                    放弃
+                  </NButton>
+                </template>
+                放弃后该草稿进入终态，确定继续吗？
+              </NPopconfirm>
+              <NPopconfirm v-if="canApply" @positive-click="apply">
+                <template #trigger>
+                  <NButton type="primary" :loading="drafts.actionLoading">
+                    提交正式文档
+                  </NButton>
+                </template>
+                提交后会生成正式修订和审计记录，确定继续吗？
+              </NPopconfirm>
+            </footer>
+          </template>
+        </section>
+      </div>
+    </template>
   </section>
 </template>
 
@@ -938,6 +975,10 @@ const openSource = async (documentId: string): Promise<void> => {
   margin: 0 0 5px;
   color: var(--cv-muted);
   font-size: 12px;
+}
+
+.workspace-switch {
+  margin-bottom: 18px;
 }
 
 .page-heading h1 {

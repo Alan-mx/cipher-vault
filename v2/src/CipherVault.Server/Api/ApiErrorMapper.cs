@@ -10,9 +10,14 @@ public static class ApiErrorMapper
     [
         "currentRevision",
         "currentDraftRevision",
+        "currentSuggestionRevision",
+        "currentSourceRevision",
+        "currentTargetRevision",
         "candidateHeadingPaths",
         "documentId",
         "draftId",
+        "suggestionId",
+        "relationId",
         "revisionId",
         "errorCode",
         "importItemIndex",
@@ -151,6 +156,34 @@ public static class ApiErrorMapper
                 StatusCodes.Status409Conflict,
                 ApiErrorCodes.SemanticRebuildInProgress,
                 "Semantic index rebuild is already in progress."),
+            VaultErrorCode.RelationSuggestionNotFound => Failure(
+                StatusCodes.Status404NotFound,
+                ApiErrorCodes.RelationSuggestionNotFound,
+                "Relation suggestion was not found."),
+            VaultErrorCode.RelationSuggestionRevisionConflict => Failure(
+                StatusCodes.Status409Conflict,
+                ApiErrorCodes.RelationSuggestionRevisionConflict,
+                "Relation suggestion revision changed."),
+            VaultErrorCode.RelationSuggestionNotEditable => Failure(
+                StatusCodes.Status409Conflict,
+                ApiErrorCodes.RelationSuggestionNotEditable,
+                "Relation suggestion status does not allow this operation."),
+            VaultErrorCode.RelationSuggestionExists => Failure(
+                StatusCodes.Status409Conflict,
+                ApiErrorCodes.RelationSuggestionExists,
+                "A pending relation suggestion already exists."),
+            VaultErrorCode.RelationSuggestionLimitExceeded => Failure(
+                StatusCodes.Status409Conflict,
+                ApiErrorCodes.RelationSuggestionLimitExceeded,
+                "The active relation suggestion limit was reached."),
+            VaultErrorCode.RelationSuggestionStale => Failure(
+                StatusCodes.Status409Conflict,
+                ApiErrorCodes.RelationSuggestionStale,
+                "Relation suggestion source or target changed."),
+            VaultErrorCode.DocumentRelationNotFound => Failure(
+                StatusCodes.Status404NotFound,
+                ApiErrorCodes.DocumentRelationNotFound,
+                "Active document relation was not found."),
             VaultErrorCode.DraftRevisionConflict => Failure(
                 StatusCodes.Status409Conflict,
                 ApiErrorCodes.DraftRevisionConflict,

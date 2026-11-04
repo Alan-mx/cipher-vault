@@ -170,7 +170,10 @@ public sealed class McpEndpointAuthenticationTests
             "find_unlinked_mentions", "get_local_graph", "create_note",
             "append_note", "update_note", "patch_note", "delete_note",
             "list_drafts", "read_draft", "create_draft", "update_draft",
-            "rebase_draft", "submit_draft_for_review", "discard_draft"
+            "rebase_draft", "submit_draft_for_review", "discard_draft",
+            "create_relation_suggestion", "list_relation_suggestions",
+            "read_relation_suggestion", "update_relation_suggestion",
+            "discard_relation_suggestion"
         };
         Assert.All(
             expected,

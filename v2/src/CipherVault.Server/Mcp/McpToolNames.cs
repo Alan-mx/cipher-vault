@@ -24,4 +24,14 @@ public static class McpToolNames
     public const string RebaseDraft = "rebase_draft";
     public const string SubmitDraftForReview = "submit_draft_for_review";
     public const string DiscardDraft = "discard_draft";
+    public const string CreateRelationSuggestion =
+        "create_relation_suggestion";
+    public const string ListRelationSuggestions =
+        "list_relation_suggestions";
+    public const string ReadRelationSuggestion =
+        "read_relation_suggestion";
+    public const string UpdateRelationSuggestion =
+        "update_relation_suggestion";
+    public const string DiscardRelationSuggestion =
+        "discard_relation_suggestion";
 }

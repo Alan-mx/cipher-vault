@@ -99,7 +99,7 @@ public sealed class BackupCompatibilityFixtureTests
             Assert.NotNull(restoreResult);
             Assert.Equal(5, restoreResult.SchemaVersion);
             Assert.Equal(5, restoreResult.SourceSchemaVersion);
-            Assert.Equal(8, restoreResult.CurrentSchemaVersion);
+            Assert.Equal(9, restoreResult.CurrentSchemaVersion);
             Assert.True(restoreResult.SchemaMigrationPending);
             Assert.Equal(
                 BackupMigrationTriggers.FirstUnlock,
@@ -167,7 +167,9 @@ public sealed class BackupCompatibilityFixtureTests
                                  'semantic_profiles',
                                  'semantic_remote_consents',
                                  'semantic_index_jobs',
-                                 'semantic_chunks'
+                                 'semantic_chunks',
+                                 'document_relation_suggestions',
+                                 'document_relations'
                              ));
                         """;
                     await using var reader =
@@ -175,7 +177,7 @@ public sealed class BackupCompatibilityFixtureTests
                     Assert.True(await reader.ReadAsync(token));
                     return (reader.GetString(0), reader.GetInt32(1));
                 });
-            Assert.Equal(("8", 6), upgradedSchema);
+            Assert.Equal(("9", 8), upgradedSchema);
             Assert.Equal(
                 fixtureHashBefore,
                 await HashFileAsync(BackupCompatibilityFixture.PackagePath));
@@ -225,7 +227,7 @@ public sealed class BackupCompatibilityFixtureTests
                 DatabaseMigrationCatalog.Load(),
                 CancellationToken.None);
 
-            Assert.Equal(8, upgraded.SchemaVersion);
+            Assert.Equal(9, upgraded.SchemaVersion);
             using var command = session.Connection.CreateCommand();
             command.CommandText =
                 "SELECT count(*) FROM documents WHERE path = 'fixtures/compatibility-fixture.md';";

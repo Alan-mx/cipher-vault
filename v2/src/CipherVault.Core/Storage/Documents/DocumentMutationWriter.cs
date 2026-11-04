@@ -2,7 +2,9 @@ using CipherVault.Core.Audit;
 using CipherVault.Core.Database;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
+using CipherVault.Core.Relations;
 using CipherVault.Core.Storage.Semantic;
+using CipherVault.Core.Storage.Relations;
 using Microsoft.Data.Sqlite;
 using System.Globalization;
 using System.Text;
@@ -565,6 +567,13 @@ public static class DocumentMutationWriter
                 parsed.Content,
                 now,
                 cancellationToken);
+            await MarkRelationSuggestionsStaleAsync(
+                context,
+                documentId,
+                newRevision,
+                trashed: false,
+                now,
+                cancellationToken);
             var auditEventId = await AuditStore.AppendAsync(
                 context,
                 actor,
@@ -702,6 +711,13 @@ public static class DocumentMutationWriter
             context,
             documentId,
             newRevision,
+            now,
+            cancellationToken);
+        await MarkRelationSuggestionsStaleAsync(
+            context,
+            documentId,
+            newRevision,
+            trashed: true,
             now,
             cancellationToken);
         return new TrashDeleteResult(
@@ -1158,6 +1174,47 @@ public static class DocumentMutationWriter
             {
                 ["currentRevision"] = currentRevision
             });
+
+    private static async Task MarkRelationSuggestionsStaleAsync(
+        VaultOperationContext context,
+        Guid documentId,
+        int documentRevision,
+        bool trashed,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var updates =
+            await RelationSuggestionStore.MarkPendingStaleForDocumentAsync(
+                context,
+                documentId,
+                trashed,
+                now,
+                cancellationToken);
+        var actor = new VaultActorContext(VaultActorKind.System);
+        foreach (var update in updates)
+        {
+            await AuditStore.AppendAsync(
+                context,
+                actor,
+                "relation_suggestion.stale",
+                documentId,
+                documentRevision,
+                "success",
+                new
+                {
+                    suggestionId = update.SuggestionId,
+                    suggestionRevision = update.SuggestionRevision,
+                    relationType = update.RelationType.ToDatabaseValue(),
+                    sourceDocumentId = update.SourceDocumentId,
+                    targetDocumentId = update.TargetDocumentId,
+                    status = "stale",
+                    reasonCode = update.StaleReason.ToDatabaseValue(),
+                    sessionGeneration = context.SessionGeneration
+                },
+                now,
+                cancellationToken);
+        }
+    }
 
     internal sealed record CurrentDocumentState(
         Guid DocumentId,

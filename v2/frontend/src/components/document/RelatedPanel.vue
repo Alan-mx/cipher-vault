@@ -11,6 +11,7 @@ import {
 } from "naive-ui";
 import { RefreshCw } from "@lucide/vue";
 import { useDocumentStore } from "../../stores/document";
+import ConfirmedRelationsPanel from "./ConfirmedRelationsPanel.vue";
 
 const documents = useDocumentStore();
 const router = useRouter();
@@ -97,6 +98,10 @@ const formatScore = (score: number): string =>
       </button>
     </div>
     <NEmpty v-else description="暂无相关文档" size="small" />
+    <ConfirmedRelationsPanel
+      v-if="documents.documentId"
+      :document-id="documents.documentId"
+    />
   </section>
 </template>
 

@@ -2,6 +2,7 @@ using CipherVault.Core.Database;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
 using CipherVault.Core.KnowledgeGraph;
+using CipherVault.Core.Relations;
 
 namespace CipherVault.Core.Storage.Graph;
 
@@ -98,6 +99,9 @@ public static class KnowledgeGraphStore
                 && selected.Contains(edge.TargetDocumentId))
             .OrderBy(edge => nodes[edge.SourceDocumentId].Path, StringComparer.Ordinal)
             .ThenBy(edge => nodes[edge.TargetDocumentId].Path, StringComparer.Ordinal)
+            .ThenBy(edge => edge.EdgeKind)
+            .ThenBy(edge => edge.RelationType)
+            .ThenBy(edge => edge.RelationId)
             .ToArray();
         if (selectedEdges.Length > query.MaxEdges)
         {
@@ -130,7 +134,11 @@ public static class KnowledgeGraphStore
             .Select(edge => new GraphEdge(
                 edge.SourceDocumentId,
                 edge.TargetDocumentId,
-                edge.LinkCount))
+                edge.EdgeKind,
+                edge.LinkCount,
+                edge.RelationId,
+                edge.RelationType,
+                edge.IsDirected))
             .ToArray();
         return new LocalGraphResult(graphNodes, graphEdges, truncated);
     }
@@ -203,27 +211,72 @@ public static class KnowledgeGraphStore
         CancellationToken cancellationToken)
     {
         var edges = new List<GraphLink>();
-        using var read = context.CreateCommand();
-        read.Command.CommandText =
-            """
-            SELECT source_document_id, target_document_id, count(*)
-            FROM document_links AS l
-            JOIN documents AS source ON source.document_id = l.source_document_id
-            JOIN documents AS target ON target.document_id = l.target_document_id
-            WHERE l.resolution_status = 'resolved'
-              AND source.deleted_at IS NULL
-              AND target.deleted_at IS NULL
-              AND source.revision = l.source_revision
-            GROUP BY source_document_id, target_document_id
-            ORDER BY source_document_id, target_document_id;
-            """;
-        await using var reader = await read.Command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
+        using (var read = context.CreateCommand())
         {
-            edges.Add(new GraphLink(
-                Guid.Parse(reader.GetString(0)),
-                Guid.Parse(reader.GetString(1)),
-                reader.GetInt32(2)));
+            read.Command.CommandText =
+                """
+                SELECT source_document_id, target_document_id, count(*)
+                FROM document_links AS l
+                JOIN documents AS source
+                  ON source.document_id = l.source_document_id
+                JOIN documents AS target
+                  ON target.document_id = l.target_document_id
+                WHERE l.resolution_status = 'resolved'
+                  AND source.deleted_at IS NULL
+                  AND target.deleted_at IS NULL
+                  AND source.revision = l.source_revision
+                GROUP BY source_document_id, target_document_id
+                ORDER BY source_document_id, target_document_id;
+                """;
+            await using var reader =
+                await read.Command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                edges.Add(new GraphLink(
+                    Guid.Parse(reader.GetString(0)),
+                    Guid.Parse(reader.GetString(1)),
+                    GraphEdgeKind.ExplicitLink,
+                    reader.GetInt32(2),
+                    RelationId: null,
+                    RelationType: null,
+                    IsDirected: true));
+            }
+        }
+
+        using (var read = context.CreateCommand())
+        {
+            read.Command.CommandText =
+                """
+                SELECT
+                    relation_id,
+                    relation_type,
+                    source_document_id,
+                    target_document_id
+                FROM document_relations AS relation
+                JOIN documents AS source
+                  ON source.document_id = relation.source_document_id
+                JOIN documents AS target
+                  ON target.document_id = relation.target_document_id
+                WHERE relation.status = 'active'
+                  AND source.deleted_at IS NULL
+                  AND target.deleted_at IS NULL
+                ORDER BY relation_id;
+                """;
+            await using var reader =
+                await read.Command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var relationType = RelationValueMapping.ParseRelationType(
+                    reader.GetString(1));
+                edges.Add(new GraphLink(
+                    Guid.Parse(reader.GetString(2)),
+                    Guid.Parse(reader.GetString(3)),
+                    GraphEdgeKind.TypedRelation,
+                    LinkCount: 1,
+                    Guid.Parse(reader.GetString(0)),
+                    relationType,
+                    relationType.IsDirected()));
+            }
         }
         return edges;
     }
@@ -256,5 +309,9 @@ public static class KnowledgeGraphStore
     private sealed record GraphLink(
         Guid SourceDocumentId,
         Guid TargetDocumentId,
-        int LinkCount);
+        GraphEdgeKind EdgeKind,
+        int LinkCount,
+        Guid? RelationId,
+        RelationType? RelationType,
+        bool IsDirected);
 }

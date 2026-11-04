@@ -55,10 +55,31 @@ const render = (): void => {
         style: {
           width: "mapData(weight, 1, 5, 1, 3)",
           "line-color": "#a3aca6",
+          "line-style": "solid",
           "target-arrow-color": "#a3aca6",
           "target-arrow-shape": "triangle",
           "curve-style": "bezier",
+          label: "data(label)",
+          "font-size": 9,
+          color: "#626b66",
+          "text-background-color": "#ffffff",
+          "text-background-opacity": 0.8,
+          "text-background-padding": "2px",
           opacity: 0.65,
+        },
+      },
+      {
+        selector: 'edge[edgeKind = "typed_relation"]',
+        style: {
+          "line-color": "#8a5a2b",
+          "line-style": "dashed",
+          "target-arrow-color": "#8a5a2b",
+        },
+      },
+      {
+        selector: "edge[directed = 0]",
+        style: {
+          "target-arrow-shape": "none",
         },
       },
     ],

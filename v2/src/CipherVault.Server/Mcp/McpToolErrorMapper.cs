@@ -10,8 +10,13 @@ public static class McpToolErrorMapper
     [
         "currentRevision",
         "currentDraftRevision",
+        "currentSuggestionRevision",
+        "currentSourceRevision",
+        "currentTargetRevision",
         "documentId",
         "draftId",
+        "suggestionId",
+        "relationId",
         "revisionId",
         "candidateHeadingPaths",
         "limit",
@@ -31,6 +36,13 @@ public static class McpToolErrorMapper
         exception switch
         {
             McpToolRequestException request => new(
+                request.Code,
+                request.Message,
+                Sanitize(request.Details),
+                correlationId,
+                HintFor(request.Code),
+                RetryableFor(request.Code)),
+            ApiRequestException request => new(
                 request.Code,
                 request.Message,
                 Sanitize(request.Details),
@@ -93,6 +105,20 @@ public static class McpToolErrorMapper
                 "semantic_remote_not_allowed",
             VaultErrorCode.SemanticRebuildInProgress =>
                 "semantic_rebuild_in_progress",
+            VaultErrorCode.RelationSuggestionNotFound =>
+                "relation_suggestion_not_found",
+            VaultErrorCode.RelationSuggestionRevisionConflict =>
+                "relation_suggestion_revision_conflict",
+            VaultErrorCode.RelationSuggestionNotEditable =>
+                "relation_suggestion_not_editable",
+            VaultErrorCode.RelationSuggestionExists =>
+                "relation_suggestion_exists",
+            VaultErrorCode.RelationSuggestionLimitExceeded =>
+                "relation_suggestion_limit_exceeded",
+            VaultErrorCode.RelationSuggestionStale =>
+                "relation_suggestion_stale",
+            VaultErrorCode.DocumentRelationNotFound =>
+                "document_relation_not_found",
             VaultErrorCode.DocumentPathConflict => "path_conflict",
             VaultErrorCode.PatchTargetNotFound => "patch_target_not_found",
             VaultErrorCode.PatchTargetAmbiguous => "patch_target_ambiguous",
@@ -158,6 +184,20 @@ public static class McpToolErrorMapper
                 "Remote semantic embedding is not allowed.",
             "semantic_rebuild_in_progress" =>
                 "Semantic index rebuild is already in progress.",
+            "relation_suggestion_not_found" =>
+                "Relation suggestion was not found.",
+            "relation_suggestion_revision_conflict" =>
+                "Relation suggestion revision changed.",
+            "relation_suggestion_not_editable" =>
+                "Relation suggestion status does not allow this operation.",
+            "relation_suggestion_exists" =>
+                "A pending relation suggestion already exists.",
+            "relation_suggestion_limit_exceeded" =>
+                "The active relation suggestion limit was reached.",
+            "relation_suggestion_stale" =>
+                "Relation suggestion source or target changed.",
+            "document_relation_not_found" =>
+                "Active document relation was not found.",
             "path_conflict" => "Document path is already in use.",
             "patch_target_not_found" => "Patch target was not found.",
             "patch_target_ambiguous" => "Patch target is ambiguous.",
@@ -204,6 +244,20 @@ public static class McpToolErrorMapper
                 "Ask the user to configure and confirm remote embedding in the Web UI.",
             "semantic_rebuild_in_progress" =>
                 "Wait for the current semantic index rebuild to finish.",
+            "relation_suggestion_not_found" =>
+                "List relation suggestions and use a current suggestionId.",
+            "relation_suggestion_revision_conflict" =>
+                "Read the latest suggestion revision and retry.",
+            "relation_suggestion_not_editable" =>
+                "Read the suggestion status and choose an allowed operation.",
+            "relation_suggestion_exists" =>
+                "Read the existing pending suggestion instead of creating a duplicate.",
+            "relation_suggestion_limit_exceeded" =>
+                "Review or discard stale suggestions before creating another.",
+            "relation_suggestion_stale" =>
+                "Update the stale suggestion with current document revisions.",
+            "document_relation_not_found" =>
+                "Refresh confirmed document relations before retrying.",
             "path_conflict" => "Choose a different virtual path or update the existing document.",
             "patch_target_not_found" => "Read the document map and choose an existing target.",
             "patch_target_ambiguous" => "Use a more specific heading path.",

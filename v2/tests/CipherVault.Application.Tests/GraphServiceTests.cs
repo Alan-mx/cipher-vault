@@ -1,6 +1,7 @@
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
 using CipherVault.Core.KnowledgeGraph;
+using CipherVault.Core.Relations;
 
 namespace CipherVault.Application.Tests;
 
@@ -116,6 +117,67 @@ public sealed class GraphServiceTests
                 graph.Nodes.Single(node => node.Title == "C").DocumentId
                     == edge.SourceDocumentId
                 && edge.TargetDocumentId == center.DocumentId);
+        Assert.All(
+            graph.Edges,
+            edge => Assert.Equal(
+                GraphEdgeKind.ExplicitLink,
+                edge.EdgeKind));
+    }
+
+    [Fact]
+    public async Task GraphIncludesConfirmedTypedRelationsWithDirection()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var user = new VaultActorContext(VaultActorKind.UserUi);
+        var mcp = new VaultActorContext(VaultActorKind.Mcp);
+        var source = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Source",
+                "source.md",
+                null,
+                VaultDocumentFormat.Markdown,
+                "# Source",
+                []),
+            user);
+        var target = await fixture.Documents.CreateAsync(
+            new CreateDocumentRequest(
+                "Target",
+                "target.md",
+                null,
+                VaultDocumentFormat.Markdown,
+                "# Target",
+                []),
+            user);
+        var suggestion = await fixture.RelationSuggestions.CreateAsync(
+            new CreateRelationSuggestionRequest(
+                RelationType.DependsOn,
+                source.DocumentId,
+                source.Revision,
+                target.DocumentId,
+                target.Revision,
+                "Depends.",
+                "model",
+                null,
+                null,
+                []),
+            mcp,
+            Guid.NewGuid());
+        var applied = await fixture.RelationReview.ApplyAsync(
+            suggestion.Metadata.SuggestionId,
+            1,
+            user,
+            Guid.NewGuid());
+
+        var graph = await fixture.Graph.GetLocalGraphAsync(
+            new LocalGraphQuery(source.DocumentId, Depth: 1));
+
+        var edge = Assert.Single(
+            graph.Edges,
+            item => item.EdgeKind == GraphEdgeKind.TypedRelation);
+        Assert.Equal(applied.RelationId, edge.RelationId);
+        Assert.Equal(RelationType.DependsOn, edge.RelationType);
+        Assert.True(edge.IsDirected);
+        Assert.Equal(1, edge.LinkCount);
     }
 
     [Fact]

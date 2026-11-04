@@ -18,7 +18,13 @@ public enum IdempotencyOperation
     DraftApply,
     McpWriteModeChange,
     SemanticRemoteConsentChange,
-    SemanticIndexRebuild
+    SemanticIndexRebuild,
+    RelationSuggestionCreate,
+    RelationSuggestionUpdate,
+    RelationSuggestionDiscard,
+    RelationSuggestionApply,
+    RelationSuggestionReject,
+    DocumentRelationRetract
 }
 
 public sealed record IdempotencyRecord(
@@ -53,6 +59,18 @@ public static class IdempotencyOperationMapping
                 "semantic_remote_consent.change",
             IdempotencyOperation.SemanticIndexRebuild =>
                 "semantic_index.rebuild",
+            IdempotencyOperation.RelationSuggestionCreate =>
+                "relation_suggestion.create",
+            IdempotencyOperation.RelationSuggestionUpdate =>
+                "relation_suggestion.update",
+            IdempotencyOperation.RelationSuggestionDiscard =>
+                "relation_suggestion.discard",
+            IdempotencyOperation.RelationSuggestionApply =>
+                "relation_suggestion.apply",
+            IdempotencyOperation.RelationSuggestionReject =>
+                "relation_suggestion.reject",
+            IdempotencyOperation.DocumentRelationRetract =>
+                "document_relation.retract",
             _ => throw new ArgumentOutOfRangeException(nameof(value))
         };
 
@@ -76,6 +94,18 @@ public static class IdempotencyOperationMapping
                 IdempotencyOperation.SemanticRemoteConsentChange,
             "semantic_index.rebuild" =>
                 IdempotencyOperation.SemanticIndexRebuild,
+            "relation_suggestion.create" =>
+                IdempotencyOperation.RelationSuggestionCreate,
+            "relation_suggestion.update" =>
+                IdempotencyOperation.RelationSuggestionUpdate,
+            "relation_suggestion.discard" =>
+                IdempotencyOperation.RelationSuggestionDiscard,
+            "relation_suggestion.apply" =>
+                IdempotencyOperation.RelationSuggestionApply,
+            "relation_suggestion.reject" =>
+                IdempotencyOperation.RelationSuggestionReject,
+            "document_relation.retract" =>
+                IdempotencyOperation.DocumentRelationRetract,
             _ => throw new ArgumentOutOfRangeException(nameof(value))
         };
 }

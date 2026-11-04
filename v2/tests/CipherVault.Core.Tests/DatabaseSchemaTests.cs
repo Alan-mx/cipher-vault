@@ -18,7 +18,7 @@ public sealed class DatabaseSchemaTests
         var verified = await SqliteMcVaultStore.VerifyAsync(fixture.Root, fixture.Material);
 
         Assert.Equal(fixture.Material.VaultId, initialized.VaultId);
-        Assert.Equal(8, initialized.SchemaVersion);
+        Assert.Equal(9, initialized.SchemaVersion);
         Assert.Equal(initialized, verified);
     }
 
@@ -36,8 +36,8 @@ public sealed class DatabaseSchemaTests
             create: false);
         using var command = connection.Connection.CreateCommand();
         command.CommandText = "SELECT count(*) FROM schema_migrations;";
-        Assert.Equal(8, Convert.ToInt32(await command.ExecuteScalarAsync()));
-        Assert.Equal(8, second.SchemaVersion);
+        Assert.Equal(9, Convert.ToInt32(await command.ExecuteScalarAsync()));
+        Assert.Equal(9, second.SchemaVersion);
     }
 
     [Fact]
@@ -117,11 +117,11 @@ public sealed class DatabaseSchemaTests
                 CancellationToken.None);
             await SqliteMcDatabaseFactory.ExecuteNonQueryAsync(
                 session.Connection,
-                "UPDATE vault_meta SET value = '9' WHERE key = 'schema_version';",
+                "UPDATE vault_meta SET value = '10' WHERE key = 'schema_version';",
                 CancellationToken.None);
 
-            var migration9 = new DatabaseMigration(
-                9,
+            var migration10 = new DatabaseMigration(
+                10,
                 "must_not_apply",
                 "CREATE TABLE must_not_apply(id INTEGER PRIMARY KEY) STRICT;",
                 new string('a', 64));
@@ -130,13 +130,13 @@ public sealed class DatabaseSchemaTests
                     session.Connection,
                     material.VaultId,
                     DateTimeOffset.UtcNow,
-                    [.. migrations, migration9],
+                    [.. migrations, migration10],
                     CancellationToken.None));
 
             Assert.Equal(VaultErrorCode.CorruptVault, exception.Code);
             using var command = session.Connection.CreateCommand();
             command.CommandText = """
-                SELECT count(*) FROM schema_migrations WHERE version = 9;
+                SELECT count(*) FROM schema_migrations WHERE version = 10;
                 """;
             Assert.Equal(0, Convert.ToInt32(await command.ExecuteScalarAsync()));
             command.CommandText = """
@@ -245,7 +245,7 @@ public sealed class DatabaseSchemaTests
                 migrations,
                 CancellationToken.None);
 
-            Assert.Equal(8, upgraded.SchemaVersion);
+            Assert.Equal(9, upgraded.SchemaVersion);
         }
         finally
         {
@@ -331,7 +331,7 @@ public sealed class DatabaseSchemaTests
                 migrations,
                 CancellationToken.None);
 
-            Assert.Equal(8, upgraded.SchemaVersion);
+            Assert.Equal(9, upgraded.SchemaVersion);
             using var command = session.Connection.CreateCommand();
             command.CommandText =
                 """
@@ -346,12 +346,14 @@ public sealed class DatabaseSchemaTests
                     'document_fts',
                     'audit_events',
                     'document_drafts',
-                    'idempotency_records'
+                    'idempotency_records',
+                    'document_relation_suggestions',
+                    'document_relations'
                 );
                 """;
-            Assert.Equal(9, Convert.ToInt32(await command.ExecuteScalarAsync()));
+            Assert.Equal(11, Convert.ToInt32(await command.ExecuteScalarAsync()));
             command.CommandText = "SELECT count(*) FROM schema_migrations;";
-            Assert.Equal(8, Convert.ToInt32(await command.ExecuteScalarAsync()));
+            Assert.Equal(9, Convert.ToInt32(await command.ExecuteScalarAsync()));
         }
         finally
         {
@@ -424,10 +426,10 @@ public sealed class DatabaseSchemaTests
                 DateTimeOffset.UtcNow,
                 migrations,
                 CancellationToken.None);
-            Assert.Equal(8, upgraded.SchemaVersion);
+            Assert.Equal(9, upgraded.SchemaVersion);
 
-            var failedMigration9 = new DatabaseMigration(
-                9,
+            var failedMigration10 = new DatabaseMigration(
+                10,
                 "future_migration_failure",
                 "CREATE TABLE future_migration_rollback_probe(id INTEGER); INSERT INTO missing_table VALUES(1);",
                 new string('b', 64));
@@ -436,7 +438,7 @@ public sealed class DatabaseSchemaTests
                     session.Connection,
                     material.VaultId,
                     DateTimeOffset.UtcNow,
-                    [.. migrations, failedMigration9],
+                    [.. migrations, failedMigration10],
                     CancellationToken.None));
 
             using (var verification = session.Connection.CreateCommand())
@@ -445,10 +447,10 @@ public sealed class DatabaseSchemaTests
                     SELECT value FROM vault_meta WHERE key = 'schema_version';
                     """;
                 Assert.Equal(
-                    "8",
+                    "9",
                     Convert.ToString(await verification.ExecuteScalarAsync()));
                 verification.CommandText =
-                    "SELECT count(*) FROM schema_migrations WHERE version = 9;";
+                    "SELECT count(*) FROM schema_migrations WHERE version = 10;";
                 Assert.Equal(0, Convert.ToInt32(await verification.ExecuteScalarAsync()));
                 verification.CommandText = """
                     SELECT count(*) FROM sqlite_master
@@ -542,7 +544,7 @@ public sealed class DatabaseSchemaTests
                 migrations,
                 CancellationToken.None);
 
-            Assert.Equal(8, upgraded.SchemaVersion);
+            Assert.Equal(9, upgraded.SchemaVersion);
             using var command = session.Connection.CreateCommand();
             command.CommandText =
                 """
@@ -620,7 +622,7 @@ public sealed class DatabaseSchemaTests
                 migrations,
                 CancellationToken.None);
 
-            Assert.Equal(8, upgraded.SchemaVersion);
+            Assert.Equal(9, upgraded.SchemaVersion);
             using (var selectHistorical = session.Connection.CreateCommand())
             {
                 selectHistorical.CommandText = """

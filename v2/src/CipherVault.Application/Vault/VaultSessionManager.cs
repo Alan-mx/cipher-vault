@@ -266,6 +266,72 @@ public sealed class VaultSessionManager : IAsyncDisposable
         }
     }
 
+    internal async ValueTask<T> ExecuteMaintenanceAsync<T>(
+        Func<VaultOperationContext, CancellationToken, ValueTask<T>> operation,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        ThrowIfDisposed();
+        using var timeoutCancellation =
+            new CancellationTokenSource(timeout);
+        using var linkedCancellation =
+            CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                timeoutCancellation.Token);
+        var gateHeld = false;
+        try
+        {
+            await operationGate.WaitAsync(linkedCancellation.Token);
+            gateHeld = true;
+            VaultSession current;
+            lock (transitionSync)
+            {
+                if ((VaultSessionState)state != VaultSessionState.Unlocked
+                    || session is null)
+                {
+                    throw CreateBusinessStateException(
+                        (VaultSessionState)state);
+                }
+                current = session;
+            }
+            using var sessionCancellation =
+                CancellationTokenSource.CreateLinkedTokenSource(
+                    linkedCancellation.Token,
+                    current.OperationCancellation.Token);
+            var context = current.Database.CreateOperationContext();
+            var succeeded = false;
+            try
+            {
+                var result = await operation(
+                    context,
+                    sessionCancellation.Token);
+                succeeded = true;
+                return result;
+            }
+            finally
+            {
+                try
+                {
+                    await context.FinalizeTransactionAsync(
+                        succeeded,
+                        CancellationToken.None);
+                }
+                finally
+                {
+                    await context.DisposeAsync();
+                }
+            }
+        }
+        finally
+        {
+            if (gateHeld)
+            {
+                operationGate.Release();
+            }
+        }
+    }
+
     internal VaultException CreateBackupCancellationException(
         VaultSession canceledSession)
     {

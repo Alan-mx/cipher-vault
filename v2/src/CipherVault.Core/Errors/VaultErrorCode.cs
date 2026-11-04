@@ -52,5 +52,12 @@ public enum VaultErrorCode
     SemanticSearchUnavailable,
     SemanticProfileMismatch,
     SemanticRemoteNotAllowed,
-    SemanticRebuildInProgress
+    SemanticRebuildInProgress,
+    RelationSuggestionNotFound,
+    RelationSuggestionRevisionConflict,
+    RelationSuggestionNotEditable,
+    RelationSuggestionExists,
+    RelationSuggestionLimitExceeded,
+    RelationSuggestionStale,
+    DocumentRelationNotFound
 }

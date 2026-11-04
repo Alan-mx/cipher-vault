@@ -155,6 +155,128 @@ export interface RelatedDocumentsResponse {
   items: RelatedDocumentItem[];
 }
 
+export type RelationType =
+  "related" | "example_of" | "implements" | "contrasts_with" | "depends_on";
+
+export type RelationSuggestionStatus =
+  "pending_review" | "stale" | "applied" | "rejected" | "expired";
+
+export type RelationSuggestionApplyResult = "inserted" | "already_exists";
+
+export type RelationStaleReason =
+  | "source_revision_changed"
+  | "target_revision_changed"
+  | "source_and_target_revision_changed"
+  | "source_trashed"
+  | "target_trashed"
+  | "source_and_target_trashed"
+  | "source_missing"
+  | "target_missing";
+
+export interface RelationDocumentReference {
+  documentId: GuidString;
+  title: string;
+  virtualPath: string;
+  revision: number;
+}
+
+export interface RelationSuggestionListItem {
+  suggestionId: GuidString;
+  suggestionRevision: number;
+  relationType: RelationType;
+  status: RelationSuggestionStatus;
+  sourceDocumentRevision: number;
+  targetDocumentRevision: number;
+  sourceDocument: RelationDocumentReference;
+  targetDocument: RelationDocumentReference;
+  sourceActor: "mcp";
+  relationId?: GuidString | null;
+  applyResult?: RelationSuggestionApplyResult | null;
+  staleReasonCode?: RelationStaleReason | null;
+  createdAt: UtcTimestamp;
+  updatedAt: UtcTimestamp;
+  terminalAt?: UtcTimestamp | null;
+}
+
+export interface RelationEvidence {
+  documentId: GuidString;
+  documentRevision: number;
+  headingPath: string[];
+  excerpt: string;
+}
+
+export interface RelationSuggestionDetail {
+  metadata: RelationSuggestionListItem;
+  reason: string;
+  modelName?: string | null;
+  agentName?: string | null;
+  clientName?: string | null;
+  evidence: RelationEvidence[];
+  appliedAt?: UtcTimestamp | null;
+}
+
+export type RelationSuggestionPage = CursorPage<RelationSuggestionListItem>;
+
+export interface RelationSuggestionSummary {
+  pendingReview: number;
+  stale: number;
+  applied: number;
+  rejected: number;
+  expired: number;
+}
+
+export interface RelationSuggestionQuery {
+  status?: RelationSuggestionStatus;
+  relationType?: RelationType;
+  sourceDocumentId?: GuidString;
+  targetDocumentId?: GuidString;
+  updatedAfter?: UtcTimestamp;
+  updatedBefore?: UtcTimestamp;
+  pageSize?: number;
+  cursor?: string;
+}
+
+export interface RelationSuggestionApplyResponse {
+  suggestionId: GuidString;
+  suggestionRevision: number;
+  status: RelationSuggestionStatus;
+  relationId?: GuidString | null;
+  applyResult?: RelationSuggestionApplyResult | null;
+  appliedAt?: UtcTimestamp | null;
+}
+
+export interface RelationSuggestionRejectResponse {
+  suggestionId: GuidString;
+  suggestionRevision: number;
+  status: RelationSuggestionStatus;
+  rejectedAt: UtcTimestamp;
+}
+
+export type DocumentRelationDirection = "outgoing" | "incoming" | "symmetric";
+
+export interface DocumentRelationItem {
+  relationId: GuidString;
+  relationType: RelationType;
+  isDirected: boolean;
+  direction: DocumentRelationDirection;
+  relatedDocument: RelationDocumentReference;
+  createdAt: UtcTimestamp;
+  updatedAt: UtcTimestamp;
+}
+
+export interface DocumentRelationsResponse {
+  documentId: GuidString;
+  items: DocumentRelationItem[];
+  truncated: boolean;
+}
+
+export interface DocumentRelationRetractResponse {
+  relationId: GuidString;
+  status: "retracted";
+  retractedAt: UtcTimestamp;
+  auditEventId: GuidString;
+}
+
 export type KnowledgeViewField = "project" | "type" | "maturity";
 
 export interface KnowledgeFacetItem {
@@ -268,7 +390,17 @@ export interface GraphNode {
 export interface GraphEdge {
   sourceDocumentId: GuidString;
   targetDocumentId: GuidString;
+  edgeKind: "explicit_link" | "typed_relation";
   linkCount: number;
+  relationId?: GuidString | null;
+  relationType?:
+    | "related"
+    | "example_of"
+    | "implements"
+    | "contrasts_with"
+    | "depends_on"
+    | null;
+  isDirected: boolean;
 }
 
 export interface LocalGraphResult {

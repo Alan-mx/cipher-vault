@@ -4,7 +4,9 @@ using CipherVault.Core.Audit;
 using CipherVault.Core.Database;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
+using CipherVault.Core.Relations;
 using CipherVault.Core.Storage.Semantic;
+using CipherVault.Core.Storage.Relations;
 using CipherVault.Core.Storage.Tags;
 using Microsoft.Data.Sqlite;
 
@@ -209,6 +211,12 @@ public static class TrashStore
                 current.Content,
                 now,
                 cancellationToken);
+            await MarkRelationSuggestionsStaleAsync(
+                context,
+                documentId,
+                newRevision,
+                now,
+                cancellationToken);
             var auditEventId = await AuditStore.AppendAsync(
                 context,
                 actor,
@@ -389,6 +397,46 @@ public static class TrashStore
 
     private static VaultException InvalidCursor() =>
         new(VaultErrorCode.InvalidCursor, "Cursor is invalid for this trash query.");
+
+    private static async Task MarkRelationSuggestionsStaleAsync(
+        VaultOperationContext context,
+        Guid documentId,
+        int documentRevision,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var updates =
+            await RelationSuggestionStore.MarkPendingStaleForDocumentAsync(
+                context,
+                documentId,
+                trashed: false,
+                now,
+                cancellationToken);
+        var actor = new VaultActorContext(VaultActorKind.System);
+        foreach (var update in updates)
+        {
+            await AuditStore.AppendAsync(
+                context,
+                actor,
+                "relation_suggestion.stale",
+                documentId,
+                documentRevision,
+                "success",
+                new
+                {
+                    suggestionId = update.SuggestionId,
+                    suggestionRevision = update.SuggestionRevision,
+                    relationType = update.RelationType.ToDatabaseValue(),
+                    sourceDocumentId = update.SourceDocumentId,
+                    targetDocumentId = update.TargetDocumentId,
+                    status = "stale",
+                    reasonCode = update.StaleReason.ToDatabaseValue(),
+                    sessionGeneration = context.SessionGeneration
+                },
+                now,
+                cancellationToken);
+        }
+    }
 
     private sealed record TrashCursor(
         DateTimeOffset DeletedAt,

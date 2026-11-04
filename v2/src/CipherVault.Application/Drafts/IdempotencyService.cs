@@ -43,15 +43,15 @@ public sealed class IdempotencyService
         var existing = await IdempotencyStore.FindAsync(
             context,
             idempotencyKey,
+            operation,
+            actor.Kind,
             cancellationToken);
         if (existing is null)
         {
             return null;
         }
 
-        if (existing.ActorKind != actor.Kind
-            || existing.Operation != operation
-            || !string.Equals(
+        if (!string.Equals(
                 existing.RequestHash,
                 requestHash,
                 StringComparison.Ordinal)

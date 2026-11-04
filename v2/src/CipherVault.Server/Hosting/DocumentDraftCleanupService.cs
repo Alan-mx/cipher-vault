@@ -1,10 +1,12 @@
 using CipherVault.Application.Drafts;
+using CipherVault.Application.Relations;
 using CipherVault.Core.Errors;
 
 namespace CipherVault.Server.Hosting;
 
 public sealed class DocumentDraftCleanupService(
     DocumentDraftService drafts,
+    RelationMaintenanceService relations,
     ILogger<DocumentDraftCleanupService> logger) : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromHours(1);
@@ -17,6 +19,7 @@ public sealed class DocumentDraftCleanupService(
             try
             {
                 _ = await drafts.CleanupAsync(stoppingToken);
+                _ = await relations.CleanupAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

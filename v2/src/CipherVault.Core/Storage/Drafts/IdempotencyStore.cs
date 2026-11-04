@@ -11,6 +11,8 @@ public static class IdempotencyStore
     public static async Task<IdempotencyRecord?> FindAsync(
         VaultOperationContext context,
         Guid idempotencyKey,
+        IdempotencyOperation operation,
+        VaultActorKind actorKind,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -27,8 +29,16 @@ public static class IdempotencyStore
                 created_at,
                 expires_at
             FROM idempotency_records
-            WHERE idempotency_key = $idempotencyKey;
+            WHERE actor_kind = $actorKind
+              AND operation = $operation
+              AND idempotency_key = $idempotencyKey;
             """;
+        command.Command.Parameters.AddWithValue(
+            "$actorKind",
+            ToDatabaseValue(actorKind));
+        command.Command.Parameters.AddWithValue(
+            "$operation",
+            operation.ToDatabaseValue());
         command.Command.Parameters.AddWithValue(
             "$idempotencyKey",
             idempotencyKey.ToString("D"));
