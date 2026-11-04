@@ -58,13 +58,15 @@ public sealed class McpSecurityAndLifecycleTests
         using var unlock = await server.Client.UnlockAsync();
         Assert.Equal(HttpStatusCode.OK, unlock.StatusCode);
         var token = await RotateTokenAsync(server.Client);
+        await server.Client.SetMcpWriteModeAsync("direct");
 
         const string contentMarker = "mcp-log-content-marker";
         _ = await CallToolAsync(server.Client, token, "create_note", new
         {
             title = "Logs",
             content = contentMarker,
-            format = "txt"
+            format = "txt",
+            idempotencyKey = Guid.NewGuid().ToString("D")
         });
         _ = await CallToolAsync(server.Client, token, "search_notes", new
         {

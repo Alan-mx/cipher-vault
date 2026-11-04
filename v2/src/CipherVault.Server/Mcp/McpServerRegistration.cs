@@ -1,5 +1,6 @@
 using CipherVault.Server.Security;
 using ModelContextProtocol.AspNetCore;
+using ModelContextProtocol.Server;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
 
@@ -22,7 +23,17 @@ public static class McpServerRegistration
             .AddScheme<AuthenticationSchemeOptions, McpBearerAuthenticationHandler>(
                 McpBearerAuthentication.Scheme,
                 _ => { });
-        services.AddMcpServer()
+        services.AddMcpServer(options =>
+            {
+                options.ServerInstructions =
+                    """
+                    CipherVault defaults to Draft Mode. Formal document write tools are always listed,
+                    but return write_mode_draft_required until the user enables Direct Write Mode in
+                    the Web UI. Prefer draft tools for create, update, and trash proposals. MCP cannot
+                    approve, reject, or apply drafts. Use a unique UUID idempotencyKey for every
+                    side-effecting call and never retry the same key with a different request.
+                    """;
+            })
             .WithHttpTransport(options =>
             {
                 options.SessionMode = HttpServerSessionMode.Stateless;

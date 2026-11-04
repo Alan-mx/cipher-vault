@@ -191,8 +191,14 @@ Docker 默认宿主机地址：
 http://127.0.0.1:8080/mcp
 ```
 
-在 Web Settings 中 Rotate MCP Token。Token 只显示一次，并具有当前启用的全部 MCP
-读写和删除能力。MCP Token 不是 Vault Password，不能替代 Web Unlock。
+在 Web Settings 中 Rotate MCP Token。Token 只显示一次。MCP 默认使用草稿模式：
+AI 可以创建、修改和送审加密草稿，但不能直接修改正式知识，也不能批准或提交草稿。
+用户可在 Settings 中显式开启当前 Vault Session 的 Direct Write Mode。开启后，
+所有持有当前 MCP Token 的客户端都可直接写入正式文档。任何 MCP 模式都不会绕过
+Vault Lock；Token 不是 Vault Password，也不能替代 Web Unlock。
+
+所有 MCP 副作用调用都要求 UUID `idempotencyKey`；正式写入工具在草稿模式下仍会
+出现在工具清单中，但调用会返回结构化错误 `write_mode_draft_required`。
 
 通用 HTTP 配置：
 
@@ -322,7 +328,7 @@ Docker 镜像已包含 Git 与 OpenSSH client。启用时需把独立备份仓�
 - Docker：加载新镜像并重建容器，保留 `cipher-vault-data`。
 - 不提供自动更新器。
 - 不兼容旧 SQLCipher 数据库、旧 Recovery Key、旧配置文件，以及 Schema 低于 `5` 的 `.cvbackup`。
-- 当前数据库 Schema 为 `5`，备份包 FormatVersion 为 `1`，最低备份兼容 Schema 为 `5`。
+- 当前数据库 Schema 为 `6`，备份包 FormatVersion 为 `1`，最低备份兼容 Schema 为 `5`。
 - 软件版本和数据库 Schema 版本相互独立；普通软件升级不要求 Schema 升级，只有结构或持久化格式确实变化时才追加 Migration。
 - 本次版本及以后生成的、Schema 在兼容范围内的有效 `.cvbackup` 可由后续软件版本恢复，并在首次解锁时通过现有 Migration 升级。
 - 已有本地 Schema 1~4 Vault 仍可通过正常升级和 Migration 链路升级到当前 Schema；该本地升级能力与备份最低兼容基线相互独立。

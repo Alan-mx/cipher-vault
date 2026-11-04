@@ -81,6 +81,17 @@ export const router = createRouter({
       },
     },
     {
+      path: "/review",
+      name: "review",
+      component: () => import("../views/ReviewView.vue"),
+      meta: {
+        vault: "unlocked",
+        sensitive: true,
+        layout: "workspace",
+        title: "待审核",
+      },
+    },
+    {
       path: "/trash",
       name: "trash",
       component: () => import("../views/TrashView.vue"),

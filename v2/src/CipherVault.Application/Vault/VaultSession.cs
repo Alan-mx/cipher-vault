@@ -1,5 +1,6 @@
 using CipherVault.Core.Crypto;
 using CipherVault.Core.Database;
+using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
 
 namespace CipherVault.Application.Vault;
@@ -7,9 +8,12 @@ namespace CipherVault.Application.Vault;
 internal sealed class VaultSession
 {
     private readonly object backupActivitySync = new();
+    private readonly object writeModeSync = new();
     private int activeBackupOperationCount;
     private TaskCompletionSource? backupOperationsDrained;
     private bool backupCleanupFailed;
+    private McpWriteMode mcpWriteMode = McpWriteMode.Draft;
+    private DateTimeOffset mcpWriteModeUpdatedAt;
 
     internal VaultSession(
         Guid sessionId,
@@ -25,6 +29,7 @@ internal sealed class VaultSession
         KeyMaterial = keyMaterial;
         StartedAtUtc = startedAtUtc;
         Activity = activity;
+        mcpWriteModeUpdatedAt = startedAtUtc;
     }
 
     internal Guid SessionId { get; }
@@ -40,6 +45,30 @@ internal sealed class VaultSession
     internal DateTimeOffset StartedAtUtc { get; }
 
     internal VaultActivityState Activity { get; }
+
+    internal McpWriteModeSnapshot GetMcpWriteMode()
+    {
+        lock (writeModeSync)
+        {
+            return new McpWriteModeSnapshot(
+                mcpWriteMode,
+                SessionId,
+                Generation,
+                mcpWriteModeUpdatedAt,
+                Effective: true);
+        }
+    }
+
+    internal void SetMcpWriteMode(
+        McpWriteMode mode,
+        DateTimeOffset updatedAt)
+    {
+        lock (writeModeSync)
+        {
+            mcpWriteMode = mode;
+            mcpWriteModeUpdatedAt = updatedAt.ToUniversalTime();
+        }
+    }
 
     internal CancellationTokenSource OperationCancellation { get; } = new();
 

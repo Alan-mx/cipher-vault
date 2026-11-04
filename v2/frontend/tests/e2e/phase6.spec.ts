@@ -190,6 +190,80 @@ test("Phase 6 desktop flow, responsive layout and accessibility", async ({
   });
   await assertNoSeriousAxeViolations(page, "settings desktop");
 
+  await page.getByRole("button", { name: "直接写入" }).click();
+  await page.getByRole("button", { name: "确认开启" }).click();
+  await expect(page.getByText("MCP 直接写入已开启。")).toBeVisible();
+  await page.getByRole("button", { name: "草稿模式" }).click();
+  await expect(page.getByText("MCP 已恢复草稿模式。")).toBeVisible();
+
+  const draftSetup = await page.evaluate(async () => {
+    const token = await fetch("/api/vault/antiforgery")
+      .then((response) => response.json())
+      .then((body: { token: string }) => body.token);
+    const created = await fetch("/api/drafts", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-TOKEN": token,
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({
+        draftType: "create",
+        payload: {
+          title: "Review Draft",
+          virtualPath: "notes/review-draft.md",
+          format: "md",
+          content: "# Review Draft\n\nInitial proposal",
+          tags: [],
+        },
+      }),
+    }).then((response) => {
+      if (!response.ok) {
+        throw new Error(`Draft create failed: ${response.status}`);
+      }
+      return response.json();
+    });
+    const reviewed = await fetch(
+      `/api/drafts/${created.draftId}/submit-review`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-TOKEN": token,
+          "Idempotency-Key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          expectedDraftRevision: created.draftRevision,
+        }),
+      },
+    ).then((response) => {
+      if (!response.ok) {
+        throw new Error(`Draft submit failed: ${response.status}`);
+      }
+      return response.json();
+    });
+    return reviewed as {
+      draftId: string;
+      draftRevision: number;
+    };
+  });
+  expect(draftSetup.draftId).toMatch(/^[0-9a-f-]+$/);
+
+  await page.goto("/review");
+  await expect(page.getByRole("heading", { name: "待审核" })).toBeVisible();
+  await page.getByRole("button", { name: /Review Draft/ }).click();
+  await expect(page.locator(".draft-detail textarea")).toBeVisible();
+  await page
+    .locator(".draft-detail textarea")
+    .fill("# Review Draft\n\nReviewed proposal");
+  await page.getByRole("button", { name: "保存编辑" }).click();
+  await expect(page.getByText("草稿已保存。")).toBeVisible();
+  await page.getByRole("button", { name: "送审" }).click();
+  await expect(page.getByText("草稿已进入待审核。")).toBeVisible();
+  await page.getByRole("button", { name: "提交正式文档" }).click();
+  await page.getByRole("button", { name: "确认" }).click();
+  await expect(page.getByText(/已提交为正式文档/)).toBeVisible();
+
   await page.goto(documentUrl);
   await page.getByRole("button", { name: "删除", exact: true }).click();
   await page.getByRole("button", { name: "确认" }).click();
@@ -200,6 +274,9 @@ test("Phase 6 desktop flow, responsive layout and accessibility", async ({
   await expect(page.getByText("文档已恢复。")).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/review");
+  await expect(page.getByRole("heading", { name: "待审核" })).toBeVisible();
+  await assertNoHorizontalOverflow(page);
   await page.goto("/documents");
   await expect(page.getByRole("button", { name: "打开导航" })).toBeVisible();
   await page.screenshot({

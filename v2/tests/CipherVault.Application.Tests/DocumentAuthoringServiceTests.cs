@@ -12,6 +12,7 @@ public sealed class DocumentAuthoringServiceTests
     public async Task AppendIsExactAndAllowsExistingDocumentMetadataUpdateAboveNormalWriteLimit()
     {
         await using var fixture = await VaultApplicationFixture.CreateAsync();
+        _ = await fixture.EnableDirectWriteAsync();
         var actor = new VaultActorContext(VaultActorKind.Mcp);
         var created = await fixture.Documents.CreateAsync(
             new CreateDocumentRequest(
@@ -61,6 +62,7 @@ public sealed class DocumentAuthoringServiceTests
     public async Task PartialUpdatePreservesOmittedValuesAndRewritesAuthoritativeTags()
     {
         await using var fixture = await VaultApplicationFixture.CreateAsync();
+        _ = await fixture.EnableDirectWriteAsync();
         var actor = new VaultActorContext(VaultActorKind.Mcp);
         var created = await fixture.Documents.CreateAsync(
             new CreateDocumentRequest(
@@ -114,6 +116,7 @@ public sealed class DocumentAuthoringServiceTests
     public async Task PartialUpdateRejectsExplicitNullAndEmptyChanges()
     {
         await using var fixture = await VaultApplicationFixture.CreateAsync();
+        _ = await fixture.EnableDirectWriteAsync();
         var actor = new VaultActorContext(VaultActorKind.Mcp);
         var created = await fixture.Documents.CreateAsync(
             new CreateDocumentRequest(
@@ -156,6 +159,7 @@ public sealed class DocumentAuthoringServiceTests
     public async Task TagsOnlyUpdateConvertsScalarFrontMatterTagsToArray()
     {
         await using var fixture = await VaultApplicationFixture.CreateAsync();
+        _ = await fixture.EnableDirectWriteAsync();
         var actor = new VaultActorContext(VaultActorKind.Mcp);
         var created = await fixture.Documents.CreateAsync(
             new CreateDocumentRequest(
@@ -186,6 +190,7 @@ public sealed class DocumentAuthoringServiceTests
     public async Task ContentOnlyMarkdownUpdateDerivesFrontMatterTags()
     {
         await using var fixture = await VaultApplicationFixture.CreateAsync();
+        _ = await fixture.EnableDirectWriteAsync();
         var actor = new VaultActorContext(VaultActorKind.Mcp);
         var created = await fixture.Documents.CreateAsync(
             new CreateDocumentRequest(
@@ -218,6 +223,7 @@ public sealed class DocumentAuthoringServiceTests
     public async Task PartialUpdateRejectsMismatchedTagsWithoutChangingRevision()
     {
         await using var fixture = await VaultApplicationFixture.CreateAsync();
+        _ = await fixture.EnableDirectWriteAsync();
         var actor = new VaultActorContext(VaultActorKind.Mcp);
         var created = await fixture.Documents.CreateAsync(
             new CreateDocumentRequest(
@@ -252,6 +258,7 @@ public sealed class DocumentAuthoringServiceTests
     public async Task PartialUpdateSizeAndNoOpDoNotAdvanceRevisionOrAudit()
     {
         await using var fixture = await VaultApplicationFixture.CreateAsync();
+        _ = await fixture.EnableDirectWriteAsync();
         var actor = new VaultActorContext(VaultActorKind.Mcp);
         var created = await fixture.Documents.CreateAsync(
             new CreateDocumentRequest(
@@ -304,6 +311,7 @@ public sealed class DocumentAuthoringServiceTests
     public async Task ContentAndMatchingTagsUpdateIndicesAndMcpAudit()
     {
         await using var fixture = await VaultApplicationFixture.CreateAsync();
+        _ = await fixture.EnableDirectWriteAsync();
         var actor = new VaultActorContext(VaultActorKind.Mcp, "authoring-audit");
         var created = await fixture.Documents.CreateAsync(
             new CreateDocumentRequest(
@@ -363,6 +371,7 @@ public sealed class DocumentAuthoringServiceTests
     public async Task OversizedAppendLeavesRevisionIndexAndAuditUnchanged()
     {
         await using var fixture = await VaultApplicationFixture.CreateAsync();
+        _ = await fixture.EnableDirectWriteAsync();
         var actor = new VaultActorContext(VaultActorKind.Mcp);
         var created = await fixture.Documents.CreateAsync(
             new CreateDocumentRequest(

@@ -29,6 +29,7 @@ public sealed class DocumentWriteTools
     public Task<CallToolResult> CreateNote(
         string title,
         string content,
+        string idempotencyKey,
         string? folder = null,
         string? virtualPath = null,
         string format = "md",
@@ -46,7 +47,7 @@ public sealed class DocumentWriteTools
                 {
                     throw Invalid("folder and virtualPath cannot both be provided.");
                 }
-                return await documents.CreateAsync(
+                return await documents.CreateIdempotentAsync(
                     new CreateDocumentRequest(
                         title,
                         virtualPath,
@@ -55,6 +56,7 @@ public sealed class DocumentWriteTools
                         content,
                         tags),
                     context.Actor,
+                    ParseIdempotencyKey(idempotencyKey),
                     token);
             },
             cancellationToken);
@@ -65,6 +67,7 @@ public sealed class DocumentWriteTools
         string documentId,
         int expectedRevision,
         string content,
+        string idempotencyKey,
         CancellationToken cancellationToken = default) =>
         invoker.ExecuteAsync(
             McpToolNames.AppendNote,
@@ -74,11 +77,12 @@ public sealed class DocumentWriteTools
                 {
                     throw Invalid("content is required.");
                 }
-                return await authoring.AppendAsync(
+                return await authoring.AppendIdempotentAsync(
                     DocumentReadTools.ParseDocumentId(documentId),
                     expectedRevision,
                     content,
                     context.Actor,
+                    ParseIdempotencyKey(idempotencyKey),
                     token);
             },
             cancellationToken);
@@ -89,14 +93,16 @@ public sealed class DocumentWriteTools
         string documentId,
         int expectedRevision,
         JsonElement changes,
+        string idempotencyKey,
         CancellationToken cancellationToken = default) =>
         invoker.ExecuteAsync(
             McpToolNames.UpdateNote,
-            async (context, token) => await authoring.UpdatePartialAsync(
+            async (context, token) => await authoring.UpdatePartialIdempotentAsync(
                 DocumentReadTools.ParseDocumentId(documentId),
                 expectedRevision,
                 McpPartialUpdateParser.Parse(changes),
                 context.Actor,
+                ParseIdempotencyKey(idempotencyKey),
                 token),
             cancellationToken);
 
@@ -105,6 +111,7 @@ public sealed class DocumentWriteTools
     public Task<CallToolResult> PatchNote(
         string documentId,
         int expectedRevision,
+        string idempotencyKey,
         string targetKind,
         string operation,
         string[]? headingPath = null,
@@ -115,7 +122,7 @@ public sealed class DocumentWriteTools
         CancellationToken cancellationToken = default) =>
         invoker.ExecuteAsync(
             McpToolNames.PatchNote,
-            async (context, token) => await documents.PatchAsync(
+            async (context, token) => await documents.PatchIdempotentAsync(
                 DocumentReadTools.ParseDocumentId(documentId),
                 expectedRevision,
                 new DocumentPatchCommand(
@@ -127,6 +134,7 @@ public sealed class DocumentWriteTools
                     value,
                     dryRun),
                 context.Actor,
+                ParseIdempotencyKey(idempotencyKey),
                 token),
             cancellationToken);
 
@@ -135,13 +143,15 @@ public sealed class DocumentWriteTools
     public Task<CallToolResult> DeleteNote(
         string documentId,
         int expectedRevision,
+        string idempotencyKey,
         CancellationToken cancellationToken = default) =>
         invoker.ExecuteAsync(
             McpToolNames.DeleteNote,
-            async (context, token) => await documents.DeleteAsync(
+            async (context, token) => await documents.DeleteIdempotentAsync(
                 DocumentReadTools.ParseDocumentId(documentId),
                 expectedRevision,
                 context.Actor,
+                ParseIdempotencyKey(idempotencyKey),
                 token),
             cancellationToken);
 
@@ -175,4 +185,11 @@ public sealed class DocumentWriteTools
 
     private static McpToolRequestException Invalid(string message) =>
         new("invalid_input", message);
+
+    private static Guid ParseIdempotencyKey(string value) =>
+        Guid.TryParse(value, out var id) && id != Guid.Empty
+            ? id
+            : throw new McpToolRequestException(
+                "idempotency_key_required",
+                "idempotencyKey must be a non-empty UUID.");
 }

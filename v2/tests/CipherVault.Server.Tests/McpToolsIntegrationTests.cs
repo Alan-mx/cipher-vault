@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace CipherVault.Server.Tests;
 
@@ -14,6 +15,7 @@ public sealed class McpToolsIntegrationTests
         using var unlock = await server.Client.UnlockAsync();
         Assert.Equal(HttpStatusCode.OK, unlock.StatusCode);
         var token = await CreateTokenAsync(server.Client);
+        await server.Client.SetMcpWriteModeAsync("direct");
 
         var created = await CallToolAsync(server.Client, token, "create_note", new
         {
@@ -167,6 +169,7 @@ public sealed class McpToolsIntegrationTests
 
         using var unlockAgain = await server.Client.UnlockAsync();
         Assert.Equal(HttpStatusCode.OK, unlockAgain.StatusCode);
+        await server.Client.SetMcpWriteModeAsync("direct");
         var deleted = await CallToolAsync(server.Client, token, "delete_note", new
         {
             documentId = linkedId,
@@ -183,6 +186,7 @@ public sealed class McpToolsIntegrationTests
         using var unlock = await server.Client.UnlockAsync();
         Assert.Equal(HttpStatusCode.OK, unlock.StatusCode);
         var token = await CreateTokenAsync(server.Client);
+        await server.Client.SetMcpWriteModeAsync("direct");
         _ = await CallToolAsync(server.Client, token, "create_note", new
         {
             title = "First Target",
@@ -222,6 +226,7 @@ public sealed class McpToolsIntegrationTests
         using var unlock = await server.Client.UnlockAsync();
         Assert.Equal(HttpStatusCode.OK, unlock.StatusCode);
         var token = await CreateTokenAsync(server.Client);
+        await server.Client.SetMcpWriteModeAsync("direct");
         var created = await CallToolAsync(server.Client, token, "create_note", new
         {
             title = "Errors",
@@ -249,7 +254,7 @@ public sealed class McpToolsIntegrationTests
                 content = "stale"
             });
         Assert.Equal(
-            "revision_conflict",
+            "document_revision_conflict",
             revisionConflict.GetProperty("code").GetString());
         Assert.Equal(
             1,
@@ -402,6 +407,14 @@ public sealed class McpToolsIntegrationTests
         object arguments,
         int? id = null)
     {
+        var argumentsNode = JsonSerializer.SerializeToNode(arguments)
+            as JsonObject ?? new JsonObject();
+        if (IsSideEffectTool(name)
+            && !argumentsNode.ContainsKey("idempotencyKey"))
+        {
+            argumentsNode["idempotencyKey"] =
+                Guid.NewGuid().ToString("D");
+        }
         var request = new HttpRequestMessage(HttpMethod.Post, "/mcp")
         {
             Content = new StringContent(
@@ -413,7 +426,7 @@ public sealed class McpToolsIntegrationTests
                     @params = new
                     {
                         name,
-                        arguments
+                        arguments = argumentsNode
                     }
                 }),
                 Encoding.UTF8,
@@ -427,4 +440,17 @@ public sealed class McpToolsIntegrationTests
             new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("text/event-stream"));
         return client.SendAsync(request);
     }
+
+    private static bool IsSideEffectTool(string name) =>
+        name is
+            "create_note"
+            or "append_note"
+            or "update_note"
+            or "patch_note"
+            or "delete_note"
+            or "create_draft"
+            or "update_draft"
+            or "rebase_draft"
+            or "submit_draft_for_review"
+            or "discard_draft";
 }

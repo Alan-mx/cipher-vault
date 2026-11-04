@@ -119,6 +119,7 @@ public sealed class TrashServiceTests
     public async Task McpCannotPurgeOrRestoreTrash()
     {
         await using var fixture = await VaultApplicationFixture.CreateAsync();
+        _ = await fixture.EnableDirectWriteAsync();
         var user = new VaultActorContext(VaultActorKind.UserUi);
         var mcp = new VaultActorContext(VaultActorKind.Mcp);
         var created = await fixture.Documents.CreateAsync(

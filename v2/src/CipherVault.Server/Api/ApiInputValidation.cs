@@ -19,4 +19,16 @@ public static class ApiInputValidation
 
         return value;
     }
+
+    public static Guid RequireIdempotencyKey(string? value)
+    {
+        if (!Guid.TryParse(value, out var key) || key == Guid.Empty)
+        {
+            throw new ApiRequestException(
+                StatusCodes.Status400BadRequest,
+                ApiErrorCodes.IdempotencyKeyRequired,
+                "Idempotency-Key must be a non-empty UUID.");
+        }
+        return key;
+    }
 }

@@ -14,6 +14,35 @@ public static class DocumentMutationWriter
         CreateDocumentRequest request,
         VaultActorContext actor,
         DateTimeOffset now,
+        CancellationToken cancellationToken) =>
+        await CreateCoreAsync(
+            context,
+            request,
+            actor,
+            now,
+            DocumentContentLimitMode.StandardWrite,
+            cancellationToken);
+
+    internal static async Task<DocumentWriteResult> CreateForDraftAsync(
+        VaultOperationContext context,
+        CreateDocumentRequest request,
+        VaultActorContext actor,
+        DateTimeOffset now,
+        CancellationToken cancellationToken) =>
+        await CreateCoreAsync(
+            context,
+            request,
+            actor,
+            now,
+            DocumentContentLimitMode.ExistingDocumentAuthoring,
+            cancellationToken);
+
+    private static async Task<DocumentWriteResult> CreateCoreAsync(
+        VaultOperationContext context,
+        CreateDocumentRequest request,
+        VaultActorContext actor,
+        DateTimeOffset now,
+        DocumentContentLimitMode limitMode,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -27,7 +56,8 @@ public static class DocumentMutationWriter
             request.Folder,
             request.Format,
             request.Content,
-            request.Tags);
+            request.Tags,
+            limitMode);
         var documentId = Guid.NewGuid();
         try
         {

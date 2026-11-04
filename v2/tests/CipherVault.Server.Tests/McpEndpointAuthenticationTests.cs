@@ -130,7 +130,7 @@ public sealed class McpEndpointAuthenticationTests
     }
 
     [Fact]
-    public async Task ToolsListContainsFifteenToolsAndVaultStatusCallable()
+    public async Task ToolsListContainsAllKnowledgeAndDraftTools()
     {
         await using var server = await ServerTestApplication.CreateAsync(
             initializeVault: true);
@@ -168,7 +168,9 @@ public sealed class McpEndpointAuthenticationTests
             "vault_status", "list_notes", "read_note", "search_notes",
             "scan_notes", "list_tags", "get_document_map", "get_backlinks",
             "find_unlinked_mentions", "get_local_graph", "create_note",
-            "append_note", "update_note", "patch_note", "delete_note"
+            "append_note", "update_note", "patch_note", "delete_note",
+            "list_drafts", "read_draft", "create_draft", "update_draft",
+            "rebase_draft", "submit_draft_for_review", "discard_draft"
         };
         Assert.All(
             expected,

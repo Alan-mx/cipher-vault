@@ -17,4 +17,11 @@ public static class McpToolNames
     public const string UpdateNote = "update_note";
     public const string PatchNote = "patch_note";
     public const string DeleteNote = "delete_note";
+    public const string ListDrafts = "list_drafts";
+    public const string ReadDraft = "read_draft";
+    public const string CreateDraft = "create_draft";
+    public const string UpdateDraft = "update_draft";
+    public const string RebaseDraft = "rebase_draft";
+    public const string SubmitDraftForReview = "submit_draft_for_review";
+    public const string DiscardDraft = "discard_draft";
 }

@@ -35,8 +35,10 @@ public sealed class McpToolInvoker
         try
         {
             var result = await action(context, cancellationToken);
-            var json = JsonSerializer.Serialize(result, JsonOptions);
-            return Success(json);
+            var structured = JsonSerializer.SerializeToElement(
+                result,
+                JsonOptions);
+            return Success(structured);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -47,33 +49,37 @@ public sealed class McpToolInvoker
             var error = McpToolErrorMapper.Map(
                 exception,
                 context.CorrelationId);
-            var json = JsonSerializer.Serialize(error, JsonOptions);
-            return Error(json);
+            var structured = JsonSerializer.SerializeToElement(
+                error,
+                JsonOptions);
+            return Error(structured);
         }
     }
 
-    private static CallToolResult Success(string json) =>
+    private static CallToolResult Success(JsonElement structured) =>
         new()
         {
             IsError = false,
+            StructuredContent = structured,
             Content =
             [
                 new TextContentBlock
                 {
-                    Text = json
+                    Text = structured.GetRawText()
                 }
             ]
         };
 
-    private static CallToolResult Error(string json) =>
+    private static CallToolResult Error(JsonElement structured) =>
         new()
         {
             IsError = true,
+            StructuredContent = structured,
             Content =
             [
                 new TextContentBlock
                 {
-                    Text = json
+                    Text = structured.GetRawText()
                 }
             ]
         };

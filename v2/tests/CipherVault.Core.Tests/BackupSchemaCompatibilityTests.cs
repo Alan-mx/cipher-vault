@@ -14,12 +14,13 @@ public sealed class BackupSchemaCompatibilityTests
         Assert.Equal(5, BackupCompatibilityPolicy.MinimumSupportedSchemaVersion);
         Assert.False(BackupCompatibilityPolicy.IsSupported(4));
         Assert.True(BackupCompatibilityPolicy.IsSupported(5));
-        Assert.False(BackupCompatibilityPolicy.IsSupported(6));
+        Assert.True(BackupCompatibilityPolicy.IsSupported(6));
+        Assert.False(BackupCompatibilityPolicy.IsSupported(7));
     }
 
     [Theory]
     [InlineData(4)]
-    [InlineData(6)]
+    [InlineData(7)]
     public async Task RestoreRejectsSchemaOutsideSupportedRange(
         int schemaVersion)
     {
@@ -157,13 +158,13 @@ public sealed class BackupSchemaCompatibilityTests
             var migrations = DatabaseMigrationCatalog.Load()
                 .Take(schemaVersion)
                 .ToArray();
-            if (schemaVersion == 6)
+            if (schemaVersion > DatabaseMigrationCatalog.CurrentVersion)
             {
                 migrations =
                 [
                     .. migrations,
                     new DatabaseMigration(
-                        6,
+                        schemaVersion,
                         "compatibility_probe",
                         "CREATE TABLE compatibility_probe(id INTEGER PRIMARY KEY) STRICT;",
                         new string('a', 64))

@@ -42,7 +42,8 @@ public sealed class TrashService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(actor);
-        var result = await sessionManager.ExecuteAsync(
+        var result = await sessionManager.ExecuteDocumentWriteAsync(
+            actor,
             async (context, token) =>
             {
                 await context.BeginTransactionAsync(token);
@@ -72,7 +73,8 @@ public sealed class TrashService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(actor);
-        var result = await sessionManager.ExecuteAsync(
+        var result = await sessionManager.ExecuteDocumentWriteAsync(
+            actor,
             async (context, token) =>
             {
                 await context.BeginTransactionAsync(token);

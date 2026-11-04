@@ -26,6 +26,11 @@
       "version": 5,
       "name": "plaintext_export_audit_phase",
       "sha256": "dbaa9573aebb09e0b4c3d08613f916bf34c57029e0ccc59545830e0008ddf886"
+    },
+    {
+      "version": 6,
+      "name": "knowledge_drafts",
+      "sha256": "6cd4ef28d2b9d5f3cfa1aee1ed5016f114380c10c7f831e3226182e535f04113"
     }
   ]
 }

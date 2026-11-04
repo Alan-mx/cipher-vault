@@ -1,7 +1,9 @@
 using CipherVault.Core.Documents;
 using CipherVault.Core.Storage.Documents;
 using CipherVault.Application.Backup;
+using CipherVault.Application.Drafts;
 using CipherVault.Application.Vault;
+using CipherVault.Core.Drafts;
 
 namespace CipherVault.Application.Documents;
 
@@ -10,37 +12,78 @@ public sealed class DocumentService
     private readonly VaultSessionManager sessionManager;
     private readonly TimeProvider timeProvider;
     private readonly IDocumentMutationObserver? mutationObserver;
+    private readonly IdempotencyService idempotency;
 
     public DocumentService(
         VaultSessionManager sessionManager,
         TimeProvider? timeProvider = null,
-        IDocumentMutationObserver? mutationObserver = null)
+        IDocumentMutationObserver? mutationObserver = null,
+        IdempotencyService? idempotency = null)
     {
         this.sessionManager = sessionManager ??
             throw new ArgumentNullException(nameof(sessionManager));
         this.timeProvider = timeProvider ?? TimeProvider.System;
         this.mutationObserver = mutationObserver;
+        this.idempotency = idempotency ?? new IdempotencyService();
     }
 
     public async Task<DocumentWriteResult> CreateAsync(
         CreateDocumentRequest request,
         VaultActorContext actor,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        await CreateCoreAsync(
+            request,
+            actor,
+            idempotencyKey: null,
+            cancellationToken);
+
+    public async Task<DocumentWriteResult> CreateIdempotentAsync(
+        CreateDocumentRequest request,
+        VaultActorContext actor,
+        Guid idempotencyKey,
+        CancellationToken cancellationToken = default) =>
+        await CreateCoreAsync(
+            request,
+            actor,
+            idempotencyKey,
+            cancellationToken);
+
+    private async Task<DocumentWriteResult> CreateCoreAsync(
+        CreateDocumentRequest request,
+        VaultActorContext actor,
+        Guid? idempotencyKey,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(actor);
-        var result = await sessionManager.ExecuteAsync(
+        var result = await sessionManager.ExecuteDocumentWriteAsync(
+            actor,
             async (context, token) =>
             {
-                await context.BeginTransactionAsync(token);
-                var result = await DocumentMutationWriter.CreateAsync(
+                var now = timeProvider.GetUtcNow();
+                return await IdempotentDocumentWrite.ExecuteAsync(
                     context,
-                    request,
                     actor,
-                    timeProvider.GetUtcNow(),
+                    idempotencyKey,
+                    IdempotencyOperation.DocumentCreate,
+                    new
+                    {
+                        request.Title,
+                        request.VirtualPath,
+                        request.Folder,
+                        format = request.Format,
+                        request.Content,
+                        request.Tags
+                    },
+                    idempotency,
+                    now,
+                    () => DocumentMutationWriter.CreateAsync(
+                        context,
+                        request,
+                        actor,
+                        now,
+                        token),
                     token);
-                await context.CommitTransactionAsync(token);
-                return result;
             },
             cancellationToken);
         if (result.AuditEventId is not null)
@@ -98,24 +141,67 @@ public sealed class DocumentService
         int expectedRevision,
         UpdateDocumentRequest request,
         VaultActorContext actor,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        await UpdateCoreAsync(
+            documentId,
+            expectedRevision,
+            request,
+            actor,
+            idempotencyKey: null,
+            cancellationToken);
+
+    public async Task<DocumentWriteResult> UpdateIdempotentAsync(
+        Guid documentId,
+        int expectedRevision,
+        UpdateDocumentRequest request,
+        VaultActorContext actor,
+        Guid idempotencyKey,
+        CancellationToken cancellationToken = default) =>
+        await UpdateCoreAsync(
+            documentId,
+            expectedRevision,
+            request,
+            actor,
+            idempotencyKey,
+            cancellationToken);
+
+    private async Task<DocumentWriteResult> UpdateCoreAsync(
+        Guid documentId,
+        int expectedRevision,
+        UpdateDocumentRequest request,
+        VaultActorContext actor,
+        Guid? idempotencyKey,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(actor);
-        var result = await sessionManager.ExecuteAsync(
+        var result = await sessionManager.ExecuteDocumentWriteAsync(
+            actor,
             async (context, token) =>
             {
-                await context.BeginTransactionAsync(token);
-                var result = await DocumentMutationWriter.UpdateAsync(
+                var now = timeProvider.GetUtcNow();
+                return await IdempotentDocumentWrite.ExecuteAsync(
                     context,
-                    documentId,
-                    expectedRevision,
-                    request,
                     actor,
-                    timeProvider.GetUtcNow(),
+                    idempotencyKey,
+                    IdempotencyOperation.DocumentUpdate,
+                    new
+                    {
+                        documentId,
+                        expectedRevision,
+                        request
+                    },
+                    idempotency,
+                    now,
+                    () => DocumentMutationWriter.UpdateAsync(
+                        context,
+                        documentId,
+                        expectedRevision,
+                        request,
+                        actor,
+                        now,
+                        token),
                     token);
-                await context.CommitTransactionAsync(token);
-                return result;
             },
             cancellationToken);
         if (result.AuditEventId is not null)
@@ -170,31 +256,78 @@ public sealed class DocumentService
         int expectedRevision,
         DocumentPatchCommand command,
         VaultActorContext actor,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        await PatchCoreAsync(
+            documentId,
+            expectedRevision,
+            command,
+            actor,
+            idempotencyKey: null,
+            cancellationToken);
+
+    public async Task<PatchResult> PatchIdempotentAsync(
+        Guid documentId,
+        int expectedRevision,
+        DocumentPatchCommand command,
+        VaultActorContext actor,
+        Guid idempotencyKey,
+        CancellationToken cancellationToken = default) =>
+        await PatchCoreAsync(
+            documentId,
+            expectedRevision,
+            command,
+            actor,
+            idempotencyKey,
+            cancellationToken);
+
+    private async Task<PatchResult> PatchCoreAsync(
+        Guid documentId,
+        int expectedRevision,
+        DocumentPatchCommand command,
+        VaultActorContext actor,
+        Guid? idempotencyKey,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
         ArgumentNullException.ThrowIfNull(actor);
-        var result = await sessionManager.ExecuteAsync(
+        var result = await sessionManager.ExecuteDocumentWriteAsync(
+            actor,
             async (context, token) =>
             {
-                if (!command.DryRun)
+                var now = timeProvider.GetUtcNow();
+                if (idempotencyKey is null && command.DryRun)
                 {
-                    await context.BeginTransactionAsync(token);
+                    return await DocumentPatchWriter.ApplyAsync(
+                        context,
+                        documentId,
+                        expectedRevision,
+                        command,
+                        actor,
+                        now,
+                        token);
                 }
-
-                var result = await DocumentPatchWriter.ApplyAsync(
+                return await IdempotentDocumentWrite.ExecuteAsync(
                     context,
-                    documentId,
-                    expectedRevision,
-                    command,
                     actor,
-                    timeProvider.GetUtcNow(),
+                    idempotencyKey,
+                    IdempotencyOperation.DocumentPatch,
+                    new
+                    {
+                        documentId,
+                        expectedRevision,
+                        command
+                    },
+                    idempotency,
+                    now,
+                    () => DocumentPatchWriter.ApplyAsync(
+                        context,
+                        documentId,
+                        expectedRevision,
+                        command,
+                        actor,
+                        now,
+                        token),
                     token);
-                if (!command.DryRun)
-                {
-                    await context.CommitTransactionAsync(token);
-                }
-                return result;
             },
             cancellationToken);
         if (!command.DryRun && result.AuditEventId is not null)
@@ -209,22 +342,56 @@ public sealed class DocumentService
         Guid documentId,
         int expectedRevision,
         VaultActorContext actor,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        await DeleteCoreAsync(
+            documentId,
+            expectedRevision,
+            actor,
+            idempotencyKey: null,
+            cancellationToken);
+
+    public async Task<TrashDeleteResult> DeleteIdempotentAsync(
+        Guid documentId,
+        int expectedRevision,
+        VaultActorContext actor,
+        Guid idempotencyKey,
+        CancellationToken cancellationToken = default) =>
+        await DeleteCoreAsync(
+            documentId,
+            expectedRevision,
+            actor,
+            idempotencyKey,
+            cancellationToken);
+
+    private async Task<TrashDeleteResult> DeleteCoreAsync(
+        Guid documentId,
+        int expectedRevision,
+        VaultActorContext actor,
+        Guid? idempotencyKey,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(actor);
-        var result = await sessionManager.ExecuteAsync(
+        var result = await sessionManager.ExecuteDocumentWriteAsync(
+            actor,
             async (context, token) =>
             {
-                await context.BeginTransactionAsync(token);
-                var result = await DocumentMutationWriter.DeleteAsync(
+                var now = timeProvider.GetUtcNow();
+                return await IdempotentDocumentWrite.ExecuteAsync(
                     context,
-                    documentId,
-                    expectedRevision,
                     actor,
-                    timeProvider.GetUtcNow(),
+                    idempotencyKey,
+                    IdempotencyOperation.DocumentDelete,
+                    new { documentId, expectedRevision },
+                    idempotency,
+                    now,
+                    () => DocumentMutationWriter.DeleteAsync(
+                        context,
+                        documentId,
+                        expectedRevision,
+                        actor,
+                        now,
+                        token),
                     token);
-                await context.CommitTransactionAsync(token);
-                return result;
             },
             cancellationToken);
         if (result.AuditEventId is not null)

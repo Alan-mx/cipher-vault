@@ -1,7 +1,9 @@
 using System.Text;
 using CipherVault.Application.Backup;
+using CipherVault.Application.Drafts;
 using CipherVault.Application.Vault;
 using CipherVault.Core.Documents;
+using CipherVault.Core.Drafts;
 using CipherVault.Core.Errors;
 using CipherVault.Core.Storage.Documents;
 
@@ -15,16 +17,19 @@ public sealed class DocumentAuthoringService
     private readonly VaultSessionManager sessionManager;
     private readonly TimeProvider timeProvider;
     private readonly IDocumentMutationObserver? mutationObserver;
+    private readonly IdempotencyService idempotency;
 
     public DocumentAuthoringService(
         VaultSessionManager sessionManager,
         TimeProvider? timeProvider = null,
-        IDocumentMutationObserver? mutationObserver = null)
+        IDocumentMutationObserver? mutationObserver = null,
+        IdempotencyService? idempotency = null)
     {
         this.sessionManager = sessionManager ??
             throw new ArgumentNullException(nameof(sessionManager));
         this.timeProvider = timeProvider ?? TimeProvider.System;
         this.mutationObserver = mutationObserver;
+        this.idempotency = idempotency ?? new IdempotencyService();
     }
 
     public async Task<DocumentWriteResult> AppendAsync(
@@ -32,45 +37,86 @@ public sealed class DocumentAuthoringService
         int expectedRevision,
         string content,
         VaultActorContext actor,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        await AppendCoreAsync(
+            documentId,
+            expectedRevision,
+            content,
+            actor,
+            idempotencyKey: null,
+            cancellationToken);
+
+    public async Task<DocumentWriteResult> AppendIdempotentAsync(
+        Guid documentId,
+        int expectedRevision,
+        string content,
+        VaultActorContext actor,
+        Guid idempotencyKey,
+        CancellationToken cancellationToken = default) =>
+        await AppendCoreAsync(
+            documentId,
+            expectedRevision,
+            content,
+            actor,
+            idempotencyKey,
+            cancellationToken);
+
+    private async Task<DocumentWriteResult> AppendCoreAsync(
+        Guid documentId,
+        int expectedRevision,
+        string content,
+        VaultActorContext actor,
+        Guid? idempotencyKey,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(content);
         ArgumentNullException.ThrowIfNull(actor);
-        var result = await sessionManager.ExecuteAsync(
+        var result = await sessionManager.ExecuteDocumentWriteAsync(
+            actor,
             async (context, token) =>
             {
-                await context.BeginTransactionAsync(token);
-                var current = await ReadCurrentAsync(
+                var now = timeProvider.GetUtcNow();
+                return await IdempotentDocumentWrite.ExecuteAsync(
                     context,
-                    documentId,
-                    token);
-                var appendBytes = Encoding.UTF8.GetByteCount(content);
-                if (appendBytes > MaxAppendBytes)
-                {
-                    throw TooLarge();
-                }
-
-                var updatedContent = current.Content + content;
-                if (Encoding.UTF8.GetByteCount(updatedContent) > MaxDocumentBytes)
-                {
-                    throw TooLarge();
-                }
-
-                var result = await DocumentMutationWriter.UpdateAuthoringAsync(
-                    context,
-                    documentId,
-                    expectedRevision,
-                    new UpdateDocumentRequest(
-                        current.Metadata.Title,
-                        current.Metadata.VirtualPath,
-                        updatedContent,
-                        current.Metadata.Tags,
-                        UpdateBacklinks: false),
                     actor,
-                    timeProvider.GetUtcNow(),
+                    idempotencyKey,
+                    IdempotencyOperation.DocumentAppend,
+                    new { documentId, expectedRevision, content },
+                    idempotency,
+                    now,
+                    async () =>
+                    {
+                        var current = await ReadCurrentAsync(
+                            context,
+                            documentId,
+                            token);
+                        var appendBytes = Encoding.UTF8.GetByteCount(content);
+                        if (appendBytes > MaxAppendBytes)
+                        {
+                            throw TooLarge();
+                        }
+
+                        var updatedContent = current.Content + content;
+                        if (Encoding.UTF8.GetByteCount(updatedContent) > MaxDocumentBytes)
+                        {
+                            throw TooLarge();
+                        }
+
+                        return await DocumentMutationWriter.UpdateAuthoringAsync(
+                            context,
+                            documentId,
+                            expectedRevision,
+                            new UpdateDocumentRequest(
+                                current.Metadata.Title,
+                                current.Metadata.VirtualPath,
+                                updatedContent,
+                                current.Metadata.Tags,
+                                UpdateBacklinks: false),
+                            actor,
+                            now,
+                            token);
+                    },
                     token);
-                await context.CommitTransactionAsync(token);
-                return result;
             },
             cancellationToken);
         if (result.AuditEventId is not null)
@@ -85,77 +131,118 @@ public sealed class DocumentAuthoringService
         int expectedRevision,
         DocumentPartialUpdate update,
         VaultActorContext actor,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        await UpdatePartialCoreAsync(
+            documentId,
+            expectedRevision,
+            update,
+            actor,
+            idempotencyKey: null,
+            cancellationToken);
+
+    public async Task<DocumentWriteResult> UpdatePartialIdempotentAsync(
+        Guid documentId,
+        int expectedRevision,
+        DocumentPartialUpdate update,
+        VaultActorContext actor,
+        Guid idempotencyKey,
+        CancellationToken cancellationToken = default) =>
+        await UpdatePartialCoreAsync(
+            documentId,
+            expectedRevision,
+            update,
+            actor,
+            idempotencyKey,
+            cancellationToken);
+
+    private async Task<DocumentWriteResult> UpdatePartialCoreAsync(
+        Guid documentId,
+        int expectedRevision,
+        DocumentPartialUpdate update,
+        VaultActorContext actor,
+        Guid? idempotencyKey,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(update);
         ArgumentNullException.ThrowIfNull(actor);
         ValidatePresence(update);
-        var result = await sessionManager.ExecuteAsync(
+        var result = await sessionManager.ExecuteDocumentWriteAsync(
+            actor,
             async (context, token) =>
             {
-                await context.BeginTransactionAsync(token);
-                var current = await ReadCurrentAsync(
+                var now = timeProvider.GetUtcNow();
+                return await IdempotentDocumentWrite.ExecuteAsync(
                     context,
-                    documentId,
-                    token);
-                var content = update.Content.IsSpecified
-                    ? RequireContent(update.Content.Value)
-                    : current.Content;
-                var tags = update.Tags.IsSpecified
-                    ? RequireTags(update.Tags.Value)
-                    : current.Metadata.Tags;
-
-                if (update.Content.IsSpecified
-                    && Encoding.UTF8.GetByteCount(content) > MaxPartialContentBytes)
-                {
-                    throw TooLarge();
-                }
-
-                if (!update.Content.IsSpecified && update.Tags.IsSpecified)
-                {
-                    if (current.Metadata.Format == VaultDocumentFormat.Markdown)
-                    {
-                        content = DocumentContentAuthoring.RewriteFrontMatterTags(
-                            content,
-                            tags);
-                    }
-                }
-                else if (update.Content.IsSpecified && !update.Tags.IsSpecified)
-                {
-                    tags = DocumentContentAuthoring.ResolveEffectiveTags(
-                        current.Metadata.Format,
-                        content,
-                        current.Metadata.Tags);
-                }
-
-                if (Encoding.UTF8.GetByteCount(content) > MaxDocumentBytes)
-                {
-                    throw TooLarge();
-                }
-
-                var result = await DocumentMutationWriter.UpdateAuthoringAsync(
-                    context,
-                    documentId,
-                    expectedRevision,
-                    new UpdateDocumentRequest(
-                        update.Title.IsSpecified
-                            ? RequireString(update.Title.Value, "title")
-                            : current.Metadata.Title,
-                        update.VirtualPath.IsSpecified
-                            ? RequireString(update.VirtualPath.Value, "virtualPath")
-                            : current.Metadata.VirtualPath,
-                        content,
-                        tags,
-                        update.UpdateBacklinks.IsSpecified
-                            ? RequireBoolean(
-                                update.UpdateBacklinks.Value,
-                                "updateBacklinks")
-                            : false),
                     actor,
-                    timeProvider.GetUtcNow(),
+                    idempotencyKey,
+                    IdempotencyOperation.DocumentUpdate,
+                    new { documentId, expectedRevision, update },
+                    idempotency,
+                    now,
+                    async () =>
+                    {
+                        var current = await ReadCurrentAsync(
+                            context,
+                            documentId,
+                            token);
+                        var content = update.Content.IsSpecified
+                            ? RequireContent(update.Content.Value)
+                            : current.Content;
+                        var tags = update.Tags.IsSpecified
+                            ? RequireTags(update.Tags.Value)
+                            : current.Metadata.Tags;
+
+                        if (update.Content.IsSpecified
+                            && Encoding.UTF8.GetByteCount(content) > MaxPartialContentBytes)
+                        {
+                            throw TooLarge();
+                        }
+
+                        if (!update.Content.IsSpecified && update.Tags.IsSpecified)
+                        {
+                            if (current.Metadata.Format == VaultDocumentFormat.Markdown)
+                            {
+                                content = DocumentContentAuthoring.RewriteFrontMatterTags(
+                                    content,
+                                    tags);
+                            }
+                        }
+                        else if (update.Content.IsSpecified && !update.Tags.IsSpecified)
+                        {
+                            tags = DocumentContentAuthoring.ResolveEffectiveTags(
+                                current.Metadata.Format,
+                                content,
+                                current.Metadata.Tags);
+                        }
+
+                        if (Encoding.UTF8.GetByteCount(content) > MaxDocumentBytes)
+                        {
+                            throw TooLarge();
+                        }
+
+                        return await DocumentMutationWriter.UpdateAuthoringAsync(
+                            context,
+                            documentId,
+                            expectedRevision,
+                            new UpdateDocumentRequest(
+                                update.Title.IsSpecified
+                                    ? RequireString(update.Title.Value, "title")
+                                    : current.Metadata.Title,
+                                update.VirtualPath.IsSpecified
+                                    ? RequireString(update.VirtualPath.Value, "virtualPath")
+                                    : current.Metadata.VirtualPath,
+                                content,
+                                tags,
+                                update.UpdateBacklinks.IsSpecified
+                                    ? RequireBoolean(
+                                        update.UpdateBacklinks.Value,
+                                        "updateBacklinks")
+                                    : false),
+                            actor,
+                            now,
+                            token).ConfigureAwait(false);
+                    },
                     token);
-                await context.CommitTransactionAsync(token);
-                return result;
             },
             cancellationToken);
         if (result.AuditEventId is not null)

@@ -385,7 +385,7 @@ internal static class DocumentPatchEngine
         return headings;
     }
 
-    private static (string Text, bool Truncated) BuildUnifiedDiff(
+    internal static (string Text, bool Truncated) BuildUnifiedDiff(
         string before,
         string after)
     {

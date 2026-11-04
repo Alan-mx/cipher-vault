@@ -338,7 +338,7 @@ export const useDocumentStore = defineStore("document", () => {
     }
     if (conflict.value) {
       throw new ApiClientError(409, {
-        code: "revision_conflict",
+        code: "document_revision_conflict",
         message: "请先处理当前 Revision 冲突。",
       });
     }
@@ -399,7 +399,7 @@ export const useDocumentStore = defineStore("document", () => {
       if (documentGeneration === requestGeneration && documentId.value === id) {
         if (
           caught instanceof ApiClientError &&
-          caught.code === "revision_conflict"
+          caught.code === "document_revision_conflict"
         ) {
           const value = caught.details.currentRevision;
           conflict.value = {

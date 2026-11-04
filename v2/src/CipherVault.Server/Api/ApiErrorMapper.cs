@@ -9,8 +9,10 @@ public static class ApiErrorMapper
     private static readonly HashSet<string> SafeDetailKeys =
     [
         "currentRevision",
+        "currentDraftRevision",
         "candidateHeadingPaths",
         "documentId",
+        "draftId",
         "revisionId",
         "errorCode",
         "importItemIndex",
@@ -18,7 +20,10 @@ public static class ApiErrorMapper
         "maximum",
         "actualBytes",
         "purgeEligibleAt",
-        "retryAfterSeconds"
+        "retryAfterSeconds",
+        "mode",
+        "sessionGeneration",
+        "status"
     ];
 
     public static ApiFailure Map(Exception exception) =>
@@ -127,6 +132,46 @@ public static class ApiErrorMapper
                 StatusCodes.Status409Conflict,
                 ApiErrorCodes.RevisionConflict,
                 "Document revision changed."),
+            VaultErrorCode.DraftRevisionConflict => Failure(
+                StatusCodes.Status409Conflict,
+                ApiErrorCodes.DraftRevisionConflict,
+                "Document draft revision changed."),
+            VaultErrorCode.DraftNotFound => Failure(
+                StatusCodes.Status404NotFound,
+                ApiErrorCodes.DraftNotFound,
+                "Document draft was not found."),
+            VaultErrorCode.DraftNotEditable => Failure(
+                StatusCodes.Status409Conflict,
+                ApiErrorCodes.DraftNotEditable,
+                "Document draft state does not allow this operation."),
+            VaultErrorCode.DraftOperationInvalid => Failure(
+                StatusCodes.Status400BadRequest,
+                ApiErrorCodes.DraftOperationInvalid,
+                "Document draft operation is invalid."),
+            VaultErrorCode.DraftPayloadTooLarge => Failure(
+                StatusCodes.Status413PayloadTooLarge,
+                ApiErrorCodes.DraftPayloadTooLarge,
+                "Document draft payload is too large."),
+            VaultErrorCode.DraftLimitExceeded => Failure(
+                StatusCodes.Status409Conflict,
+                ApiErrorCodes.DraftLimitExceeded,
+                "The active document draft limit was reached."),
+            VaultErrorCode.DraftStorageLimitExceeded => Failure(
+                StatusCodes.Status409Conflict,
+                ApiErrorCodes.DraftStorageLimitExceeded,
+                "The active document draft storage limit was reached."),
+            VaultErrorCode.WriteModeDraftRequired => Failure(
+                StatusCodes.Status409Conflict,
+                ApiErrorCodes.WriteModeDraftRequired,
+                "MCP document writes require Direct Write Mode."),
+            VaultErrorCode.IdempotencyKeyRequired => Failure(
+                StatusCodes.Status400BadRequest,
+                ApiErrorCodes.IdempotencyKeyRequired,
+                "An idempotency key is required."),
+            VaultErrorCode.IdempotencyKeyReused => Failure(
+                StatusCodes.Status409Conflict,
+                ApiErrorCodes.IdempotencyKeyReused,
+                "The idempotency key was used for a different request."),
             VaultErrorCode.PatchTargetAmbiguous => Failure(
                 StatusCodes.Status409Conflict,
                 ApiErrorCodes.PatchTargetAmbiguous,

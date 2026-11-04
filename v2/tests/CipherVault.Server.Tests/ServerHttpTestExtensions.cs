@@ -70,4 +70,23 @@ internal static class ServerHttpTestExtensions
         request.Headers.TryAddWithoutValidation("If-Match", $"\"{revision}\"");
         return client.SendAsync(request);
     }
+
+    internal static async Task SetMcpWriteModeAsync(
+        this HttpClient client,
+        string mode)
+    {
+        var token = await client.GetAntiforgeryTokenAsync();
+        var request = new HttpRequestMessage(
+            HttpMethod.Put,
+            "/api/vault/session/mcp-write-mode")
+        {
+            Content = JsonContent.Create(new { mode })
+        };
+        request.Headers.Add("X-CSRF-TOKEN", token);
+        request.Headers.Add(
+            "Idempotency-Key",
+            Guid.NewGuid().ToString("D"));
+        using var response = await client.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+    }
 }

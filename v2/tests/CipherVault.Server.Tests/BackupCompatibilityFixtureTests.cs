@@ -99,9 +99,11 @@ public sealed class BackupCompatibilityFixtureTests
             Assert.NotNull(restoreResult);
             Assert.Equal(5, restoreResult.SchemaVersion);
             Assert.Equal(5, restoreResult.SourceSchemaVersion);
-            Assert.Equal(5, restoreResult.CurrentSchemaVersion);
-            Assert.False(restoreResult.SchemaMigrationPending);
-            Assert.Null(restoreResult.MigrationTrigger);
+            Assert.Equal(6, restoreResult.CurrentSchemaVersion);
+            Assert.True(restoreResult.SchemaMigrationPending);
+            Assert.Equal(
+                BackupMigrationTriggers.FirstUnlock,
+                restoreResult.MigrationTrigger);
             Assert.True(File.Exists(Path.Combine(target, "vault.db")));
             Assert.True(File.Exists(Path.Combine(target, "vault.key")));
 
@@ -150,6 +152,23 @@ public sealed class BackupCompatibilityFixtureTests
             Assert.Equal(VaultSessionState.Locked, manager.State);
             var status = await manager.UnlockAsync(metadata.TestPassword);
             Assert.Equal(VaultSessionState.Unlocked, status.State);
+            var upgradedSchema = await manager.ExecuteAsync(
+                async (context, token) =>
+                {
+                    using var command = context.CreateCommand();
+                    command.Command.CommandText =
+                        """
+                        SELECT
+                            (SELECT value FROM vault_meta WHERE key = 'schema_version'),
+                            (SELECT count(*) FROM sqlite_master
+                             WHERE name IN ('document_drafts', 'idempotency_records'));
+                        """;
+                    await using var reader =
+                        await command.Command.ExecuteReaderAsync(token);
+                    Assert.True(await reader.ReadAsync(token));
+                    return (reader.GetString(0), reader.GetInt32(1));
+                });
+            Assert.Equal(("6", 2), upgradedSchema);
             Assert.Equal(
                 fixtureHashBefore,
                 await HashFileAsync(BackupCompatibilityFixture.PackagePath));
@@ -161,7 +180,7 @@ public sealed class BackupCompatibilityFixtureTests
     }
 
     [Fact]
-    public async Task SchemaFiveFixtureCanBeUpgradedByInjectedMigrationSix()
+    public async Task SchemaFiveFixtureUpgradesWithPublishedMigrationSix()
     {
         var metadata = await BackupCompatibilityFixture.ReadMetadataAsync(
             CancellationToken.None);
@@ -192,16 +211,11 @@ public sealed class BackupCompatibilityFixtureTests
                     staging,
                     material,
                     create: false);
-            var migrationSix = new DatabaseMigration(
-                6,
-                "fixture_upgrade_probe",
-                "CREATE TABLE fixture_upgrade_probe(id INTEGER PRIMARY KEY) STRICT;",
-                new string('d', 64));
             var upgraded = await DatabaseInitializer.EnsureSchemaAsync(
                 session.Connection,
                 material.VaultId,
                 DateTimeOffset.UtcNow,
-                [.. DatabaseMigrationCatalog.Load(), migrationSix],
+                DatabaseMigrationCatalog.Load(),
                 CancellationToken.None);
 
             Assert.Equal(6, upgraded.SchemaVersion);

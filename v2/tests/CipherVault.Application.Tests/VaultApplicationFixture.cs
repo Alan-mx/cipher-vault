@@ -1,4 +1,5 @@
 using CipherVault.Application.Audit;
+using CipherVault.Application.Drafts;
 using CipherVault.Application.Documents;
 using CipherVault.Application.Graph;
 using CipherVault.Application.Import;
@@ -27,6 +28,15 @@ internal sealed class VaultApplicationFixture : IAsyncDisposable
         Graph = new GraphService(manager);
         Import = new ImportService(manager, timeProvider);
         Audit = new AuditQueryService(manager, timeProvider);
+        Idempotency = new IdempotencyService();
+        Drafts = new DocumentDraftService(
+            manager,
+            Idempotency,
+            timeProvider);
+        WriteMode = new McpWriteModeService(
+            manager,
+            Idempotency,
+            timeProvider);
     }
 
     internal string Parent { get; }
@@ -52,6 +62,12 @@ internal sealed class VaultApplicationFixture : IAsyncDisposable
     internal ImportService Import { get; }
 
     internal AuditQueryService Audit { get; }
+
+    internal IdempotencyService Idempotency { get; }
+
+    internal DocumentDraftService Drafts { get; }
+
+    internal McpWriteModeService WriteMode { get; }
 
     internal static async Task<VaultApplicationFixture> CreateAsync(
         TimeProvider? timeProvider = null)
@@ -91,6 +107,14 @@ internal sealed class VaultApplicationFixture : IAsyncDisposable
         _ = await Manager.LockAsync();
         _ = await Manager.UnlockAsync(Password);
     }
+
+    internal Task<McpWriteModeStatus> EnableDirectWriteAsync() =>
+        WriteMode.ChangeAsync(
+            new McpWriteModeChangeRequest(
+                CipherVault.Core.Documents.McpWriteMode.Direct),
+            new CipherVault.Core.Documents.VaultActorContext(
+                CipherVault.Core.Documents.VaultActorKind.UserUi),
+            Guid.NewGuid());
 
     public async ValueTask DisposeAsync()
     {

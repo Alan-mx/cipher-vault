@@ -9,14 +9,19 @@ public static class McpToolErrorMapper
     private static readonly HashSet<string> SafeDetailKeys =
     [
         "currentRevision",
+        "currentDraftRevision",
         "documentId",
+        "draftId",
         "revisionId",
         "candidateHeadingPaths",
         "limit",
         "maximum",
         "field",
         "expected",
-        "actual"
+        "actual",
+        "mode",
+        "sessionGeneration",
+        "status"
     ];
 
     public static McpToolError Map(
@@ -55,7 +60,17 @@ public static class McpToolErrorMapper
         var code = exception.Code switch
         {
             VaultErrorCode.DocumentNotFound => "not_found",
-            VaultErrorCode.RevisionConflict => "revision_conflict",
+            VaultErrorCode.RevisionConflict => "document_revision_conflict",
+            VaultErrorCode.DraftRevisionConflict => "draft_revision_conflict",
+            VaultErrorCode.DraftNotFound => "draft_not_found",
+            VaultErrorCode.DraftNotEditable => "draft_not_editable",
+            VaultErrorCode.DraftOperationInvalid => "draft_operation_invalid",
+            VaultErrorCode.DraftPayloadTooLarge => "draft_payload_too_large",
+            VaultErrorCode.DraftLimitExceeded => "draft_limit_exceeded",
+            VaultErrorCode.DraftStorageLimitExceeded => "draft_storage_limit_exceeded",
+            VaultErrorCode.WriteModeDraftRequired => "write_mode_draft_required",
+            VaultErrorCode.IdempotencyKeyRequired => "idempotency_key_required",
+            VaultErrorCode.IdempotencyKeyReused => "idempotency_key_reused",
             VaultErrorCode.InvalidInput => "invalid_input",
             VaultErrorCode.InvalidCursor => "invalid_input",
             VaultErrorCode.DocumentPathConflict => "path_conflict",
@@ -94,7 +109,17 @@ public static class McpToolErrorMapper
         code switch
         {
             "not_found" => "Document was not found.",
-            "revision_conflict" => "Document revision changed.",
+            "document_revision_conflict" => "Document revision changed.",
+            "draft_revision_conflict" => "Document draft revision changed.",
+            "draft_not_found" => "Document draft was not found.",
+            "draft_not_editable" => "Document draft state does not allow this operation.",
+            "draft_operation_invalid" => "Document draft operation is invalid.",
+            "draft_payload_too_large" => "Document draft payload is too large.",
+            "draft_limit_exceeded" => "The active document draft limit was reached.",
+            "draft_storage_limit_exceeded" => "The active document draft storage limit was reached.",
+            "write_mode_draft_required" => "MCP document writes require Direct Write Mode.",
+            "idempotency_key_required" => "An idempotency key is required.",
+            "idempotency_key_reused" => "The idempotency key was used for a different request.",
             "invalid_input" => "Tool arguments are invalid.",
             "invalid_offset" => "Document content offset is invalid.",
             "path_conflict" => "Document path is already in use.",
@@ -114,7 +139,17 @@ public static class McpToolErrorMapper
         code switch
         {
             "not_found" => "List or search active documents to find a current documentId.",
-            "revision_conflict" => "Read the latest revision and retry with currentRevision.",
+            "document_revision_conflict" => "Read the latest revision and rebuild the draft or write.",
+            "draft_revision_conflict" => "Read the latest draft revision and retry.",
+            "draft_not_found" => "List drafts and use a current draftId.",
+            "draft_not_editable" => "Read the draft status and choose an allowed operation.",
+            "draft_operation_invalid" => "Correct the typed draft payload.",
+            "draft_payload_too_large" => "Reduce the draft payload size.",
+            "draft_limit_exceeded" => "Review or discard active drafts before creating another.",
+            "draft_storage_limit_exceeded" => "Review or discard active drafts to free storage.",
+            "write_mode_draft_required" => "Create a draft, or ask the user to enable Direct Write Mode in the Web UI.",
+            "idempotency_key_required" => "Generate a new UUID idempotencyKey.",
+            "idempotency_key_reused" => "Use a new idempotencyKey for a different request.",
             "invalid_input" => "Correct the tool arguments and retry.",
             "invalid_offset" => "Use an offset within the document and outside a surrogate pair.",
             "path_conflict" => "Choose a different virtual path or update the existing document.",

@@ -2,6 +2,7 @@ using CipherVault.Application.Backup;
 using CipherVault.Core.Backup;
 using CipherVault.Core.Crypto;
 using CipherVault.Core.Database;
+using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
 using CipherVault.Core.Security;
 
@@ -710,9 +711,27 @@ public sealed class VaultSessionManager : IAsyncDisposable
         return await LockCoreAsync(VaultLockReason.IdleTimeout, cancellationToken);
     }
 
-    public async ValueTask<T> ExecuteAsync<T>(
+    public ValueTask<T> ExecuteAsync<T>(
+        Func<VaultOperationContext, CancellationToken, ValueTask<T>> operation,
+        CancellationToken cancellationToken = default) =>
+        ExecuteCoreAsync(
+            documentWriteActor: null,
+            operation,
+            cancellationToken);
+
+    public ValueTask<T> ExecuteDocumentWriteAsync<T>(
+        VaultActorContext actor,
         Func<VaultOperationContext, CancellationToken, ValueTask<T>> operation,
         CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(actor);
+        return ExecuteCoreAsync(actor, operation, cancellationToken);
+    }
+
+    private async ValueTask<T> ExecuteCoreAsync<T>(
+        VaultActorContext? documentWriteActor,
+        Func<VaultOperationContext, CancellationToken, ValueTask<T>> operation,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(operation);
         ThrowIfDisposed();
@@ -764,6 +783,12 @@ public sealed class VaultSessionManager : IAsyncDisposable
                 }
 
                 idleLockRequired = IsIdleExpired(current);
+                if (!idleLockRequired && documentWriteActor is not null)
+                {
+                    EnsureDocumentWriteAllowed(
+                        current,
+                        documentWriteActor);
+                }
             }
 
             if (!idleLockRequired)
@@ -861,6 +886,150 @@ public sealed class VaultSessionManager : IAsyncDisposable
             lock (transitionSync)
             {
                 return session;
+            }
+        }
+    }
+
+    public McpWriteModeSnapshot GetMcpWriteMode()
+    {
+        lock (transitionSync)
+        {
+            return session is null
+                || (VaultSessionState)state != VaultSessionState.Unlocked
+                ? new McpWriteModeSnapshot(
+                    McpWriteMode.Draft,
+                    null,
+                    null,
+                    null,
+                    Effective: false)
+                : session.GetMcpWriteMode();
+        }
+    }
+
+    internal async Task<T> ChangeMcpWriteModeAsync<T>(
+        VaultActorContext actor,
+        McpWriteMode requestedMode,
+        Func<
+            VaultOperationContext,
+            McpWriteModeSnapshot,
+            CancellationToken,
+            ValueTask<McpWriteModeChangeOutcome<T>>> operation,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(actor);
+        ArgumentNullException.ThrowIfNull(operation);
+        if (actor.Kind != VaultActorKind.UserUi)
+        {
+            throw new VaultException(
+                VaultErrorCode.Forbidden,
+                "Only the Web UI can change the MCP write mode.");
+        }
+
+        ThrowIfDisposed();
+        if (operationDepth.Value)
+        {
+            throw new VaultException(
+                VaultErrorCode.VaultBusy,
+                "Vault operations cannot be nested.");
+        }
+
+        VaultSession current;
+        bool idleExpired;
+        lock (transitionSync)
+        {
+            if ((VaultSessionState)state != VaultSessionState.Unlocked
+                || session is null)
+            {
+                throw CreateBusinessStateException((VaultSessionState)state);
+            }
+
+            current = session;
+            idleExpired = IsIdleExpired(current);
+        }
+        if (idleExpired)
+        {
+            throw await CreateIdleLockExceptionAsync(cancellationToken);
+        }
+
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            current.OperationCancellation.Token);
+        var gateHeld = false;
+        var operationStarted = false;
+        var idleLockRequired = false;
+        try
+        {
+            await operationGate.WaitAsync(linkedCancellation.Token);
+            gateHeld = true;
+            lock (transitionSync)
+            {
+                if ((VaultSessionState)state != VaultSessionState.Unlocked
+                    || !ReferenceEquals(session, current))
+                {
+                    throw new VaultException(
+                        VaultErrorCode.VaultLocked,
+                        "The Vault locked before the mode change could start.");
+                }
+
+                idleLockRequired = IsIdleExpired(current);
+            }
+            if (idleLockRequired)
+            {
+                throw await CreateIdleLockExceptionAsync(cancellationToken);
+            }
+
+            current.Activity.Refresh();
+            var now = timeProvider.GetUtcNow();
+            var previousMode = current.GetMcpWriteMode();
+            if (requestedMode == McpWriteMode.Draft)
+            {
+                // Closing direct mode is fail-closed even if audit persistence fails.
+                current.SetMcpWriteMode(McpWriteMode.Draft, now);
+            }
+
+            operationDepth.Value = true;
+            operationStarted = true;
+            var outcome = await current.Database.ExecuteAsync(
+                async (context, token) =>
+                {
+                    return await operation(context, previousMode, token);
+                },
+                linkedCancellation.Token);
+            lock (transitionSync)
+            {
+                if ((VaultSessionState)state != VaultSessionState.Unlocked
+                    || !ReferenceEquals(session, current))
+                {
+                    throw new VaultException(
+                        VaultErrorCode.VaultLocked,
+                        "The Vault locked during the mode change.");
+                }
+            }
+
+            if (requestedMode == McpWriteMode.Direct && outcome.ApplyMode)
+            {
+                current.SetMcpWriteMode(
+                    McpWriteMode.Direct,
+                    timeProvider.GetUtcNow());
+            }
+
+            return outcome.Result;
+        }
+        catch (OperationCanceledException) when (
+            !cancellationToken.IsCancellationRequested
+            && current.OperationCancellation.IsCancellationRequested)
+        {
+            throw CreateLockCancellationException();
+        }
+        finally
+        {
+            if (operationStarted)
+            {
+                operationDepth.Value = false;
+            }
+            if (gateHeld)
+            {
+                operationGate.Release();
             }
         }
     }
@@ -1504,6 +1673,34 @@ public sealed class VaultSessionManager : IAsyncDisposable
                 VaultErrorCode.VaultLocked,
                 "The Vault is locked.")
         };
+
+    private static void EnsureDocumentWriteAllowed(
+        VaultSession session,
+        VaultActorContext actor)
+    {
+        if (actor.Kind == VaultActorKind.UserUi)
+        {
+            return;
+        }
+        if (actor.Kind == VaultActorKind.Mcp)
+        {
+            var mode = session.GetMcpWriteMode();
+            if (mode.Mode == McpWriteMode.Direct)
+            {
+                return;
+            }
+            throw new VaultException(
+                VaultErrorCode.WriteModeDraftRequired,
+                "MCP document writes require Direct Write Mode.",
+                details: new Dictionary<string, object?>
+                {
+                    ["mode"] = "draft"
+                });
+        }
+        throw new VaultException(
+            VaultErrorCode.Forbidden,
+            "This actor cannot modify documents.");
+    }
 
     private void ThrowIfDisposed()
     {

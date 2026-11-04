@@ -52,7 +52,10 @@ public sealed class ApiContractTests
     {
         var context = new DefaultHttpContext();
         context.SetId("0123456789abcdef0123456789abcdef");
-        var failure = new ApiFailure(409, "revision_conflict", "Revision changed.");
+        var failure = new ApiFailure(
+            409,
+            "document_revision_conflict",
+            "Revision changed.");
         var error = ApiErrorMapper.CreateError(
             failure,
             context,

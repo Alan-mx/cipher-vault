@@ -416,3 +416,92 @@ export interface VersionInfo {
   runtimeVersion: string;
   aspNetCoreVersion: string;
 }
+
+export type McpWriteMode = "draft" | "direct";
+
+export interface McpWriteModeStatus {
+  mode: McpWriteMode;
+  sessionId?: GuidString | null;
+  sessionGeneration?: number | null;
+  updatedAt?: UtcTimestamp | null;
+  effective: boolean;
+}
+
+export type DocumentDraftType = "create" | "update" | "trash";
+
+export type DocumentDraftStatus =
+  | "draft"
+  | "pending_review"
+  | "conflict"
+  | "applied"
+  | "rejected"
+  | "discarded"
+  | "expired";
+
+export interface DocumentDraftItem {
+  draftId: GuidString;
+  draftRevision: number;
+  draftType: DocumentDraftType;
+  status: DocumentDraftStatus;
+  targetDocumentId?: GuidString | null;
+  baseDocumentRevision?: number | null;
+  sourceActor: ActorKind;
+  title?: string | null;
+  virtualPath?: string | null;
+  format?: VaultFormat | null;
+  createdAt: UtcTimestamp;
+  updatedAt: UtcTimestamp;
+  terminalAt?: UtcTimestamp | null;
+  appliedDocumentId?: GuidString | null;
+  appliedDocumentRevision?: number | null;
+}
+
+export type DocumentDraftPage = CursorPage<DocumentDraftItem>;
+
+export interface DocumentDraftPreview {
+  content: string;
+  tags: string[];
+  unifiedDiff: string;
+  diffTruncated: boolean;
+  operationCount: number;
+}
+
+export interface DocumentDraftDetail {
+  metadata: DocumentDraftItem;
+  payload: Record<string, unknown>;
+  preview: DocumentDraftPreview;
+}
+
+export interface DocumentDraftMutationResult {
+  draftId: GuidString;
+  draftRevision: number;
+  status: DocumentDraftStatus;
+  updatedAt: UtcTimestamp;
+}
+
+export interface DocumentDraftApplyResult {
+  draftId: GuidString;
+  draftRevision: number;
+  status: DocumentDraftStatus;
+  documentWriteResult: DocumentWriteResult;
+}
+
+export interface CreateDocumentDraftRequest {
+  draftType: DocumentDraftType;
+  targetDocumentId?: GuidString | null;
+  baseDocumentRevision?: number | null;
+  payload: Record<string, unknown>;
+}
+
+export interface UpdateDocumentDraftRequest {
+  expectedDraftRevision: number;
+  payload: Record<string, unknown>;
+}
+
+export interface DocumentDraftQuery {
+  status?: DocumentDraftStatus;
+  type?: DocumentDraftType;
+  targetDocumentId?: GuidString;
+  pageSize?: number;
+  cursor?: string;
+}

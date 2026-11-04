@@ -16,6 +16,7 @@ export interface ApiRequestOptions {
   signal?: AbortSignal;
   auth?: "none" | "cookie";
   csrf?: boolean;
+  idempotencyKey?: string;
   sessionGeneration?: number;
 }
 
@@ -119,6 +120,9 @@ const createRequestInit = async (
       ensureCurrentGeneration(generation);
     }
     headers.set("X-CSRF-TOKEN", token);
+  }
+  if (options.idempotencyKey) {
+    headers.set("Idempotency-Key", options.idempotencyKey);
   }
 
   const sessionSignal = hooks.currentAbortSignal?.();

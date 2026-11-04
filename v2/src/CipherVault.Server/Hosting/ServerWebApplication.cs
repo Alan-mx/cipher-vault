@@ -1,5 +1,6 @@
 using CipherVault.Application.Vault;
 using CipherVault.Application.Audit;
+using CipherVault.Application.Drafts;
 using CipherVault.Application.Backup;
 using CipherVault.Application.Documents;
 using CipherVault.Application.Exports;
@@ -61,6 +62,9 @@ public static class ServerWebApplication
         builder.Services.AddSingleton(sessionManager);
         builder.Services.AddSingleton(tokenStore);
         builder.Services.AddSingleton<VaultLifecycleService>();
+        builder.Services.AddSingleton<IdempotencyService>();
+        builder.Services.AddSingleton<McpWriteModeService>();
+        builder.Services.AddSingleton<DocumentDraftService>();
         builder.Services.AddSingleton<DocumentService>();
         builder.Services.AddSingleton<DocumentAuthoringService>();
         builder.Services.AddSingleton<DocumentRevisionService>();
@@ -94,6 +98,7 @@ public static class ServerWebApplication
         builder.Services.AddVaultAntiforgery();
         builder.Services.AddCipherVaultMcp();
         builder.Services.AddHostedService<VaultIdleLockService>();
+        builder.Services.AddHostedService<DocumentDraftCleanupService>();
         var app = builder.Build();
         app.UseMiddleware<RequestCorrelationMiddleware>();
         app.UseMiddleware<SecurityHeadersMiddleware>();
@@ -110,6 +115,7 @@ public static class ServerWebApplication
         app.MapVaultEndpoints();
         app.MapVersionEndpoints();
         app.MapDocumentEndpoints();
+        app.MapDraftEndpoints();
         app.MapTrashEndpoints();
         app.MapRevisionEndpoints();
         app.MapKnowledgeEndpoints();
