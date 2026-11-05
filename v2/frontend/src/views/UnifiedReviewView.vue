@@ -1,12 +1,31 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import type { LocationQueryRaw } from "vue-router";
 import { knowledgeBaseApi } from "../api/knowledge-base";
 import type { DraftDetail, DraftListItem } from "../types/knowledge-base";
 
+const allowedStatuses = [
+  "pending_review",
+  "draft",
+  "conflict",
+  "applied",
+] as const;
+const route = useRoute();
+const router = useRouter();
+const initialStatus =
+  typeof route.query.status === "string" &&
+  allowedStatuses.includes(
+    route.query.status as (typeof allowedStatuses)[number],
+  )
+    ? route.query.status
+    : "pending_review";
+const initialDraftId =
+  typeof route.query.draftId === "string" ? route.query.draftId : null;
 const drafts = ref<DraftListItem[]>([]);
 const selected = ref<DraftDetail | null>(null);
 const message = ref("");
-const status = ref("pending_review");
+const status = ref(initialStatus);
 
 const load = async () => {
   drafts.value = (
@@ -15,8 +34,39 @@ const load = async () => {
   selected.value = null;
 };
 
+const syncQuery = async (draftId: string | null) => {
+  const nextQuery: LocationQueryRaw = {
+    ...route.query,
+    status: status.value,
+  };
+  if (draftId) {
+    nextQuery.draftId = draftId;
+  } else {
+    delete nextQuery.draftId;
+  }
+  await router.replace({ query: nextQuery });
+};
+
+const openById = async (draftId: string) => {
+  selected.value = await knowledgeBaseApi.draft(draftId);
+  const selectedStatus = selected.value.record.status;
+  if (
+    allowedStatuses.includes(selectedStatus as (typeof allowedStatuses)[number])
+  ) {
+    status.value = selectedStatus;
+  }
+  await syncQuery(draftId);
+};
+
 const open = async (item: DraftListItem) => {
-  selected.value = await knowledgeBaseApi.draft(item.draftId);
+  message.value = "";
+  await openById(item.draftId);
+};
+
+const changeStatus = async () => {
+  message.value = "";
+  await load();
+  await syncQuery(null);
 };
 
 const apply = async () => {
@@ -26,6 +76,7 @@ const apply = async () => {
     selected.value.record.draftRevision,
   );
   await load();
+  await syncQuery(null);
 };
 
 const submitForReview = async () => {
@@ -35,6 +86,7 @@ const submitForReview = async () => {
     selected.value.record.draftRevision,
   );
   await load();
+  await syncQuery(null);
 };
 
 const reject = async () => {
@@ -44,10 +96,21 @@ const reject = async () => {
     selected.value.record.draftRevision,
   );
   await load();
+  await syncQuery(null);
 };
 
 const pendingCount = computed(() => drafts.value.length);
-onMounted(load);
+onMounted(async () => {
+  await load();
+  if (initialDraftId) {
+    try {
+      await openById(initialDraftId);
+    } catch (caught) {
+      message.value =
+        caught instanceof Error ? caught.message : "无法打开指定草稿";
+    }
+  }
+});
 </script>
 
 <template>
@@ -58,7 +121,7 @@ onMounted(load);
         <h1>AI 工作区</h1>
         <p class="muted">统一审核 Knowledge、Source 和关系变更。</p>
       </div>
-      <select v-model="status" aria-label="草稿状态" @change="load">
+      <select v-model="status" aria-label="草稿状态" @change="changeStatus">
         <option value="pending_review">待审核</option>
         <option value="draft">处理中</option>
         <option value="conflict">冲突</option>

@@ -1,6 +1,7 @@
 using CipherVault.Application.KnowledgeBase;
 using CipherVault.Core.KnowledgeBase;
 using CipherVault.Server.Api.Contracts;
+using CipherVault.Server.Security;
 
 namespace CipherVault.Server.Api.Endpoints;
 
@@ -154,6 +155,33 @@ public static class KnowledgeBaseEndpoints
                 })
             .RequireAuthorization()
             .WithName("GetLocalKnowledgeGraph");
+
+        endpoints.MapPost(
+                "/api/knowledge/retrospective-draft",
+                async (
+                    CreateKnowledgeRetrospectiveDraftApiRequest request,
+                    KnowledgeRetrospectiveService retrospectives,
+                    HttpContext context,
+                    CancellationToken cancellationToken) =>
+                {
+                    var idempotencyKey =
+                        ApiInputValidation.RequireIdempotencyKey(
+                            context.Request.Headers["Idempotency-Key"]
+                                .ToString());
+                    var result = await retrospectives.CreateAsync(
+                        request.ToDomain(),
+                        context.CreateUserActor(),
+                        idempotencyKey,
+                        cancellationToken);
+                    var location = $"/api/drafts/{result.DraftId:D}";
+                    context.Response.Headers.Location = location;
+                    return Results.Created(location, result);
+                })
+            .RequireAuthorization(
+                McpBearerAuthentication.UserUiOrMcpPolicy)
+            .AddEndpointFilter<RejectMcpIdentityEndpointFilter>()
+            .RequireAntiforgery()
+            .WithName("CreateKnowledgeRetrospectiveDraft");
         return endpoints;
     }
 

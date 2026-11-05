@@ -12,6 +12,7 @@ public static class McpBearerAuthentication
 {
     public const string Scheme = "CipherVault.McpBearer";
     public const string Policy = "CipherVault.McpBearerPolicy";
+    public const string UserUiOrMcpPolicy = "CipherVault.UserUiOrMcpPolicy";
     internal const string ValidatedItem = "CipherVault.McpBearerValidated";
 }
 

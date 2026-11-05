@@ -18,6 +18,13 @@ public static class McpServerRegistration
             {
                 policy.AddAuthenticationSchemes(McpBearerAuthentication.Scheme);
                 policy.RequireAuthenticatedUser();
+            })
+            .AddPolicy(McpBearerAuthentication.UserUiOrMcpPolicy, policy =>
+            {
+                policy.AddAuthenticationSchemes(
+                    VaultCookieAuthentication.Scheme,
+                    McpBearerAuthentication.Scheme);
+                policy.RequireAuthenticatedUser();
             });
         services.AddAuthentication()
             .AddScheme<AuthenticationSchemeOptions, McpBearerAuthenticationHandler>(

@@ -61,6 +61,7 @@ public static class ServerWebApplication
         builder.Services.AddSingleton<SourceService>();
         builder.Services.AddSingleton<KnowledgeService>();
         builder.Services.AddSingleton<UnifiedDraftService>();
+        builder.Services.AddSingleton<KnowledgeRetrospectiveService>();
         builder.Services.AddSingleton<DashboardService>();
         builder.Services.AddSingleton<AuditQueryService>();
         builder.Services.AddSingleton<UnlockAttemptLimiter>();

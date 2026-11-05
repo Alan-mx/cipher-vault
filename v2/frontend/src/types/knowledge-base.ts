@@ -235,3 +235,17 @@ export interface DashboardView {
   recentRelationChanges: unknown[];
   counts: Record<string, number>;
 }
+
+export interface CreateKnowledgeRetrospectiveDraftRequest {
+  topic: string;
+  knowledgeIds: string[];
+}
+
+export interface DraftMutation {
+  draftId: string;
+  draftRevision: number;
+  status: string;
+  targetObjectType: string;
+  operationType: string;
+  updatedAt: string;
+}

@@ -1,7 +1,9 @@
 import type {
+  CreateKnowledgeRetrospectiveDraftRequest,
   DashboardView,
   DraftDetail,
   DraftListItem,
+  DraftMutation,
   KnowledgeContentChunk,
   KnowledgeDetail,
   KnowledgeModel,
@@ -77,6 +79,16 @@ export const knowledgeBaseApi = {
     apiClient.request<KnowledgeDetail>(
       `/api/knowledge/${encodeURIComponent(knowledgeId)}`,
     ),
+  createKnowledgeRetrospectiveDraft: (
+    request: CreateKnowledgeRetrospectiveDraftRequest,
+    idempotencyKey: string = key(),
+  ) =>
+    apiClient.request<DraftMutation>("/api/knowledge/retrospective-draft", {
+      method: "POST",
+      csrf: true,
+      idempotencyKey,
+      body: request,
+    }),
   knowledgeContent: (knowledgeId: string, revision: number) =>
     apiClient.request<KnowledgeContentChunk>(
       `/api/knowledge/${encodeURIComponent(knowledgeId)}/revisions/${revision}/content`,

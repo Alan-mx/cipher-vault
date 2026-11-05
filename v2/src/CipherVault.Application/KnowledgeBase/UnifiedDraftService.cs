@@ -47,13 +47,30 @@ public sealed class UnifiedDraftService(
             },
             cancellationToken).AsTask();
 
-    public async Task<DraftMutation> CreateAsync(
+    public Task<DraftMutation> CreateAsync(
         CreateDraftInput input,
+        VaultActorContext actor,
+        Guid idempotencyKey,
+        CancellationToken cancellationToken = default) =>
+        CreateAsync(
+            Hash("create", input),
+            (_, _, _) => Task.FromResult(input),
+            actor,
+            idempotencyKey,
+            cancellationToken);
+
+    internal async Task<DraftMutation> CreateAsync(
+        string requestHash,
+        Func<
+            CipherVault.Core.Database.VaultOperationContext,
+            KnowledgeModelSnapshot,
+            CancellationToken,
+            Task<CreateDraftInput>> inputFactory,
         VaultActorContext actor,
         Guid idempotencyKey,
         CancellationToken cancellationToken = default)
     {
-        var requestHash = Hash("create", input);
+        ArgumentNullException.ThrowIfNull(inputFactory);
         return await ExecuteIdempotentAsync(
             idempotencyKey,
             "draft.create",
@@ -63,6 +80,10 @@ public sealed class UnifiedDraftService(
             {
                 await context.BeginTransactionAsync(token);
                 var model = await KnowledgeModelStore.GetAsync(context, token);
+                var input = await inputFactory(context, model, token)
+                    ?? throw new VaultException(
+                        VaultErrorCode.DraftOperationInvalid,
+                        "Generated Draft input is missing.");
                 var now = timeProvider.GetUtcNow();
                 var baseSnapshot = default(JsonElement?);
                 if (input.OperationType == DraftOperationType.Create)
@@ -752,7 +773,7 @@ public sealed class UnifiedDraftService(
         }
     }
 
-    private static string Hash(params object?[] values)
+    internal static string Hash(params object?[] values)
     {
         var json = JsonSerializer.Serialize(values, JsonOptions);
         return Convert.ToHexString(
@@ -768,6 +789,14 @@ public sealed class UnifiedDraftService(
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
+        var details = JsonSerializer.Serialize(
+            new
+            {
+                targetObjectType = draft.TargetObjectType.ToDatabaseValue(),
+                operationType = draft.OperationType.ToDatabaseValue(),
+                hasSourceReferences = HasSourceReferences(draft.Payload)
+            },
+            JsonOptions);
         using var command = context.CreateCommand();
         command.Command.CommandText =
             """
@@ -776,7 +805,7 @@ public sealed class UnifiedDraftService(
                 target_id, target_revision, correlation_id, result, details_json)
             VALUES(
                 $eventId, $occurredAt, $actorKind, $action, 'draft',
-                $draftId, $revision, $correlationId, 'success', '{}');
+                $draftId, $revision, $correlationId, 'success', $details);
             """;
         command.Command.Parameters.AddWithValue(
             "$eventId",
@@ -797,8 +826,15 @@ public sealed class UnifiedDraftService(
         command.Command.Parameters.AddWithValue(
             "$correlationId",
             actor.CorrelationId ?? (object)DBNull.Value);
+        command.Command.Parameters.AddWithValue("$details", details);
         await command.Command.ExecuteNonQueryAsync(cancellationToken);
     }
+
+    private static bool HasSourceReferences(JsonElement payload) =>
+        payload.ValueKind == JsonValueKind.Object
+        && payload.TryGetProperty("sourceReferences", out var references)
+        && references.ValueKind == JsonValueKind.Array
+        && references.GetArrayLength() > 0;
 
     private static string? ReadString(JsonElement payload, string name) =>
         payload.ValueKind == JsonValueKind.Object

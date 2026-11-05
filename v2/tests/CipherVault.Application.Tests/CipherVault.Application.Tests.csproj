@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <Compile Include="KnowledgeModelStoreTests.cs" />
+    <Compile Include="KnowledgeRetrospectiveServiceTests.cs" />
     <Compile Include="BackupServiceTests.cs" />
     <Compile Include="BackupSessionLeaseTests.cs" />
     <Compile Include="BackupSnapshotLockTests.cs" />
