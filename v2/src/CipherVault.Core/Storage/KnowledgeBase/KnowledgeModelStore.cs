@@ -10,6 +10,16 @@ namespace CipherVault.Core.Storage.KnowledgeBase;
 
 public static class KnowledgeModelStore
 {
+    private static readonly HashSet<string> ValueTypes =
+    [
+        "string",
+        "number",
+        "boolean",
+        "date",
+        "enum",
+        "array",
+        "object"
+    ];
     private static readonly JsonSerializerOptions JsonOptions =
         new(JsonSerializerDefaults.Web);
 
@@ -201,7 +211,361 @@ public static class KnowledgeModelStore
         {
             EnsureUnique(type.Properties.Select(item => item.Key));
         }
+        ValidateDefinitions(update);
     }
+
+    private static void ValidateDefinitions(KnowledgeModelUpdate update)
+    {
+        foreach (var type in update.KnowledgeTypes)
+        {
+            foreach (var property in type.Properties)
+            {
+                ValidatePropertyDefinition(
+                    property,
+                    $"knowledgeTypes.{type.Key}.properties.{property.Key}");
+            }
+        }
+        foreach (var rule in update.SourceRules)
+        {
+            ValidateSourceSchema(
+                rule.MetadataSchema,
+                $"sourceRules.{rule.Kind.ToDatabaseValue()}");
+        }
+    }
+
+    private static void ValidatePropertyDefinition(
+        KnowledgePropertyUpdate property,
+        string fieldPath)
+    {
+        if (!ValueTypes.Contains(property.ValueType))
+        {
+            throw ModelInvalid(
+                $"{fieldPath}.valueType",
+                "Property value type is invalid.");
+        }
+        if (property.Constraints.ValueKind != JsonValueKind.Object)
+        {
+            throw ModelInvalid(
+                $"{fieldPath}.constraints",
+                "Property constraints must be an object.");
+        }
+        ValidateConstraintShape(
+            property.ValueType,
+            property.Constraints,
+            $"{fieldPath}.constraints");
+        if (property.DefaultValue is { } defaultValue
+            && !JsonValueMatches(
+                defaultValue,
+                property.ValueType,
+                property.Constraints))
+        {
+            throw ModelInvalid(
+                $"{fieldPath}.defaultValue",
+                "Property default value does not match its definition.");
+        }
+    }
+
+    private static void ValidateConstraintShape(
+        string valueType,
+        JsonElement constraints,
+        string fieldPath)
+    {
+        ValidateOptionalBoolean(
+            constraints,
+            "integer",
+            fieldPath);
+        ValidateOptionalNumber(
+            constraints,
+            "minimum",
+            fieldPath);
+        ValidateOptionalNumber(
+            constraints,
+            "maximum",
+            fieldPath);
+        ValidateNumberBounds(constraints, fieldPath);
+        ValidateOptionalNonNegativeInteger(
+            constraints,
+            "minLength",
+            fieldPath);
+        ValidateOptionalNonNegativeInteger(
+            constraints,
+            "maxLength",
+            fieldPath);
+        ValidateIntegerBounds(
+            constraints,
+            "minLength",
+            "maxLength",
+            fieldPath);
+        ValidateOptionalNonNegativeInteger(
+            constraints,
+            "minItems",
+            fieldPath);
+        ValidateOptionalNonNegativeInteger(
+            constraints,
+            "maxItems",
+            fieldPath);
+        ValidateIntegerBounds(
+            constraints,
+            "minItems",
+            "maxItems",
+            fieldPath);
+        if (constraints.TryGetProperty("options", out var options)
+            && (options.ValueKind != JsonValueKind.Array
+                || options.GetArrayLength() == 0
+                || options.EnumerateArray().Any(item =>
+                    item.ValueKind != JsonValueKind.String)))
+        {
+            throw ModelInvalid(
+                $"{fieldPath}.options",
+                "Enum options must be a non-empty string array.");
+        }
+        if (valueType == "enum"
+            && !constraints.TryGetProperty("options", out _))
+        {
+            throw ModelInvalid(
+                $"{fieldPath}.options",
+                "Enum properties require options.");
+        }
+        if (constraints.TryGetProperty("items", out var items))
+        {
+            ValidateSchemaShape(
+                items,
+                $"{fieldPath}.items");
+        }
+        if (constraints.TryGetProperty("properties", out var properties)
+            && properties.ValueKind != JsonValueKind.Object)
+        {
+            throw ModelInvalid(
+                $"{fieldPath}.properties",
+                "Object properties must be an object.");
+        }
+        if (constraints.TryGetProperty(
+                "additionalProperties",
+                out var additional)
+            && additional.ValueKind is not (
+                JsonValueKind.True or JsonValueKind.False))
+        {
+            throw ModelInvalid(
+                $"{fieldPath}.additionalProperties",
+                "additionalProperties must be boolean.");
+        }
+    }
+
+    private static void ValidateSourceSchema(
+        JsonElement schema,
+        string fieldPath)
+    {
+        ValidateSchemaShape(schema, fieldPath);
+        if (!schema.TryGetProperty("properties", out var properties)
+            || properties.ValueKind != JsonValueKind.Object)
+        {
+            throw ModelInvalid(
+                $"{fieldPath}.properties",
+                "Source metadata schema requires object properties.");
+        }
+        if (schema.TryGetProperty("required", out var required))
+        {
+            if (required.ValueKind != JsonValueKind.Array
+                || required.EnumerateArray().Any(item =>
+                    item.ValueKind != JsonValueKind.String))
+            {
+                throw ModelInvalid(
+                    $"{fieldPath}.required",
+                    "Source metadata required must be a string array.");
+            }
+            var names = properties.EnumerateObject()
+                .Select(item => item.Name)
+                .ToHashSet(StringComparer.Ordinal);
+            foreach (var item in required.EnumerateArray())
+            {
+                var name = item.GetString() ?? string.Empty;
+                if (!names.Contains(name))
+                {
+                    throw ModelInvalid(
+                        $"{fieldPath}.required",
+                        "Required source metadata field is not defined.");
+                }
+            }
+        }
+    }
+
+    private static void ValidateSchemaShape(
+        JsonElement schema,
+        string fieldPath)
+    {
+        if (schema.ValueKind != JsonValueKind.Object)
+        {
+            throw ModelInvalid(fieldPath, "Schema must be an object.");
+        }
+        if (schema.TryGetProperty("type", out var type)
+            && (type.ValueKind != JsonValueKind.String
+                || !ValueTypes.Contains(type.GetString() ?? string.Empty)))
+        {
+            throw ModelInvalid(
+                $"{fieldPath}.type",
+                "Schema type is invalid.");
+        }
+        if (schema.TryGetProperty("itemType", out var itemType)
+            && (itemType.ValueKind != JsonValueKind.String
+                || !ValueTypes.Contains(
+                    itemType.GetString() ?? string.Empty)))
+        {
+            throw ModelInvalid(
+                $"{fieldPath}.itemType",
+                "Schema item type is invalid.");
+        }
+        if (string.Equals(
+                type.ValueKind == JsonValueKind.String
+                    ? type.GetString()
+                    : null,
+                "enum",
+                StringComparison.Ordinal)
+            && (!schema.TryGetProperty("options", out var options)
+                || options.ValueKind != JsonValueKind.Array
+                || options.GetArrayLength() == 0
+                || options.EnumerateArray().Any(item =>
+                    item.ValueKind != JsonValueKind.String)))
+        {
+            throw ModelInvalid(
+                $"{fieldPath}.options",
+                "Enum schema options must be a non-empty string array.");
+        }
+        if (schema.TryGetProperty("properties", out var properties))
+        {
+            if (properties.ValueKind != JsonValueKind.Object)
+            {
+                throw ModelInvalid(
+                    $"{fieldPath}.properties",
+                    "Schema properties must be an object.");
+            }
+            foreach (var property in properties.EnumerateObject())
+            {
+                ValidateSchemaShape(
+                    property.Value,
+                    $"{fieldPath}.properties.{property.Name}");
+            }
+        }
+        if (schema.TryGetProperty(
+                "additionalProperties",
+                out var additional)
+            && additional.ValueKind is not (
+                JsonValueKind.True or JsonValueKind.False))
+        {
+            throw ModelInvalid(
+                $"{fieldPath}.additionalProperties",
+                "additionalProperties must be boolean.");
+        }
+    }
+
+    private static void ValidateOptionalBoolean(
+        JsonElement value,
+        string name,
+        string fieldPath)
+    {
+        if (value.TryGetProperty(name, out var property)
+            && property.ValueKind is not (
+                JsonValueKind.True or JsonValueKind.False))
+        {
+            throw ModelInvalid(
+                $"{fieldPath}.{name}",
+                $"{name} must be boolean.");
+        }
+    }
+
+    private static void ValidateOptionalNumber(
+        JsonElement value,
+        string name,
+        string fieldPath)
+    {
+        if (value.TryGetProperty(name, out var property)
+            && property.ValueKind != JsonValueKind.Number)
+        {
+            throw ModelInvalid(
+                $"{fieldPath}.{name}",
+                $"{name} must be a number.");
+        }
+    }
+
+    private static void ValidateOptionalNonNegativeInteger(
+        JsonElement value,
+        string name,
+        string fieldPath)
+    {
+        if (value.TryGetProperty(name, out var property)
+            && (property.ValueKind != JsonValueKind.Number
+                || !property.TryGetInt32(out var number)
+                || number < 0))
+        {
+            throw ModelInvalid(
+                $"{fieldPath}.{name}",
+                $"{name} must be a non-negative integer.");
+        }
+    }
+
+    private static void ValidateNumberBounds(
+        JsonElement constraints,
+        string fieldPath)
+    {
+        if (constraints.TryGetProperty("minimum", out var minimum)
+            && constraints.TryGetProperty("maximum", out var maximum)
+            && minimum.GetDecimal() > maximum.GetDecimal())
+        {
+            throw ModelInvalid(
+                $"{fieldPath}.maximum",
+                "maximum must not be below minimum.");
+        }
+    }
+
+    private static void ValidateIntegerBounds(
+        JsonElement constraints,
+        string minimumName,
+        string maximumName,
+        string fieldPath)
+    {
+        if (constraints.TryGetProperty(minimumName, out var minimum)
+            && constraints.TryGetProperty(maximumName, out var maximum)
+            && minimum.GetInt32() > maximum.GetInt32())
+        {
+            throw ModelInvalid(
+                $"{fieldPath}.{maximumName}",
+                $"{maximumName} must not be below {minimumName}.");
+        }
+    }
+
+    private static bool JsonValueMatches(
+        JsonElement value,
+        string valueType,
+        JsonElement constraints)
+    {
+        return valueType switch
+        {
+            "string" or "date" => value.ValueKind == JsonValueKind.String,
+            "number" => value.ValueKind == JsonValueKind.Number,
+            "boolean" => value.ValueKind is
+                JsonValueKind.True or JsonValueKind.False,
+            "enum" => value.ValueKind == JsonValueKind.String
+                && constraints.TryGetProperty("options", out var options)
+                && options.EnumerateArray().Any(item =>
+                    string.Equals(
+                        item.GetString(),
+                        value.GetString(),
+                        StringComparison.Ordinal)),
+            "array" => value.ValueKind == JsonValueKind.Array,
+            "object" => value.ValueKind == JsonValueKind.Object,
+            _ => false
+        };
+    }
+
+    private static VaultException ModelInvalid(
+        string fieldPath,
+        string message) =>
+        new(
+            VaultErrorCode.KnowledgeModelInvalid,
+            message,
+            details: new Dictionary<string, object?>
+            {
+                ["fieldPath"] = fieldPath
+            });
 
     private static void EnsureUnique<T>(IEnumerable<T> values)
     {

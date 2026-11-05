@@ -205,6 +205,32 @@ public sealed class DraftReviewEditingTests
     }
 
     [Fact]
+    public async Task ExpiredIdempotencyKeyCanBeReused()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var drafts = new UnifiedDraftService(
+            fixture.Manager,
+            fixture.TimeProvider);
+        var user = new VaultActorContext(VaultActorKind.UserUi);
+        var key = Guid.NewGuid();
+        var created = await drafts.CreateAsync(
+            SourceDraft("Original"),
+            user,
+            key);
+
+        ((ManualTimeProvider)fixture.TimeProvider).Advance(
+            TimeSpan.FromDays(31));
+        await fixture.RelockAsync();
+        var submitted = await drafts.SubmitAsync(
+            created.DraftId,
+            created.DraftRevision,
+            user,
+            key);
+
+        Assert.Equal(DraftStatus.PendingReview, submitted.Status);
+    }
+
+    [Fact]
     public void DiffMarksMissingSnapshotFieldsAsBaselineUnavailable()
     {
         var knowledgeId = Guid.NewGuid();

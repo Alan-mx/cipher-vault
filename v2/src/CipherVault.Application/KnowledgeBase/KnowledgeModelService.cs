@@ -49,6 +49,7 @@ public sealed class KnowledgeModelService(
                         idempotencyKey,
                         "knowledge_model.change",
                         actor.Kind,
+                        timeProvider.GetUtcNow(),
                         token);
                 if (existing is not null)
                 {

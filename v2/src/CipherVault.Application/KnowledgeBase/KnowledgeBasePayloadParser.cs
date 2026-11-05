@@ -547,6 +547,14 @@ internal static class KnowledgeBasePayloadParser
             "number" => value.ValueKind == JsonValueKind.Number,
             "boolean" => value.ValueKind is
                 JsonValueKind.True or JsonValueKind.False,
+            "enum" => value.ValueKind == JsonValueKind.String
+                && schema.TryGetProperty("options", out var options)
+                && options.ValueKind == JsonValueKind.Array
+                && options.EnumerateArray().Any(item =>
+                    string.Equals(
+                        item.GetString(),
+                        value.GetString(),
+                        StringComparison.Ordinal)),
             "array" => value.ValueKind == JsonValueKind.Array,
             "object" => value.ValueKind == JsonValueKind.Object,
             null => true,

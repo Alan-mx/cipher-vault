@@ -21,48 +21,60 @@ public static class KnowledgeBaseIdempotencyStore
         Guid key,
         string operation,
         VaultActorKind actor,
+        DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        using var command = context.CreateCommand();
-        command.Command.CommandText =
-            """
-            SELECT
-                idempotency_key,
-                actor_kind,
-                operation,
-                request_hash,
-                result_json,
-                created_at,
-                expires_at
-            FROM idempotency_records
-            WHERE idempotency_key = $key;
-            """;
-        command.Command.Parameters.AddWithValue("$key", key.ToString("D"));
-        await using var reader =
-            await command.Command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
+        KnowledgeBaseIdempotencyRecord record;
+        using (var command = context.CreateCommand())
         {
+            command.Command.CommandText =
+                """
+                SELECT
+                    idempotency_key,
+                    actor_kind,
+                    operation,
+                    request_hash,
+                    result_json,
+                    created_at,
+                    expires_at
+                FROM idempotency_records
+                WHERE idempotency_key = $key;
+                """;
+            command.Command.Parameters.AddWithValue(
+                "$key",
+                key.ToString("D"));
+            await using var reader =
+                await command.Command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+            {
+                return null;
+            }
+            record = new KnowledgeBaseIdempotencyRecord(
+                Guid.Parse(reader.GetString(0)),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetString(3),
+                reader.GetString(4),
+                ParseTimestamp(reader.GetString(5)),
+                ParseTimestamp(reader.GetString(6)));
+        }
+        if (record.ExpiresAt <= now.ToUniversalTime())
+        {
+            await DeleteAsync(context, key, cancellationToken);
             return null;
         }
         if (!string.Equals(
-                reader.GetString(1),
+                record.ActorKind,
                 ActorValue(actor),
                 StringComparison.Ordinal)
             || !string.Equals(
-                reader.GetString(2),
+                record.Operation,
                 operation,
                 StringComparison.Ordinal))
         {
             throw KeyReused();
         }
-        return new KnowledgeBaseIdempotencyRecord(
-            Guid.Parse(reader.GetString(0)),
-            reader.GetString(1),
-            reader.GetString(2),
-            reader.GetString(3),
-            reader.GetString(4),
-            ParseTimestamp(reader.GetString(5)),
-            ParseTimestamp(reader.GetString(6)));
+        return record;
     }
 
     public static async Task InsertAsync(
@@ -118,6 +130,18 @@ public static class KnowledgeBaseIdempotencyStore
         new(
             VaultErrorCode.IdempotencyKeyReused,
             "The idempotency key was used for a different request.");
+
+    private static async Task DeleteAsync(
+        VaultOperationContext context,
+        Guid key,
+        CancellationToken cancellationToken)
+    {
+        using var command = context.CreateCommand();
+        command.Command.CommandText =
+            "DELETE FROM idempotency_records WHERE idempotency_key = $key;";
+        command.Command.Parameters.AddWithValue("$key", key.ToString("D"));
+        await command.Command.ExecuteNonQueryAsync(cancellationToken);
+    }
 
     private static string ActorValue(VaultActorKind actor) =>
         actor switch

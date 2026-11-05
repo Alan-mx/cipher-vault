@@ -811,6 +811,7 @@ public sealed class UnifiedDraftService(
                     key,
                     operation,
                     actor.Kind,
+                    timeProvider.GetUtcNow(),
                     token);
                 if (existing is not null)
                 {
