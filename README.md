@@ -1,10 +1,10 @@
-# CipherVault V2
+# CipherVault
 
 CipherVault 是本地优先、加密存储、由外部 AI 通过 MCP 使用的个人知识基础设施。
 一个 ASP.NET Core 进程同时提供 Vue Web UI、REST API、MCP HTTP 端点，以及受
 SQLite3MC 保护的本地数据库。
 
-当前实现聚焦 v1.3 P0 闭环：
+当前实现聚焦 v1.3 P0 闭环，并已完成 Windows 与 Linux ARM64 实际产物验收：
 
 - 可配置 Knowledge Model：类型、属性、模板、关系和来源规则。
 - 独立 Source 对象：来源版本、内容快照、章节/段落定位与全文读取。
@@ -12,9 +12,14 @@ SQLite3MC 保护的本地数据库。
 - Keyword / Fulltext 搜索：不依赖 Embedding，不暴露 Semantic 或 Hybrid。
 - MCP Draft-only：外部 AI 只能读取、搜索、创建/修改草稿并提交审核。
 - Web 审核：正式 Knowledge、Source 和关系只能由用户批准后变更。
+- MCP Prompts：提供 6 个可复用知识工作流说明。
+- 知识复盘和跨来源综合：生成可审核的 Knowledge Draft，并保留来源依据。
+- 知识整理队列：按缺失来源、缺失必填属性和长期未更新发现整理候选。
+- Draft 结构化编辑：Pending Review 保存后回退 Draft，并提供字段级 Diff 与校验提示。
 
-当前不建设内置 Ask AI、Chat LLM Provider、Agent Runtime、自有聊天历史、明文导入
-导出、Semantic/Embedding/Hybrid 检索或 MCP Direct Write Mode。
+后续 P1 能力若要继续，需要重新立项澄清；当前仍不建设内置 Ask AI、Chat LLM
+Provider、Agent Runtime、自有聊天历史、批量明文导入导出、
+Semantic/Embedding/Hybrid 检索或 MCP Direct Write Mode。
 
 ## Windows
 
@@ -63,8 +68,8 @@ tar -xzf CipherVault-2.0.0-rc.1-linux-arm64.tar.gz
 cd CipherVault-2.0.0-rc.1-linux-arm64
 ```
 
-Linux x64 基线为 Ubuntu 22.04 和 Debian 12。Linux ARM64 实机验证在后续功能完成后
-通过目标设备统一执行。
+Linux x64 基线为 Ubuntu 22.04 和 Debian 12。Linux ARM64 自包含包已在真实 aarch64
+设备上完成启动、MCP、备份创建、离线恢复和恢复后解锁验收。
 
 systemd 安装需要 root：
 
@@ -114,6 +119,7 @@ Unlock。Vault 在进程退出、闲置超时或手动 Lock 后回到 Locked。
 - 知识网络：查看局部已确认关系。
 - 知识模型：维护类型、属性、模板和关系类型；来源规则与工作流约束使用高级 JSON 编辑。
 - 设置：修改密码、MCP 接入与 Token、知识模型和加密备份。
+- 知识整理：查看缺来源、缺必填属性和长期未更新内容，并复制外部 AI 整理任务。
 
 Knowledge 正文以 Markdown 为主，但类型、属性、标签和来源引用由数据库结构化字段
 作为权威数据源。Frontmatter 只作为导入、导出和展示格式，并必须与结构化数据校验。
@@ -157,7 +163,8 @@ Web 的 `设置 -> 打开 MCP 接入` 页面提供当前 MCP 地址、Bearer 鉴
 边界，以及服务端当前注册的 Tools 和 Prompts 清单。
 
 自动化测试使用官方 `ModelContextProtocol.Client` 通过真实 HTTP `/mcp` 验证资源发现、
-Prompt、来源拆解、跨来源综合、Web 审核和来源定位保留。
+Prompt、来源拆解、跨来源综合、Web 审核和来源定位保留。P0 验收还包含 Windows 自包含
+包和 Linux ARM64 真实设备上的备份、恢复、MCP 与启动流程验证。
 
 Resource：
 
