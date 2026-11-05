@@ -104,8 +104,7 @@ public sealed class InteractivePasswordCredential
 public sealed record BackupVerificationRequest(
     string PackagePath,
     string WorkingDirectory,
-    BackupVerificationCredential Credential,
-    BackupSchemaPolicy SchemaPolicy);
+    BackupVerificationCredential Credential);
 
 public sealed record VerifiedBackupCacheEntry(
     RegularFileIdentity Identity,
@@ -127,13 +126,4 @@ public sealed record RestoreVerificationResult(
     int SchemaVersion,
     int FormatVersion,
     long DatabaseBytes,
-    long KeyEnvelopeBytes,
-    int SourceSchemaVersion,
-    int CurrentSchemaVersion,
-    bool SchemaMigrationPending,
-    string? MigrationTrigger);
-
-public static class BackupMigrationTriggers
-{
-    public const string FirstUnlock = "first_unlock";
-}
+    long KeyEnvelopeBytes);

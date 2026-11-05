@@ -83,8 +83,7 @@ internal sealed class BackupPackageService
                     new BackupVerificationRequest(
                         tempPath,
                         verifyDirectory,
-                        credential,
-                        SchemaPolicy: BackupSchemaPolicy.CurrentOnly),
+                        credential),
                     backupLease.CancellationToken);
             }
 

@@ -110,7 +110,6 @@ public static class BackupPackageVerifier
                     workingDirectory,
                     databaseKey,
                     manifest.VaultId,
-                    request.SchemaPolicy,
                     cancellationToken);
                 return new BackupVerificationResult(
                     manifest,
@@ -253,7 +252,6 @@ public static class BackupPackageVerifier
         string directory,
         ReadOnlyMemory<byte> databaseKey,
         Guid expectedVaultId,
-        BackupSchemaPolicy schemaPolicy,
         CancellationToken cancellationToken)
     {
         try
@@ -287,17 +285,7 @@ public static class BackupPackageVerifier
                     "restore_database_invalid",
                     "Backup database VaultId does not match the manifest.");
             }
-            var schemaSupported = schemaPolicy switch
-            {
-                BackupSchemaPolicy.CurrentOnly =>
-                    info.SchemaVersion == DatabaseMigrationCatalog.CurrentVersion,
-                BackupSchemaPolicy.AllowSupportedOlderVersions =>
-                    BackupCompatibilityPolicy.IsSupported(info.SchemaVersion),
-                _ => throw new VaultException(
-                    VaultErrorCode.InvalidInput,
-                    "Backup Schema policy is not supported.")
-            };
-            if (!schemaSupported)
+            if (info.SchemaVersion != DatabaseMigrationCatalog.CurrentVersion)
             {
                 throw Invalid(
                     "restore_schema_unsupported",

@@ -15,6 +15,7 @@
     <Compile Include="BackupCreateApiTests.cs" />
     <Compile Include="BackupDownloadApiTests.cs" />
     <Compile Include="BackupRestoreCommandTests.cs" />
+    <Compile Include="BackupUnsupportedSchemaTests.cs" />
     <Compile Include="ContainerModeHostValidationTests.cs" />
     <Compile Include="GitBackupCoordinatorTests.cs" />
     <Compile Include="GitBackupRepositoryTests.cs" />
@@ -76,8 +77,8 @@
     <Content Include="..\..\src\CipherVault.Server\wwwroot\**\*"
              Link="wwwroot\%(RecursiveDir)%(Filename)%(Extension)"
              CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="..\Fixtures\BackupCompatibility\**\*"
-             Link="Fixtures\BackupCompatibility\%(RecursiveDir)%(Filename)%(Extension)"
+    <Content Include="..\Fixtures\BackupUnsupportedSchema\**\*"
+             Link="Fixtures\BackupUnsupportedSchema\%(RecursiveDir)%(Filename)%(Extension)"
              CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

@@ -1,7 +1,7 @@
 {
   "format": "cipher-vault-backup-compatibility-fixture",
   "formatVersion": 1,
-  "fixtureFileName": "schema-5-format-1.cvbackup",
+  "fixtureFileName": "unsupported-schema-5-format-1.cvbackup",
   "fixtureBytes": 193452,
   "fixtureSha256": "87c81f63ba68cb4836b87d4c59217b49934a1d3e639900d0fde46e91f8a4e29a",
   "softwareVersion": "2.0.0-rc.1",
