@@ -26,6 +26,7 @@ public sealed class KnowledgeViewPerformanceTests
         await InsertDocumentsAsync(fixture, 1_001, 10_000);
         await MeasureFacetsAsync(fixture, 10_000);
         await MeasureDocumentsAsync(fixture);
+        var maturityTimes = await MeasureMaturityQueueAsync(fixture);
 
         var facetPlan = await ReadPlanAsync(
             fixture,
@@ -35,10 +36,13 @@ public sealed class KnowledgeViewPerformanceTests
             fixture,
             KnowledgeViewStore.BuildDocumentSql(hasCursor: false),
             includeDocumentParameters: true);
+        var maturityPlan = await ReadMaturityQueuePlanAsync(fixture);
         output.WriteLine(
             $"facets plan={string.Join(" | ", facetPlan)}");
         output.WriteLine(
             $"documents plan={string.Join(" | ", documentPlan)}");
+        output.WriteLine(
+            $"maturity queue plan={string.Join(" | ", maturityPlan)}");
         Assert.Contains(
             facetPlan,
             line => line.StartsWith(
@@ -64,10 +68,50 @@ public sealed class KnowledgeViewPerformanceTests
 
         var facetScanSteps = await ReadFacetScanStepsAsync(fixture);
         var documentScanSteps = await ReadDocumentScanStepsAsync(fixture);
+        var maturityScanSteps = await ReadMaturityQueueScanStepsAsync(fixture);
+        var maturityP50 = Percentile(maturityTimes, 0.50);
+        var maturityP95 = Percentile(maturityTimes, 0.95);
         output.WriteLine($"facet fullscan steps={facetScanSteps}");
         output.WriteLine($"document fullscan steps={documentScanSteps}");
+        output.WriteLine($"maturity queue fullscan steps={maturityScanSteps}");
+        output.WriteLine(
+            $"maturity queue p50={maturityP50:F1}ms p95={maturityP95:F1}ms");
         Assert.True(facetScanSteps > 0);
         Assert.True(documentScanSteps > 0);
+        Assert.True(maturityScanSteps > 0);
+        Assert.True(
+            maturityP95 < TimeSpan.FromSeconds(3).TotalMilliseconds,
+            $"Maturity queue P95 was {maturityP95:F1}ms.");
+    }
+
+    [Fact]
+    public async Task MaturityQueueRecordsColdAndWarmQueries()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        await InsertDocumentsAsync(fixture, 1, 10_000);
+
+        var cold = Stopwatch.StartNew();
+        _ = await fixture.MaturityQueue.ListAsync(
+            KnowledgeMaturityQueueBucket.PendingOrganization,
+            new CursorPageRequest(100));
+        cold.Stop();
+
+        var warmTimes = new List<double>();
+        for (var index = 0; index < 5; index++)
+        {
+            var stopwatch = Stopwatch.StartNew();
+            _ = await fixture.MaturityQueue.ListAsync(
+                KnowledgeMaturityQueueBucket.PendingOrganization,
+                new CursorPageRequest(100));
+            stopwatch.Stop();
+            warmTimes.Add(stopwatch.Elapsed.TotalMilliseconds);
+        }
+        var warmP95 = Percentile(warmTimes, 0.95);
+        output.WriteLine(
+            $"maturity queue cold={cold.Elapsed.TotalMilliseconds:F1}ms "
+            + $"warmP95={warmP95:F1}ms");
+        Assert.True(cold.Elapsed < TimeSpan.FromSeconds(10));
+        Assert.True(warmP95 < TimeSpan.FromSeconds(3).TotalMilliseconds);
     }
 
     private async Task MeasureFacetsAsync(
@@ -120,6 +164,42 @@ public sealed class KnowledgeViewPerformanceTests
         Assert.True(
             stopwatch.Elapsed < TimeSpan.FromSeconds(10),
             $"10,000-document page took {stopwatch.Elapsed}.");
+    }
+
+    private async Task<IReadOnlyList<double>> MeasureMaturityQueueAsync(
+        VaultApplicationFixture fixture)
+    {
+        var times = new List<double>();
+        var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+        foreach (var bucket in new[]
+                 {
+                     KnowledgeMaturityQueueBucket.PendingOrganization,
+                     KnowledgeMaturityQueueBucket.PendingVerification,
+                     KnowledgeMaturityQueueBucket.Completed,
+                     KnowledgeMaturityQueueBucket.Other
+                 })
+        {
+            for (var index = 0; index < 3; index++)
+            {
+                var stopwatch = Stopwatch.StartNew();
+                var page = await fixture.QueryAsync(context =>
+                    KnowledgeMaturityQueueStore.ListAsync(
+                        context,
+                        new KnowledgeMaturityQueueQuery(
+                            bucket,
+                            new CursorPageRequest(100)),
+                        CancellationToken.None));
+                stopwatch.Stop();
+                times.Add(stopwatch.Elapsed.TotalMilliseconds);
+                Assert.True(page.Items.Count <= 100);
+            }
+        }
+        var allocated = GC.GetTotalAllocatedBytes(precise: true)
+            - allocatedBefore;
+        output.WriteLine(
+            $"maturity queue documents=10000, calls={times.Count}, "
+            + $"allocated={allocated}");
+        return times;
     }
 
     private static async Task<string[]> ReadPlanAsync(
@@ -189,6 +269,50 @@ public sealed class KnowledgeViewPerformanceTests
                 return steps;
             });
 
+    private static async Task<string[]> ReadMaturityQueuePlanAsync(
+        VaultApplicationFixture fixture) =>
+        await fixture.QueryAsync(
+            async context =>
+            {
+                using var command = context.CreateCommand();
+                command.Command.CommandText =
+                    "EXPLAIN QUERY PLAN\n"
+                    + KnowledgeMaturityQueueStore.QueueSql;
+                AddMaturityQueueParameters(command.Command);
+                var lines = new List<string>();
+                await using var reader =
+                    await command.Command.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    lines.Add(reader.GetString(3));
+                }
+                return lines.ToArray();
+            });
+
+    private static async Task<long> ReadMaturityQueueScanStepsAsync(
+        VaultApplicationFixture fixture) =>
+        await fixture.QueryAsync(
+            async context =>
+            {
+                using var command = context.CreateCommand();
+                command.Command.CommandText =
+                    KnowledgeMaturityQueueStore.QueueSql;
+                AddMaturityQueueParameters(command.Command);
+                long steps;
+                await using (var reader =
+                             await command.Command.ExecuteReaderAsync())
+                {
+                    while (await reader.ReadAsync())
+                    {
+                    }
+                    steps = SQLitePCL.raw.sqlite3_stmt_status(
+                        reader.Handle,
+                        1,
+                        0);
+                }
+                return steps;
+            });
+
     private static void AddParameters(
         Microsoft.Data.Sqlite.SqliteCommand command,
         bool includeDocumentParameters)
@@ -201,6 +325,17 @@ public sealed class KnowledgeViewPerformanceTests
             command.Parameters.AddWithValue("$unset", 0L);
             command.Parameters.AddWithValue("$limit", 101);
         }
+    }
+
+    private static void AddMaturityQueueParameters(
+        Microsoft.Data.Sqlite.SqliteCommand command)
+    {
+        command.Parameters.AddWithValue(
+            "$bucket",
+            "pending_organization");
+        command.Parameters.AddWithValue("$afterUpdatedAt", DBNull.Value);
+        command.Parameters.AddWithValue("$afterDocumentId", DBNull.Value);
+        command.Parameters.AddWithValue("$limit", 101);
     }
 
     private static async Task InsertDocumentsAsync(
@@ -267,5 +402,14 @@ public sealed class KnowledgeViewPerformanceTests
                 command.Command.Parameters.AddWithValue("$end", end);
                 return await command.Command.ExecuteNonQueryAsync();
             });
+    }
+
+    private static double Percentile(
+        IReadOnlyList<double> values,
+        double percentile)
+    {
+        var ordered = values.Order().ToArray();
+        var index = (int)Math.Ceiling((ordered.Length - 1) * percentile);
+        return ordered[index];
     }
 }

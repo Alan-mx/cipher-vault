@@ -102,6 +102,7 @@ public static class ServerWebApplication
         builder.Services.AddHostedService<SemanticIndexWorker>();
         builder.Services.AddSingleton<GraphService>();
         builder.Services.AddSingleton<KnowledgeViewService>();
+        builder.Services.AddSingleton<KnowledgeMaturityQueueService>();
         builder.Services.AddSingleton<RelatedKnowledgeService>();
         builder.Services.AddSingleton<ImportService>();
         builder.Services.AddSingleton<AuditQueryService>();

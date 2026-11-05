@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using CipherVault.Core.Errors;
+using CipherVault.Core.Knowledge;
 
 namespace CipherVault.Core.Documents;
 
@@ -100,6 +101,13 @@ internal static class DocumentPatchEngine
         {
             throw InvalidCommand("A frontmatter key is required.");
         }
+        if (string.Equals(
+                command.Operation,
+                "set",
+                StringComparison.Ordinal))
+        {
+            return PatchMaturitySet(content, key, command.Value);
+        }
         if (!FrontMatterDocument.TryParse(content, out var snapshot))
         {
             throw new VaultException(
@@ -161,6 +169,62 @@ internal static class DocumentPatchEngine
         return string.Concat(
             content.AsSpan(0, field.StartOffset),
             rendered,
+            content.AsSpan(field.EndOffset));
+    }
+
+    private static string PatchMaturitySet(
+        string content,
+        string key,
+        JsonElement? valueElement)
+    {
+        if (!string.Equals(key, "maturity", StringComparison.Ordinal)
+            || valueElement is not { ValueKind: JsonValueKind.String } value
+            || !KnowledgeMaturity.TryParseStandard(
+                value.GetString(),
+                out _))
+        {
+            throw InvalidCommand(
+                "Only a standard maturity value can be set.");
+        }
+
+        if (!FrontMatterDocument.TryParse(content, out var snapshot))
+        {
+            var newline = DetectNewline(content);
+            return string.Concat(
+                "---",
+                newline,
+                FrontMatterDocument.RenderNewField(key, value),
+                newline,
+                "---",
+                newline,
+                content);
+        }
+
+        var fields = snapshot.Fields
+            .Where(field => string.Equals(
+                field.Key,
+                key,
+                StringComparison.Ordinal))
+            .ToArray();
+        if (fields.Length > 1)
+        {
+            throw new VaultException(
+                VaultErrorCode.FrontMatterInvalid,
+                "The frontmatter key is duplicated.");
+        }
+        if (fields.Length == 0)
+        {
+            return string.Concat(
+                content.AsSpan(0, snapshot.ClosingStart),
+                FrontMatterDocument.RenderNewField(key, value),
+                DetectNewline(content),
+                content.AsSpan(snapshot.ClosingStart));
+        }
+
+        var field = fields[0];
+        return string.Concat(
+            content.AsSpan(0, field.StartOffset),
+            FrontMatterDocument.RenderField(field, value),
             content.AsSpan(field.EndOffset));
     }
 
@@ -254,9 +318,25 @@ internal static class DocumentPatchEngine
                 "The document identity cannot be patched.");
         }
         if (command.TargetKind is not ("heading" or "frontmatter") ||
-            command.Operation is not ("append" or "prepend" or "replace" or "delete"))
+            command.Operation is not (
+                "append"
+                or "prepend"
+                or "replace"
+                or "delete"
+                or "set"))
         {
             throw InvalidCommand("The patch command is invalid.");
+        }
+        if (command.Operation == "set"
+            && (command.TargetKind != "frontmatter"
+                || !string.Equals(
+                    command.FrontMatterKey,
+                    "maturity",
+                    StringComparison.Ordinal)
+                || command.ContentMarkdown is not null))
+        {
+            throw InvalidCommand(
+                "The set operation is supported only for top-level maturity.");
         }
         if (command.TargetKind == "heading" &&
             (command.HeadingPath is null || command.HeadingPath.Count == 0))
@@ -303,6 +383,9 @@ internal static class DocumentPatchEngine
             ? NormalizeBlock(addition)
             : NormalizeBlock(addition) + existing;
     }
+
+    private static string DetectNewline(string content) =>
+        content.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
 
     private static string NormalizeBlock(string value)
     {

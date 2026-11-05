@@ -72,6 +72,26 @@ export interface DocumentWriteResult {
   auditEventId?: GuidString | null;
 }
 
+export interface PatchDocumentRequest {
+  targetKind: "front_matter";
+  frontMatterKey: string;
+  operation: "set" | "delete";
+  contentMarkdown?: string | null;
+  value?: string | null;
+  dryRun: boolean;
+}
+
+export interface PatchResult {
+  documentId: GuidString;
+  previousRevision: number;
+  revision: number;
+  dryRun: boolean;
+  changed: boolean;
+  unifiedDiff: string;
+  diffTruncated: boolean;
+  auditEventId?: GuidString | null;
+}
+
 export interface DocumentHeading {
   level: number;
   text: string;
@@ -311,6 +331,40 @@ export interface KnowledgeViewDocumentQuery {
   facetKey?: string | undefined;
   unset?: boolean | undefined;
   activeOnly?: boolean | undefined;
+  pageSize?: number | undefined;
+  cursor?: string | undefined;
+}
+
+export type KnowledgeMaturityQueueBucket =
+  "pending_organization" | "pending_verification" | "completed" | "other";
+
+export type KnowledgeMaturityValueType =
+  "missing" | "null" | "string" | "number" | "boolean" | "array" | "object";
+
+export type KnowledgeMaturityLevel =
+  "raw" | "excerpt" | "organized" | "verified" | "practiced";
+
+export interface KnowledgeMaturityQueueItem {
+  documentId: GuidString;
+  title: string;
+  virtualPath: string;
+  format: VaultFormat;
+  revision: number;
+  tags: string[];
+  updatedAt: UtcTimestamp;
+  maturityValue: string | null;
+  maturityValueType: KnowledgeMaturityValueType;
+  maturityBucket: KnowledgeMaturityQueueBucket;
+  nextMaturity: KnowledgeMaturityLevel | null;
+}
+
+export interface KnowledgeMaturityQueuePage {
+  items: KnowledgeMaturityQueueItem[];
+  nextCursor: string | null;
+}
+
+export interface KnowledgeMaturityQueueQuery {
+  bucket: KnowledgeMaturityQueueBucket;
   pageSize?: number | undefined;
   cursor?: string | undefined;
 }

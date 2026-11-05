@@ -335,7 +335,7 @@ public static class KnowledgeViewStore
             nextCursor);
     }
 
-    private static async Task<Dictionary<Guid, IReadOnlyList<string>>>
+    internal static async Task<Dictionary<Guid, IReadOnlyList<string>>>
         ReadTagsAsync(
             VaultOperationContext context,
             IEnumerable<Guid> documentIds,

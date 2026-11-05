@@ -6,6 +6,8 @@ import type {
   DocumentMap,
   DocumentMetadata,
   DocumentWriteResult,
+  PatchDocumentRequest,
+  PatchResult,
   RelatedDocumentsResponse,
   TrashDeleteResult,
   UnlinkedMentionPage,
@@ -57,6 +59,18 @@ export const documentApi = {
   ) =>
     apiClient.request<DocumentWriteResult>(documentPath(documentId), {
       method: "PUT",
+      csrf: true,
+      ifMatch: revision,
+      body: request,
+    }),
+
+  patch: (
+    documentId: string,
+    revision: number,
+    request: PatchDocumentRequest,
+  ) =>
+    apiClient.request<PatchResult>(documentPath(documentId), {
+      method: "PATCH",
       csrf: true,
       ifMatch: revision,
       body: request,

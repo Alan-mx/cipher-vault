@@ -9,7 +9,7 @@ export type QueryValue = QueryScalar | readonly QueryScalar[];
 export type QueryInput = Record<string, QueryValue>;
 
 export interface ApiRequestOptions {
-  method?: "GET" | "POST" | "PUT" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   query?: QueryInput;
   body?: unknown;
   ifMatch?: number;

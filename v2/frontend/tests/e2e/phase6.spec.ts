@@ -942,12 +942,19 @@ test("Knowledge views support facets, active projects and deep links", async ({
       format: "md",
       content: '---\nproject: "   "\nstatus: active\n---\n\nBlank.',
     });
+    const text = await create({
+      title: "Views Text",
+      virtualPath: "views/text.txt",
+      format: "txt",
+      content: "Plain text.",
+    });
     return {
       first: first.documentId,
       second: second.documentId,
       planned: planned.documentId,
       missing: missing.documentId,
       blank: blank.documentId,
+      text: text.documentId,
     };
   });
 
@@ -1006,6 +1013,99 @@ test("Knowledge views support facets, active projects and deep links", async ({
     })
     .click();
   await expect(page).toHaveURL(/view=maturity/);
+  await expect(page).toHaveURL(/mode=maturity-queue/);
+  await expect(page).toHaveURL(/bucket=pending_organization/);
+  const maturityQueue = page.locator(".maturity-queue");
+  const plannedRow = maturityQueue
+    .locator(".queue-item")
+    .filter({ hasText: "Views Project B" });
+  const blankRow = maturityQueue
+    .locator(".queue-item")
+    .filter({ hasText: "Views Blank" });
+  const textRow = maturityQueue
+    .locator(".queue-item")
+    .filter({ hasText: "Views Text" });
+  const confirmMaturityAction = async (): Promise<void> => {
+    await page
+      .locator(".n-popconfirm:visible")
+      .getByRole("button", { name: "确认" })
+      .last()
+      .click();
+  };
+  await expect(plannedRow).toBeVisible();
+  await expect(blankRow).toBeVisible();
+  await expect(textRow).toBeVisible();
+  await expect(
+    textRow.getByText("TXT 不支持 Frontmatter 成熟度"),
+  ).toBeVisible();
+  await expect(
+    textRow.getByRole("button", { name: "设置成熟度" }),
+  ).toBeDisabled();
+
+  await page.route(`**/api/documents/${documents.blank}`, async (route) => {
+    if (route.request().method() !== "PATCH") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({
+        code: "revision_conflict",
+        message: "Document revision changed.",
+        details: { currentRevision: 2 },
+        correlationId: "maturity-conflict",
+      }),
+    });
+  });
+  await blankRow.getByRole("button", { name: "初始化为 原始" }).click();
+  await confirmMaturityAction();
+  await expect(
+    maturityQueue.getByText("文档版本已更新，请刷新队列后重新操作。"),
+  ).toBeVisible();
+  await page.unroute(`**/api/documents/${documents.blank}`);
+
+  await plannedRow.getByRole("button", { name: "前进到 摘录" }).click();
+  await confirmMaturityAction();
+  await expect(page.getByText("知识成熟度已更新。")).toBeVisible();
+  await expect(plannedRow).toContainText("excerpt");
+
+  await plannedRow.getByRole("button", { name: "设置成熟度" }).click();
+  const maturityDialog = page.getByRole("dialog");
+  await expect(maturityDialog).toBeVisible();
+  await maturityDialog.locator(".n-base-selection").click();
+  await page.getByText("verified", { exact: true }).last().click();
+  await maturityDialog.getByRole("button", { name: "确认修改" }).click();
+  await expect(page.getByText("知识成熟度已更新。").last()).toBeVisible();
+  await expect(plannedRow).toHaveCount(0);
+
+  await maturityQueue
+    .locator(".n-radio-button")
+    .filter({ hasText: "已完成" })
+    .click();
+  await expect(page).toHaveURL(/bucket=completed/);
+  const completedRow = maturityQueue
+    .locator(".queue-item")
+    .filter({ hasText: "Views Project B" });
+  await expect(completedRow).toBeVisible();
+  await completedRow.getByRole("button", { name: "清除" }).click();
+  await confirmMaturityAction();
+  await expect(page.getByText("知识成熟度已更新。").last()).toBeVisible();
+  await expect(completedRow).toHaveCount(0);
+  await maturityQueue
+    .locator(".n-radio-button")
+    .filter({ hasText: "待整理" })
+    .click();
+  await expect(page).toHaveURL(/bucket=pending_organization/);
+  await expect(
+    maturityQueue.locator(".queue-item").filter({ hasText: "Views Project B" }),
+  ).toBeVisible();
+
+  await page
+    .locator(".maturity-mode .n-radio-button")
+    .filter({ hasText: "分类浏览" })
+    .click();
+  await expect(page).toHaveURL(/mode=maturity-browse/);
   await expect(
     facets.getByRole("button", { name: /verified 1/ }),
   ).toBeVisible();
@@ -1021,8 +1121,14 @@ test("Knowledge views support facets, active projects and deep links", async ({
   await page.getByRole("button", { name: "打开导航" }).click();
   await page.getByRole("button", { name: "知识视图" }).click();
   await expect(page.getByRole("heading", { name: "知识视图" })).toBeVisible();
+  await page.goto(
+    "/views?view=maturity&mode=maturity-queue&bucket=pending_organization",
+  );
+  await expect(
+    page.getByRole("region", { name: "知识成熟度整理队列" }),
+  ).toBeVisible();
   await assertNoHorizontalOverflow(page);
-  await assertNoSeriousAxeViolations(page, "knowledge views mobile");
+  await assertNoSeriousAxeViolations(page, "maturity queue mobile");
 
   expect(documents).toEqual({
     first: expect.stringMatching(/^[0-9a-f-]+$/),
@@ -1030,5 +1136,6 @@ test("Knowledge views support facets, active projects and deep links", async ({
     planned: expect.stringMatching(/^[0-9a-f-]+$/),
     missing: expect.stringMatching(/^[0-9a-f-]+$/),
     blank: expect.stringMatching(/^[0-9a-f-]+$/),
+    text: expect.stringMatching(/^[0-9a-f-]+$/),
   });
 });

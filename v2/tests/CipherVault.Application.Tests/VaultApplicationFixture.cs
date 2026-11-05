@@ -3,6 +3,7 @@ using CipherVault.Application.Drafts;
 using CipherVault.Application.Documents;
 using CipherVault.Application.Graph;
 using CipherVault.Application.Import;
+using CipherVault.Application.Knowledge;
 using CipherVault.Application.Search;
 using CipherVault.Application.Relations;
 using CipherVault.Application.Vault;
@@ -27,6 +28,7 @@ internal sealed class VaultApplicationFixture : IAsyncDisposable
         Revisions = new DocumentRevisionService(manager, timeProvider);
         Search = new SearchService(manager, timeProvider);
         Graph = new GraphService(manager);
+        MaturityQueue = new KnowledgeMaturityQueueService(manager);
         Import = new ImportService(manager, timeProvider);
         Audit = new AuditQueryService(manager, timeProvider);
         Idempotency = new IdempotencyService();
@@ -71,6 +73,8 @@ internal sealed class VaultApplicationFixture : IAsyncDisposable
     internal SearchService Search { get; }
 
     internal GraphService Graph { get; }
+
+    internal KnowledgeMaturityQueueService MaturityQueue { get; }
 
     internal ImportService Import { get; }
 

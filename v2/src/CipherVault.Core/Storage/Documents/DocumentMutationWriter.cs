@@ -366,7 +366,8 @@ public static class DocumentMutationWriter
         DateTimeOffset now,
         string auditAction,
         DocumentContentLimitMode limitMode,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyDictionary<string, object?>? extraAuditDetails = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(request);
@@ -574,6 +575,20 @@ public static class DocumentMutationWriter
                 trashed: false,
                 now,
                 cancellationToken);
+            var auditDetails = new Dictionary<string, object?>(
+                StringComparer.Ordinal)
+            {
+                ["previousRevision"] = current.Revision,
+                ["tags"] = parsed.Tags.Count,
+                ["backlinkRewrites"] = rewrittenLinks
+            };
+            if (extraAuditDetails is not null)
+            {
+                foreach (var pair in extraAuditDetails)
+                {
+                    auditDetails[pair.Key] = pair.Value;
+                }
+            }
             var auditEventId = await AuditStore.AppendAsync(
                 context,
                 actor,
@@ -581,12 +596,7 @@ public static class DocumentMutationWriter
                 documentId,
                 newRevision,
                 "success",
-                new
-                {
-                    previousRevision = current.Revision,
-                    tags = parsed.Tags.Count,
-                    backlinkRewrites = rewrittenLinks
-                },
+                auditDetails,
                 now,
                 cancellationToken);
             return new DocumentWriteResult(

@@ -350,6 +350,16 @@ public static class SqliteMcDatabaseFactory
             "cv_knowledge_view_ordinal_key",
             value => KnowledgeViewKey.OrdinalSortKey(value ?? string.Empty),
             isDeterministic: true);
+        connection.CreateFunction<string?, string?, string?>(
+            "cv_knowledge_maturity_bucket",
+            (jsonType, value) => KnowledgeMaturity.ToDatabaseValue(
+                KnowledgeMaturity.Classify(jsonType, value)),
+            isDeterministic: true);
+        connection.CreateFunction<string?, string?, string?>(
+            "cv_knowledge_maturity_next",
+            (jsonType, value) => KnowledgeMaturity.ToDatabaseValue(
+                KnowledgeMaturity.Next(jsonType, value)),
+            isDeterministic: true);
         connection.CreateFunction<string?, string?, long?>(
             "cv_ordinal_ignore_case_equals",
             (left, right) =>

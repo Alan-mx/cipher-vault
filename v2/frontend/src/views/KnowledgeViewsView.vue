@@ -6,6 +6,8 @@ import {
   NButton,
   NEmpty,
   NIcon,
+  NRadioButton,
+  NRadioGroup,
   NSpin,
   NSwitch,
   NTabs,
@@ -14,8 +16,14 @@ import {
 import { RefreshCw } from "@lucide/vue";
 import DocumentList from "../components/document/DocumentList.vue";
 import KnowledgeFacetList from "../components/knowledge/KnowledgeFacetList.vue";
+import KnowledgeMaturityQueue from "../components/knowledge/KnowledgeMaturityQueue.vue";
+import { useKnowledgeMaturityQueueStore } from "../stores/knowledge-maturity-queue";
 import { useKnowledgeViewStore } from "../stores/knowledge-view";
-import type { KnowledgeFacetItem, KnowledgeViewField } from "../types/api";
+import type {
+  KnowledgeFacetItem,
+  KnowledgeMaturityQueueBucket,
+  KnowledgeViewField,
+} from "../types/api";
 
 interface ViewOption {
   value: "projects" | "types" | "maturity";
@@ -38,6 +46,7 @@ const views: ViewOption[] = [
 const route = useRoute();
 const router = useRouter();
 const store = useKnowledgeViewStore();
+const maturityQueue = useKnowledgeMaturityQueueStore();
 const loadedScope = ref<string | null>(null);
 const selectionMissing = ref(false);
 const routeError = ref<string | null>(null);
@@ -58,6 +67,8 @@ const viewQuery = computed(() => readQuery("view"));
 const valueQuery = computed(() => readQuery("value"));
 const unsetQuery = computed(() => readQuery("unset"));
 const activeOnlyQuery = computed(() => readQuery("activeOnly"));
+const modeQuery = computed(() => readQuery("mode"));
+const bucketQuery = computed(() => readQuery("bucket"));
 const view = computed<ViewOption>(
   () => views.find((item) => item.value === viewQuery.value.value) ?? views[0]!,
 );
@@ -65,6 +76,57 @@ const viewIsValid = computed(
   () =>
     !viewQuery.value.present ||
     views.some((item) => item.value === viewQuery.value.value),
+);
+type MaturityMode = "maturity-queue" | "maturity-browse";
+
+const maturityModes = new Set<MaturityMode>([
+  "maturity-queue",
+  "maturity-browse",
+]);
+const maturityBuckets = new Set<KnowledgeMaturityQueueBucket>([
+  "pending_organization",
+  "pending_verification",
+  "completed",
+  "other",
+]);
+const maturityModeValid = computed(
+  () =>
+    !modeQuery.value.present ||
+    (modeQuery.value.valid &&
+      modeQuery.value.value !== null &&
+      maturityModes.has(modeQuery.value.value as MaturityMode)),
+);
+const maturityMode = computed<MaturityMode>(() =>
+  modeQuery.value.value === "maturity-browse"
+    ? "maturity-browse"
+    : "maturity-queue",
+);
+const maturityBucketValid = computed(
+  () =>
+    !bucketQuery.value.present ||
+    (bucketQuery.value.valid &&
+      bucketQuery.value.value !== null &&
+      maturityBuckets.has(
+        bucketQuery.value.value as KnowledgeMaturityQueueBucket,
+      )),
+);
+const maturityBucket = computed<KnowledgeMaturityQueueBucket>(() =>
+  maturityBuckets.has(bucketQuery.value.value as KnowledgeMaturityQueueBucket)
+    ? (bucketQuery.value.value as KnowledgeMaturityQueueBucket)
+    : "pending_organization",
+);
+const modeForWrongView = computed(
+  () => modeQuery.value.present && view.value.value !== "maturity",
+);
+const bucketForWrongMode = computed(
+  () =>
+    bucketQuery.value.present &&
+    (view.value.value !== "maturity" ||
+      maturityMode.value !== "maturity-queue"),
+);
+const isMaturityQueue = computed(
+  () =>
+    view.value.value === "maturity" && maturityMode.value === "maturity-queue",
 );
 const activeOnlyValueValid = computed(
   () =>
@@ -119,6 +181,10 @@ const currentSelectionLabel = computed(() =>
 const routeIsValid = computed(
   () =>
     viewIsValid.value &&
+    maturityModeValid.value &&
+    maturityBucketValid.value &&
+    !modeForWrongView.value &&
+    !bucketForWrongMode.value &&
     activeOnlyValueValid.value &&
     !activeOnlyForWrongView.value &&
     selectionValid.value,
@@ -131,6 +197,7 @@ const queryFor = (
   targetActiveOnly: boolean,
 ) => ({
   view: targetView.value,
+  ...(targetView.value === "maturity" ? { mode: "maturity-browse" } : {}),
   ...(targetUnset ? { unset: "true" } : targetKey ? { value: targetKey } : {}),
   ...(targetActiveOnly ? { activeOnly: "true" } : {}),
 });
@@ -144,7 +211,40 @@ const setView = async (name: string | number): Promise<void> => {
   if (!target || target.value === view.value.value) {
     return;
   }
+  if (target.value === "maturity") {
+    await updateRoute({
+      view: "maturity",
+      mode: "maturity-queue",
+      bucket: "pending_organization",
+    });
+    return;
+  }
   await updateRoute(queryFor(target, null, false, false));
+};
+
+const setMaturityMode = async (value: string | number): Promise<void> => {
+  if (value === "maturity-queue") {
+    await updateRoute({
+      view: "maturity",
+      mode: "maturity-queue",
+      bucket: maturityBucket.value,
+    });
+    return;
+  }
+  await updateRoute({
+    view: "maturity",
+    mode: "maturity-browse",
+  });
+};
+
+const changeMaturityBucket = async (
+  bucket: KnowledgeMaturityQueueBucket,
+): Promise<void> => {
+  await updateRoute({
+    view: "maturity",
+    mode: "maturity-queue",
+    bucket,
+  });
 };
 
 const selectFacet = async (item: KnowledgeFacetItem): Promise<void> => {
@@ -206,16 +306,28 @@ const syncRoute = async (): Promise<void> => {
   selectionMissing.value = false;
   routeError.value = !viewIsValid.value
     ? "视图不存在"
-    : !activeOnlyValueValid.value ||
+    : !maturityModeValid.value ||
+        !maturityBucketValid.value ||
+        modeForWrongView.value ||
+        bucketForWrongMode.value ||
+        !activeOnlyValueValid.value ||
         activeOnlyForWrongView.value ||
         !selectionValid.value
       ? "视图参数无效"
       : null;
   if (routeError.value) {
     store.clearDocuments();
+    maturityQueue.resetSensitive();
     return;
   }
 
+  if (isMaturityQueue.value) {
+    store.resetSensitive();
+    loadedScope.value = null;
+    return;
+  }
+
+  maturityQueue.resetSensitive();
   if (loadedScope.value !== currentScope.value) {
     store.clearDocuments();
     const loaded = await store.loadFacets(view.value.field, activeOnly.value);
@@ -230,6 +342,10 @@ const syncRoute = async (): Promise<void> => {
 
 const refresh = async (): Promise<void> => {
   if (!routeIsValid.value) {
+    return;
+  }
+  if (isMaturityQueue.value) {
+    await maturityQueue.refresh();
     return;
   }
   loadedScope.value = null;
@@ -260,7 +376,9 @@ onMounted(() => void syncRoute());
         quaternary
         circle
         aria-label="刷新知识视图"
-        :loading="store.facetsLoading || store.documentsLoading"
+        :loading="
+          store.facetsLoading || store.documentsLoading || maturityQueue.loading
+        "
         @click="refresh"
       >
         <template #icon>
@@ -280,6 +398,18 @@ onMounted(() => void syncRoute());
       </NTabPane>
     </NTabs>
 
+    <NRadioGroup
+      v-if="view.value === 'maturity'"
+      class="maturity-mode"
+      :value="maturityMode"
+      size="small"
+      aria-label="成熟度视图模式"
+      @update:value="setMaturityMode"
+    >
+      <NRadioButton value="maturity-queue">整理队列</NRadioButton>
+      <NRadioButton value="maturity-browse">分类浏览</NRadioButton>
+    </NRadioGroup>
+
     <NAlert
       v-if="routeError"
       type="error"
@@ -291,6 +421,12 @@ onMounted(() => void syncRoute());
         返回项目视图
       </NButton>
     </NAlert>
+
+    <KnowledgeMaturityQueue
+      v-else-if="isMaturityQueue"
+      :bucket="maturityBucket"
+      @change-bucket="changeMaturityBucket"
+    />
 
     <div v-else class="views-layout">
       <aside class="facets-panel" aria-label="知识视图分类">
@@ -391,6 +527,11 @@ onMounted(() => void syncRoute());
 
 .views-heading {
   margin-bottom: 14px;
+}
+
+.maturity-mode {
+  display: flex;
+  margin-top: 12px;
 }
 
 .views-heading p,

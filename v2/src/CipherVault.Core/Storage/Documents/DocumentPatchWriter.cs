@@ -1,5 +1,6 @@
 using CipherVault.Core.Database;
 using CipherVault.Core.Documents;
+using CipherVault.Core.Errors;
 
 namespace CipherVault.Core.Storage.Documents;
 
@@ -21,6 +22,14 @@ public static class DocumentPatchWriter
             context,
             documentId,
             cancellationToken);
+        if (command.Operation == VaultPatchOperation.Set
+            && VaultDocumentFormatExtensions.ParseDatabaseValue(
+                current.Format) != VaultDocumentFormat.Markdown)
+        {
+            throw new VaultException(
+                VaultErrorCode.InvalidInput,
+                "Maturity can be set only on Markdown documents.");
+        }
         DocumentMutationWriter.ThrowIfRevisionMismatch(
             expectedRevision,
             current.Revision);
@@ -37,6 +46,7 @@ public static class DocumentPatchWriter
                 VaultPatchOperation.Prepend => "prepend",
                 VaultPatchOperation.Replace => "replace",
                 VaultPatchOperation.Delete => "delete",
+                VaultPatchOperation.Set => "set",
                 _ => throw new ArgumentOutOfRangeException(nameof(command))
             },
             command.ContentMarkdown,
@@ -76,7 +86,19 @@ public static class DocumentPatchWriter
             now,
             "patch",
             DocumentContentLimitMode.StandardWrite,
-            cancellationToken);
+            cancellationToken,
+            new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["patchTargetKind"] =
+                    command.TargetKind == VaultPatchTargetKind.FrontMatter
+                        ? "frontmatter"
+                        : "heading",
+                ["frontMatterKey"] =
+                    command.TargetKind == VaultPatchTargetKind.FrontMatter
+                        ? command.FrontMatterKey
+                        : null,
+                ["patchOperation"] = coreCommand.Operation
+            });
         return new PatchResult(
             documentId,
             current.Revision,

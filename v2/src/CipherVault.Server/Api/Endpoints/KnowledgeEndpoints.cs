@@ -125,6 +125,25 @@ public static class KnowledgeEndpoints
             .MapGroup("/api/knowledge/views")
             .RequireAuthorization();
         views.MapGet(
+                "/maturity/queue",
+                async (
+                    HttpRequest request,
+                    KnowledgeMaturityQueueService queue,
+                    HttpContext context,
+                    CancellationToken cancellationToken) =>
+                {
+                    var bucket =
+                        KnowledgeMaturityQueueApiBinding.ParseBucket(request);
+                    var page =
+                        KnowledgeMaturityQueueApiBinding.ParsePage(request);
+                    context.Response.Headers.CacheControl = "no-store";
+                    return Results.Ok(await queue.ListAsync(
+                        bucket,
+                        page,
+                        cancellationToken));
+                })
+            .WithName("GetKnowledgeMaturityQueue");
+        views.MapGet(
                 "/{field}/facets",
                 async (
                     string field,

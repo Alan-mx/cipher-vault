@@ -2,6 +2,8 @@ import type {
   LocalGraphQuery,
   LocalGraphResult,
   KnowledgeFacetPage,
+  KnowledgeMaturityQueuePage,
+  KnowledgeMaturityQueueQuery,
   KnowledgeViewDocumentQuery,
   KnowledgeViewField,
   KnowledgeViewPage,
@@ -70,6 +72,19 @@ export const knowledgeApi = {
           facetKey: query.facetKey,
           unset: query.unset ? "true" : undefined,
           activeOnly: field === "project" ? query.activeOnly : undefined,
+          pageSize: query.pageSize,
+          cursor: query.cursor,
+        },
+        ...(signal ? { signal } : {}),
+      },
+    ),
+
+  maturityQueue: (query: KnowledgeMaturityQueueQuery, signal?: AbortSignal) =>
+    apiClient.request<KnowledgeMaturityQueuePage>(
+      "/api/knowledge/views/maturity/queue",
+      {
+        query: {
+          bucket: query.bucket,
           pageSize: query.pageSize,
           cursor: query.cursor,
         },

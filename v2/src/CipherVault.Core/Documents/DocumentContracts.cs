@@ -31,7 +31,8 @@ public enum VaultPatchOperation
     Append,
     Prepend,
     Replace,
-    Delete
+    Delete,
+    Set
 }
 
 public sealed record DocumentPatchCommand(

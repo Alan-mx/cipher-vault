@@ -251,6 +251,11 @@ internal static class FrontMatterDocument
         return $"{field.Key}: {RenderScalar(value)}";
     }
 
+    public static string RenderNewField(
+        string key,
+        JsonElement value) =>
+        $"{key}: {RenderScalar(value)}";
+
     private static int FindClosingDelimiter(
         string content,
         int start)
