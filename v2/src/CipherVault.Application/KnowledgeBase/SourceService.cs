@@ -26,6 +26,18 @@ public sealed class SourceService(VaultSessionManager sessionManager)
                 token),
             cancellationToken).AsTask();
 
+    public Task<SourceRevisionSummary> GetRevisionAsync(
+        Guid sourceId,
+        int revision,
+        CancellationToken cancellationToken = default) =>
+        sessionManager.ExecuteAsync(
+            async (context, token) => await SourceStore.GetRevisionAsync(
+                context,
+                sourceId,
+                revision,
+                token),
+            cancellationToken).AsTask();
+
     public Task<PagedResult<SourceRevisionSummary>> ListRevisionsAsync(
         Guid sourceId,
         int pageSize,

@@ -175,6 +175,53 @@ public static class SourceStore
             reader.IsDBNull(9) ? null : ParseTimestamp(reader.GetString(9)));
     }
 
+    public static async Task<SourceRevisionSummary> GetRevisionAsync(
+        VaultOperationContext context,
+        Guid sourceId,
+        int revision,
+        CancellationToken cancellationToken)
+    {
+        using var command = context.CreateCommand();
+        command.Command.CommandText =
+            """
+            SELECT
+                source_id,
+                source_revision_id,
+                revision,
+                source_kind,
+                title,
+                metadata_json,
+                content_format,
+                length(content_text),
+                created_at
+            FROM source_revisions
+            WHERE source_id = $sourceId
+              AND revision = $revision;
+            """;
+        command.Command.Parameters.AddWithValue(
+            "$sourceId",
+            sourceId.ToString("D"));
+        command.Command.Parameters.AddWithValue("$revision", revision);
+        await using var reader =
+            await command.Command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            throw new VaultException(
+                VaultErrorCode.SourceRevisionNotFound,
+                "Source revision was not found.");
+        }
+        return new SourceRevisionSummary(
+            Guid.Parse(reader.GetString(0)),
+            Guid.Parse(reader.GetString(1)),
+            reader.GetInt32(2),
+            KnowledgeBaseValueMapping.ParseSourceKind(reader.GetString(3)),
+            reader.GetString(4),
+            ParseJson(reader.GetString(5)),
+            KnowledgeBaseValueMapping.ParseContentFormat(reader.GetString(6)),
+            reader.GetInt32(7),
+            ParseTimestamp(reader.GetString(8)));
+    }
+
     public static async Task<PagedResult<SourceRevisionSummary>>
         ListRevisionsAsync(
             VaultOperationContext context,

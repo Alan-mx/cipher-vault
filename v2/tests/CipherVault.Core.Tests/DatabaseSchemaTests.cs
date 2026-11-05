@@ -155,12 +155,13 @@ public sealed class DatabaseSchemaTests
             VALUES($knowledgeId, 'DEMO', 'demo');
 
             INSERT INTO source_references(
-                source_reference_id, knowledge_revision_id, source_id,
+                source_reference_id, source_reference_order,
+                knowledge_revision_id, source_id,
                 source_revision_id, source_revision, source_locator_id,
                 locator_type, locator_key, locator_value_json, excerpt,
                 extraction_metadata_json, created_at)
             VALUES(
-                $sourceReferenceId, $knowledgeRevisionId, $sourceId,
+                $sourceReferenceId, 0, $knowledgeRevisionId, $sourceId,
                 $sourceRevisionId, 1, $locatorId, 'section',
                 '["Section"]', '["Section"]', 'Paragraph', '{}', $now);
 

@@ -291,6 +291,111 @@ public static class KnowledgeStore
             updatedAt);
     }
 
+    public static async Task<KnowledgeRevisionDetail> GetRevisionAsync(
+        VaultOperationContext context,
+        Guid knowledgeId,
+        int revision,
+        CancellationToken cancellationToken)
+    {
+        Guid storedKnowledgeId;
+        KnowledgeStatus status;
+        Guid revisionId;
+        int storedRevision;
+        string title;
+        string summary;
+        Guid typeId;
+        string typeKey;
+        Guid? templateId;
+        int modelVersion;
+        JsonElement properties;
+        IReadOnlyList<string> tags;
+        DateTimeOffset createdAt;
+        using (var command = context.CreateCommand())
+        {
+            command.Command.CommandText =
+                """
+                SELECT
+                    k.knowledge_id,
+                    k.status,
+                    r.knowledge_revision_id,
+                    r.revision,
+                    r.title,
+                    r.summary,
+                    r.knowledge_type_id,
+                    t.type_key,
+                    r.template_id,
+                    r.knowledge_model_version,
+                    r.properties_json,
+                    r.tags_json,
+                    r.created_at
+                FROM knowledge_items AS k
+                JOIN knowledge_revisions AS r
+                  ON r.knowledge_id = k.knowledge_id
+                JOIN knowledge_types AS t
+                  ON t.type_id = r.knowledge_type_id
+                WHERE r.knowledge_id = $knowledgeId
+                  AND r.revision = $revision;
+                """;
+            command.Command.Parameters.AddWithValue(
+                "$knowledgeId",
+                knowledgeId.ToString("D"));
+            command.Command.Parameters.AddWithValue("$revision", revision);
+            await using (var reader =
+                         await command.Command.ExecuteReaderAsync(
+                             cancellationToken))
+            {
+                if (!await reader.ReadAsync(cancellationToken))
+                {
+                    throw new VaultException(
+                        VaultErrorCode.KnowledgeRevisionNotFound,
+                        "Knowledge revision was not found.");
+                }
+                storedKnowledgeId = Guid.Parse(reader.GetString(0));
+                status = KnowledgeBaseValueMapping.ParseKnowledgeStatus(
+                    reader.GetString(1));
+                revisionId = Guid.Parse(reader.GetString(2));
+                storedRevision = reader.GetInt32(3);
+                title = reader.GetString(4);
+                summary = reader.GetString(5);
+                typeId = Guid.Parse(reader.GetString(6));
+                typeKey = reader.GetString(7);
+                templateId = reader.IsDBNull(8)
+                    ? null
+                    : Guid.Parse(reader.GetString(8));
+                modelVersion = reader.GetInt32(9);
+                properties = ParseJson(reader.GetString(10));
+                tags = ParseJson(reader.GetString(11))
+                    .EnumerateArray()
+                    .Select(item => item.GetString() ?? string.Empty)
+                    .ToArray();
+                createdAt = ParseTimestamp(reader.GetString(12));
+            }
+        }
+        return new KnowledgeRevisionDetail(
+            storedKnowledgeId,
+            status,
+            new KnowledgeRevisionSummary(
+                revisionId,
+                storedRevision,
+                title,
+                typeId,
+                templateId,
+                modelVersion,
+                createdAt),
+            title,
+            summary,
+            typeId,
+            typeKey,
+            templateId,
+            properties,
+            tags,
+            await ReadSourceReferencesAsync(
+                context,
+                revisionId,
+                null,
+                cancellationToken));
+    }
+
     public static async Task<PagedResult<KnowledgeRevisionSummary>>
         ListRevisionsAsync(
             VaultOperationContext context,
@@ -1182,7 +1287,7 @@ public static class KnowledgeStore
                 extraction_metadata_json
              FROM source_references
              WHERE knowledge_revision_id IN ({string.Join(',', parameters)})
-             ORDER BY knowledge_revision_id, source_reference_id;
+             ORDER BY knowledge_revision_id, source_reference_order;
              """;
         var index = 0;
         foreach (var id in revisionIds)

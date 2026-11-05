@@ -466,6 +466,8 @@ CREATE INDEX ix_knowledge_tags_key
 CREATE TABLE source_references (
     source_reference_id TEXT PRIMARY KEY
         CHECK (length(source_reference_id) = 36),
+    source_reference_order INTEGER NOT NULL
+        CHECK (source_reference_order >= 0),
     knowledge_revision_id TEXT NOT NULL,
     source_id TEXT NOT NULL,
     source_revision_id TEXT NOT NULL,
@@ -516,7 +518,7 @@ CREATE TABLE source_references (
 ) STRICT;
 
 CREATE INDEX ix_source_references_revision
-    ON source_references(knowledge_revision_id, source_reference_id);
+    ON source_references(knowledge_revision_id, source_reference_order);
 
 CREATE INDEX ix_source_references_source
     ON source_references(source_id, source_revision, knowledge_revision_id);

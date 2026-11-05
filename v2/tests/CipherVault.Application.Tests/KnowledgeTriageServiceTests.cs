@@ -510,12 +510,14 @@ public sealed class KnowledgeTriageServiceTests
                         SELECT n + 1 FROM seq WHERE n < $count
                     )
                     INSERT INTO source_references(
-                        source_reference_id, knowledge_revision_id, source_id,
+                        source_reference_id, source_reference_order,
+                        knowledge_revision_id, source_id,
                         source_revision_id, source_revision, source_locator_id,
                         locator_type, locator_key, locator_value_json, excerpt,
                         extraction_metadata_json, created_at)
                     SELECT
                         printf('40000000-0000-4000-8000-%012d', n),
+                        0,
                         printf('20000000-0000-4000-8000-%012d', n),
                         $sourceId,
                         $sourceRevisionId,

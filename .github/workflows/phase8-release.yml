@@ -124,10 +124,16 @@ jobs:
             -Platform windows `
             -PublishRoot $publish `
             -OutputRoot $root
+          & .\v2\scripts\verify-windows-artifact.ps1 `
+            -ArtifactRoot $root `
+            -EvidenceRoot (Join-Path $root "evidence") `
+            -ReleaseVersion $env:CIPHERVAULT_RELEASE_VERSION
       - uses: actions/upload-artifact@v4
         with:
           name: phase8-windows
-          path: ${{ needs.prepare.outputs.artifactRoot }}/CipherVault-${{ needs.prepare.outputs.version }}-win-x64.zip
+          path: |
+            ${{ needs.prepare.outputs.artifactRoot }}/CipherVault-${{ needs.prepare.outputs.version }}-win-x64.zip
+            ${{ needs.prepare.outputs.artifactRoot }}/evidence/windows.json
           retention-days: 14
 
   linux-package:
@@ -352,6 +358,7 @@ jobs:
           path: ${{ needs.prepare.outputs.artifactRoot }}
       - name: Verify evidence presence
         run: |
+          test -s "$CIPHERVAULT_ARTIFACT_ROOT/evidence/windows.json"
           test -s "$CIPHERVAULT_ARTIFACT_ROOT/evidence/linux-ubuntu-22.04.json"
           test -s "$CIPHERVAULT_ARTIFACT_ROOT/evidence/linux-debian-12.json"
           test -s "$CIPHERVAULT_ARTIFACT_ROOT/evidence/linux-arm64-ubuntu-24.04.json"

@@ -95,6 +95,11 @@ internal static class KnowledgeBasePayloadParser
         {
             throw InvalidAt("tags", "Too many tags.");
         }
+        var contentBody = RemoveAndValidateFrontMatter(
+            content,
+            type,
+            properties,
+            tags);
         var references = OptionalArray(payload, "sourceReferences")
             .Select(ParseSourceReference)
             .ToArray();
@@ -103,7 +108,7 @@ internal static class KnowledgeBasePayloadParser
             summary,
             typeId,
             templateId,
-            RemoveFrontMatter(content),
+            contentBody,
             properties,
             tags,
             references);
@@ -331,6 +336,10 @@ internal static class KnowledgeBasePayloadParser
                 $"properties.{definition.Key}",
                 $"Property {definition.Key} has an invalid type.");
         }
+        ValidatePropertyConstraints(
+            definition,
+            value,
+            $"properties.{definition.Key}");
     }
 
     private static void ValidateMetadata(
@@ -343,6 +352,46 @@ internal static class KnowledgeBasePayloadParser
             ?? throw new VaultException(
                 VaultErrorCode.SourceMetadataInvalid,
                 "Source rule is unavailable.");
+        if (!rule.MetadataSchema.TryGetProperty(
+                "properties",
+                out var properties)
+            || properties.ValueKind != JsonValueKind.Object)
+        {
+            properties = default;
+        }
+        var definitions = properties.ValueKind == JsonValueKind.Object
+            ? properties.EnumerateObject()
+                .ToDictionary(
+                    item => item.Name,
+                    item => item.Value,
+                    StringComparer.Ordinal)
+            : new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        if (rule.MetadataSchema.TryGetProperty(
+                "additionalProperties",
+                out var additional)
+            && additional.ValueKind == JsonValueKind.False)
+        {
+            foreach (var property in metadata.EnumerateObject())
+            {
+                if (!definitions.ContainsKey(property.Name))
+                {
+                    throw SourceMetadataInvalid(
+                        $"metadata.{property.Name}",
+                        $"Source metadata {property.Name} is not defined.");
+                }
+            }
+        }
+        foreach (var property in metadata.EnumerateObject())
+        {
+            if (definitions.TryGetValue(property.Name, out var schema))
+            {
+                ValidateMetadataValue(
+                    property.Name,
+                    schema,
+                    property.Value,
+                    $"metadata.{property.Name}");
+            }
+        }
         if (!rule.MetadataSchema.TryGetProperty(
                 "required",
                 out var required)
@@ -369,7 +418,237 @@ internal static class KnowledgeBasePayloadParser
         }
     }
 
-    private static string RemoveFrontMatter(string content)
+    private static void ValidatePropertyConstraints(
+        KnowledgePropertyDefinition definition,
+        JsonElement value,
+        string fieldPath)
+    {
+        var constraints = definition.Constraints;
+        if (constraints.ValueKind != JsonValueKind.Object)
+        {
+            return;
+        }
+        if (definition.ValueType == "enum"
+            && constraints.TryGetProperty("options", out var options))
+        {
+            if (options.ValueKind != JsonValueKind.Array
+                || options.EnumerateArray().Any(item =>
+                    item.ValueKind != JsonValueKind.String))
+            {
+                throw InvalidAt(
+                    fieldPath,
+                    "Enum options are invalid.");
+            }
+            var text = value.GetString() ?? string.Empty;
+            if (!options.EnumerateArray().Any(item =>
+                    string.Equals(
+                        item.GetString(),
+                        text,
+                        StringComparison.Ordinal)))
+            {
+                throw InvalidAt(
+                    fieldPath,
+                    "Enum value is not allowed.");
+            }
+        }
+        if (definition.ValueType is "string" or "date")
+        {
+            var length = (value.GetString() ?? string.Empty)
+                .EnumerateRunes()
+                .Count();
+            ValidateRange(
+                constraints,
+                "minLength",
+                "maxLength",
+                length,
+                fieldPath);
+        }
+        if (definition.ValueType == "number")
+        {
+            var number = value.GetDecimal();
+            if (constraints.TryGetProperty("minimum", out var minimum)
+                && number < minimum.GetDecimal())
+            {
+                throw InvalidAt(
+                    fieldPath,
+                    "Number is below the minimum.");
+            }
+            if (constraints.TryGetProperty("maximum", out var maximum)
+                && number > maximum.GetDecimal())
+            {
+                throw InvalidAt(
+                    fieldPath,
+                    "Number exceeds the maximum.");
+            }
+            if (constraints.TryGetProperty("integer", out var integer)
+                && integer.ValueKind == JsonValueKind.True
+                && number != decimal.Truncate(number))
+            {
+                throw InvalidAt(
+                    fieldPath,
+                    "Number must be an integer.");
+            }
+        }
+        if (definition.ValueType == "array")
+        {
+            ValidateRange(
+                constraints,
+                "minItems",
+                "maxItems",
+                value.GetArrayLength(),
+                fieldPath);
+            if (constraints.TryGetProperty("items", out var items))
+            {
+                foreach (var item in value.EnumerateArray())
+                {
+                    ValidateMetadataValue(
+                        definition.Key,
+                        items,
+                        item,
+                        fieldPath);
+                }
+            }
+        }
+        if (definition.ValueType == "object"
+            && constraints.TryGetProperty("properties", out var properties))
+        {
+            ValidateMetadataValue(
+                definition.Key,
+                constraints,
+                value,
+                fieldPath);
+        }
+    }
+
+    private static void ValidateMetadataValue(
+        string name,
+        JsonElement schema,
+        JsonElement value,
+        string fieldPath)
+    {
+        if (value.ValueKind == JsonValueKind.Null)
+        {
+            return;
+        }
+        var type = schema.TryGetProperty("type", out var typeElement)
+            && typeElement.ValueKind == JsonValueKind.String
+                ? typeElement.GetString()
+                : null;
+        var valid = type switch
+        {
+            "string" => value.ValueKind == JsonValueKind.String,
+            "date" => value.ValueKind == JsonValueKind.String
+                && (DateOnly.TryParse(
+                        value.GetString(),
+                        out _)
+                    || DateTimeOffset.TryParse(
+                        value.GetString(),
+                        out _)),
+            "number" => value.ValueKind == JsonValueKind.Number,
+            "boolean" => value.ValueKind is
+                JsonValueKind.True or JsonValueKind.False,
+            "array" => value.ValueKind == JsonValueKind.Array,
+            "object" => value.ValueKind == JsonValueKind.Object,
+            null => true,
+            _ => false
+        };
+        if (!valid)
+        {
+            throw SourceMetadataInvalid(
+                fieldPath,
+                $"{name} has an invalid type.");
+        }
+        if (value.ValueKind == JsonValueKind.Array
+            && schema.TryGetProperty("itemType", out var itemType)
+            && itemType.ValueKind == JsonValueKind.String)
+        {
+            foreach (var item in value.EnumerateArray())
+            {
+                ValidateMetadataValue(
+                    name,
+                    JsonSerializer.SerializeToElement(
+                        new Dictionary<string, JsonElement>
+                        {
+                            ["type"] = itemType
+                        }),
+                    item,
+                    fieldPath);
+            }
+        }
+        if (value.ValueKind == JsonValueKind.Object)
+        {
+            var definitions =
+                schema.TryGetProperty("properties", out var properties)
+                && properties.ValueKind == JsonValueKind.Object
+                    ? properties.EnumerateObject().ToDictionary(
+                        item => item.Name,
+                        item => item.Value,
+                        StringComparer.Ordinal)
+                    : new Dictionary<string, JsonElement>(
+                        StringComparer.Ordinal);
+            if (schema.TryGetProperty(
+                    "additionalProperties",
+                    out var additional)
+                && additional.ValueKind == JsonValueKind.False)
+            {
+                foreach (var property in value.EnumerateObject())
+                {
+                    if (!definitions.ContainsKey(property.Name))
+                    {
+                        throw SourceMetadataInvalid(
+                            $"{fieldPath}.{property.Name}",
+                            $"{property.Name} is not allowed.");
+                    }
+                }
+            }
+            foreach (var property in value.EnumerateObject())
+            {
+                if (definitions.TryGetValue(
+                        property.Name,
+                        out var propertySchema))
+                {
+                    ValidateMetadataValue(
+                        property.Name,
+                        propertySchema,
+                        property.Value,
+                        $"{fieldPath}.{property.Name}");
+                }
+            }
+        }
+    }
+
+    private static void ValidateRange(
+        JsonElement constraints,
+        string minimumName,
+        string maximumName,
+        int actual,
+        string fieldPath)
+    {
+        if (constraints.TryGetProperty(
+                minimumName,
+                out var minimum)
+            && actual < minimum.GetInt32())
+        {
+            throw InvalidAt(
+                fieldPath,
+                $"Value is below {minimumName}.");
+        }
+        if (constraints.TryGetProperty(
+                maximumName,
+                out var maximum)
+            && actual > maximum.GetInt32())
+        {
+            throw InvalidAt(
+                fieldPath,
+                $"Value exceeds {maximumName}.");
+        }
+    }
+
+    private static string RemoveAndValidateFrontMatter(
+        string content,
+        KnowledgeTypeDefinition type,
+        JsonElement properties,
+        IReadOnlyList<string> tags)
     {
         if (!content.StartsWith("---", StringComparison.Ordinal))
         {
@@ -380,15 +659,130 @@ internal static class KnowledgeBasePayloadParser
         {
             return content;
         }
-        var end = normalized.IndexOf("\n---", 3, StringComparison.Ordinal);
-        if (end < 0)
+        var lines = normalized.Split('\n');
+        var closingIndex = Array.FindIndex(
+            lines,
+            1,
+            line => string.Equals(
+                line.Trim(),
+                "---",
+                StringComparison.Ordinal));
+        if (closingIndex < 0)
         {
             throw new VaultException(
                 VaultErrorCode.FrontMatterModelMismatch,
                 "Frontmatter is not closed.");
         }
-        var bodyStart = normalized.IndexOf('\n', end + 4);
-        return bodyStart < 0 ? string.Empty : normalized[(bodyStart + 1)..];
+        var values = new Dictionary<string, JsonElement>(
+            StringComparer.Ordinal);
+        for (var index = 1; index < closingIndex; index++)
+        {
+            var line = lines[index].Trim();
+            if (line.Length == 0 || line.StartsWith('#'))
+            {
+                continue;
+            }
+            var separator = line.IndexOf(':');
+            if (separator <= 0)
+            {
+                throw FrontMatterInvalid("$", "Frontmatter line is invalid.");
+            }
+            var key = line[..separator].Trim();
+            var rawValue = line[(separator + 1)..].Trim();
+            if (key.Length == 0 || !values.TryAdd(key, ParseScalar(rawValue)))
+            {
+                throw FrontMatterInvalid(
+                    key,
+                    "Frontmatter key is empty or duplicated.");
+            }
+        }
+
+        if (!values.TryGetValue("type", out var typeValue)
+            || typeValue.ValueKind != JsonValueKind.String
+            || !string.Equals(
+                typeValue.GetString(),
+                type.Key,
+                StringComparison.Ordinal))
+        {
+            throw FrontMatterInvalid(
+                "type",
+                "Frontmatter type conflicts with structured Knowledge.");
+        }
+        if (values.TryGetValue("tags", out var frontMatterTags))
+        {
+            if (frontMatterTags.ValueKind != JsonValueKind.Array
+                || frontMatterTags.EnumerateArray().Any(item =>
+                    item.ValueKind != JsonValueKind.String))
+            {
+                throw FrontMatterInvalid(
+                    "tags",
+                    "Frontmatter tags must be a JSON string array.");
+            }
+            var frontKeys = TagNormalizer.NormalizeMany(
+                    frontMatterTags.EnumerateArray()
+                        .Select(item => item.GetString() ?? string.Empty))
+                .Select(item => item.NormalizedKey)
+                .OrderBy(item => item, StringComparer.Ordinal);
+            var structuredKeys = TagNormalizer.NormalizeMany(tags)
+                .Select(item => item.NormalizedKey)
+                .OrderBy(item => item, StringComparer.Ordinal);
+            if (!frontKeys.SequenceEqual(
+                    structuredKeys,
+                    StringComparer.Ordinal))
+            {
+                throw FrontMatterInvalid(
+                    "tags",
+                    "Frontmatter tags conflict with structured Knowledge.");
+            }
+        }
+        var definitions = type.Properties
+            .Where(item => item.IsEnabled)
+            .ToDictionary(item => item.Key, StringComparer.Ordinal);
+        foreach (var property in values)
+        {
+            if (property.Key is "type" or "tags")
+            {
+                continue;
+            }
+            if (!definitions.ContainsKey(property.Key))
+            {
+                throw FrontMatterInvalid(
+                    property.Key,
+                    "Frontmatter property is not defined by the Knowledge type.");
+            }
+            var structured = properties.TryGetProperty(
+                    property.Key,
+                    out var value)
+                ? value
+                : JsonSerializer.SerializeToElement<object?>(null);
+            if (!string.Equals(
+                    JsonCanonicalizer.Canonicalize(property.Value),
+                    JsonCanonicalizer.Canonicalize(structured),
+                    StringComparison.Ordinal))
+            {
+                throw FrontMatterInvalid(
+                    property.Key,
+                    "Frontmatter property conflicts with structured Knowledge.");
+            }
+        }
+        return string.Join('\n', lines.Skip(closingIndex + 1));
+    }
+
+    private static JsonElement ParseScalar(string value)
+    {
+        if (value.Length == 0)
+        {
+            return JsonSerializer.SerializeToElement(string.Empty);
+        }
+        try
+        {
+            using var document = JsonDocument.Parse(value);
+            return document.RootElement.Clone();
+        }
+        catch (JsonException)
+        {
+            return JsonSerializer.SerializeToElement(value);
+        }
     }
 
     private static SourceKind ParseSourceKind(string value) =>
@@ -547,4 +941,26 @@ internal static class KnowledgeBasePayloadParser
 
     private static VaultException Invalid(string message) =>
         InvalidAt("$", message);
+
+    private static VaultException SourceMetadataInvalid(
+        string fieldPath,
+        string message) =>
+        new(
+            VaultErrorCode.SourceMetadataInvalid,
+            message,
+            details: new Dictionary<string, object?>
+            {
+                ["fieldPath"] = fieldPath
+            });
+
+    private static VaultException FrontMatterInvalid(
+        string fieldPath,
+        string message) =>
+        new(
+            VaultErrorCode.FrontMatterModelMismatch,
+            message,
+            details: new Dictionary<string, object?>
+            {
+                ["fieldPath"] = fieldPath
+            });
 }

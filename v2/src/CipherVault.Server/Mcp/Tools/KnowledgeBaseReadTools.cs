@@ -60,14 +60,10 @@ public sealed class KnowledgeBaseReadTools(
                 var id = ParseGuid(sourceId, "sourceId");
                 var source = await sources.GetAsync(id, token);
                 var selectedRevision = revision ?? source.CurrentRevision;
-                var revisions = await sources.ListRevisionsAsync(
+                var revisionInfo = await sources.GetRevisionAsync(
                     id,
-                    100,
-                    null,
+                    selectedRevision,
                     token);
-                var revisionInfo = revisions.Items.FirstOrDefault(item =>
-                    item.Revision == selectedRevision)
-                    ?? throw Invalid("revision", "Source revision was not found.");
                 var content = await sources.ReadContentAsync(
                     id,
                     selectedRevision,
@@ -178,15 +174,20 @@ public sealed class KnowledgeBaseReadTools(
             async (_, token) =>
             {
                 var id = ParseGuid(knowledgeId, "knowledgeId");
-                var detail = await knowledge.GetAsync(id, token);
-                var selectedRevision = revision ?? detail.CurrentRevision;
+                var selectedRevision = revision
+                    ?? (await knowledge.GetAsync(id, token)).CurrentRevision;
+                var revisionDetail =
+                    await knowledge.GetRevisionAsync(
+                        id,
+                        selectedRevision,
+                        token);
                 var content = await knowledge.ReadContentAsync(
                     id,
                     selectedRevision,
                     offset,
                     maxChars,
                     token);
-                return new KnowledgeReadResult(detail, content);
+                return new KnowledgeReadResult(revisionDetail, content);
             },
             cancellationToken);
 
@@ -333,5 +334,5 @@ public sealed record SourceReadResult(
     SourceContentChunk Content);
 
 public sealed record KnowledgeReadResult(
-    KnowledgeDetail Knowledge,
+    KnowledgeRevisionDetail Knowledge,
     KnowledgeContentChunk Content);

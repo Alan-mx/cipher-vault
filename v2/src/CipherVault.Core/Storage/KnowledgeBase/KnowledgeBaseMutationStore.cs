@@ -581,12 +581,15 @@ public static class KnowledgeBaseMutationStore
                 tag.Name);
             await tagCommand.Command.ExecuteNonQueryAsync(cancellationToken);
         }
-        foreach (var reference in payload.SourceReferences)
+        for (var referenceOrder = 0;
+             referenceOrder < payload.SourceReferences.Count;
+             referenceOrder++)
         {
             await InsertSourceReferenceAsync(
                 context,
                 revisionId,
-                reference,
+                referenceOrder,
+                payload.SourceReferences[referenceOrder],
                 now,
                 cancellationToken);
         }
@@ -1002,6 +1005,7 @@ public static class KnowledgeBaseMutationStore
     private static async Task InsertSourceReferenceAsync(
         VaultOperationContext context,
         Guid knowledgeRevisionId,
+        int referenceOrder,
         SourceReferenceInput reference,
         DateTimeOffset now,
         CancellationToken cancellationToken)
@@ -1069,18 +1073,23 @@ public static class KnowledgeBaseMutationStore
         insert.Command.CommandText =
             """
             INSERT INTO source_references(
-                source_reference_id, knowledge_revision_id, source_id,
+                source_reference_id, source_reference_order,
+                knowledge_revision_id, source_id,
                 source_revision_id, source_revision, source_locator_id,
                 locator_type, locator_key, locator_value_json, excerpt,
                 extraction_metadata_json, created_at)
             VALUES(
-                $id, $knowledgeRevisionId, $sourceId, $sourceRevisionId,
+                $id, $referenceOrder, $knowledgeRevisionId, $sourceId,
+                $sourceRevisionId,
                 $sourceRevision, $locatorId, $locatorType, $locatorKey,
                 $locatorValue, $excerpt, $metadata, $now);
             """;
         insert.Command.Parameters.AddWithValue(
             "$id",
             Guid.NewGuid().ToString("D"));
+        insert.Command.Parameters.AddWithValue(
+            "$referenceOrder",
+            referenceOrder);
         insert.Command.Parameters.AddWithValue(
             "$knowledgeRevisionId",
             knowledgeRevisionId.ToString("D"));
@@ -1397,7 +1406,34 @@ public static class KnowledgeBaseMutationStore
                 'status', k.status,
                 'revision', r.revision,
                 'properties', json(r.properties_json),
-                'tags', json(r.tags_json)
+                'tags', json(r.tags_json),
+                'sourceReferences', json(coalesce(
+                    (
+                        SELECT json_group_array(json_object(
+                            'sourceId', ordered.source_id,
+                            'sourceRevision', ordered.source_revision,
+                            'locatorType', ordered.locator_type,
+                            'locatorValue', json(ordered.locator_value_json),
+                            'excerpt', ordered.excerpt,
+                            'extractionMetadata',
+                                json(ordered.extraction_metadata_json)
+                        ))
+                        FROM (
+                            SELECT
+                                source_id,
+                                source_revision,
+                                locator_type,
+                                locator_value_json,
+                                excerpt,
+                                extraction_metadata_json
+                            FROM source_references
+                            WHERE knowledge_revision_id =
+                                  r.knowledge_revision_id
+                            ORDER BY source_reference_order
+                        ) AS ordered
+                    ),
+                    '[]'
+                ))
             )
             FROM knowledge_items AS k
             JOIN knowledge_revisions AS r

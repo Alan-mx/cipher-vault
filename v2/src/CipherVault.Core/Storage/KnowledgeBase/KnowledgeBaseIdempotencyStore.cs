@@ -35,20 +35,25 @@ public static class KnowledgeBaseIdempotencyStore
                 created_at,
                 expires_at
             FROM idempotency_records
-            WHERE idempotency_key = $key
-              AND actor_kind = $actorKind
-              AND operation = $operation;
+            WHERE idempotency_key = $key;
             """;
         command.Command.Parameters.AddWithValue("$key", key.ToString("D"));
-        command.Command.Parameters.AddWithValue(
-            "$actorKind",
-            ActorValue(actor));
-        command.Command.Parameters.AddWithValue("$operation", operation);
         await using var reader =
             await command.Command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
         {
             return null;
+        }
+        if (!string.Equals(
+                reader.GetString(1),
+                ActorValue(actor),
+                StringComparison.Ordinal)
+            || !string.Equals(
+                reader.GetString(2),
+                operation,
+                StringComparison.Ordinal))
+        {
+            throw KeyReused();
         }
         return new KnowledgeBaseIdempotencyRecord(
             Guid.Parse(reader.GetString(0)),

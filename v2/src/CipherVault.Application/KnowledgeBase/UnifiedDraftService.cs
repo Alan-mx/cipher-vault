@@ -125,6 +125,11 @@ public sealed class UnifiedDraftService(
                     input.OperationType,
                     input.Payload,
                     model);
+                EnsureImmutableEvidence(
+                    input.TargetObjectType,
+                    input.OperationType,
+                    input.Payload,
+                    baseSnapshot);
                 var record = new DraftRecord(
                     Guid.NewGuid(),
                     1,
@@ -197,6 +202,7 @@ public sealed class UnifiedDraftService(
                     current.OperationType,
                     payload,
                     model);
+                EnsureImmutableEvidence(current, payload);
                 var updated = await UnifiedDraftStore.UpdateAsync(
                     context,
                     draftId,
@@ -207,6 +213,13 @@ public sealed class UnifiedDraftService(
                     null,
                     null,
                     timeProvider.GetUtcNow(),
+                    token);
+                await InsertDraftAuditAsync(
+                    context,
+                    "draft.update",
+                    updated,
+                    actor,
+                    updated.UpdatedAt,
                     token);
                 var result = ToMutation(updated);
                 await SaveIdempotencyAsync(
@@ -287,6 +300,13 @@ public sealed class UnifiedDraftService(
                     observedTargetRevision,
                     model.Version,
                     timeProvider.GetUtcNow(),
+                    token);
+                await InsertDraftAuditAsync(
+                    context,
+                    "draft.rebase",
+                    updated,
+                    actor,
+                    updated.UpdatedAt,
                     token);
                 var result = ToMutation(updated);
                 await SaveIdempotencyAsync(
@@ -676,6 +696,67 @@ public sealed class UnifiedDraftService(
                 VaultErrorCode.DraftStateConflict,
                 "Draft is not editable.");
         }
+    }
+
+    internal static void EnsureImmutableEvidence(
+        DraftRecord draft,
+        JsonElement payload) =>
+        EnsureImmutableEvidence(
+            draft.TargetObjectType,
+            draft.OperationType,
+            payload,
+            draft.BaseSnapshot);
+
+    private static void EnsureImmutableEvidence(
+        DraftTargetObjectType targetType,
+        DraftOperationType operation,
+        JsonElement payload,
+        JsonElement? baseSnapshot)
+    {
+        if (operation != DraftOperationType.Update)
+        {
+            return;
+        }
+        var snapshot = baseSnapshot
+            ?? throw InvalidTarget();
+        var field = targetType switch
+        {
+            DraftTargetObjectType.Knowledge => "sourceReferences",
+            DraftTargetObjectType.Relation => "evidence",
+            _ => null
+        };
+        if (field is null)
+        {
+            return;
+        }
+        var expected = ReadArrayOrEmpty(snapshot, field);
+        var actual = ReadArrayOrEmpty(payload, field);
+        if (!string.Equals(
+                JsonCanonicalizer.Canonicalize(expected),
+                JsonCanonicalizer.Canonicalize(actual),
+                StringComparison.Ordinal))
+        {
+            throw new VaultException(
+                VaultErrorCode.ImmutableDefinitionConflict,
+                $"{field} is read-only for Draft updates.",
+                details: new Dictionary<string, object?>
+                {
+                    ["fieldPath"] = field
+                });
+        }
+    }
+
+    private static JsonElement ReadArrayOrEmpty(
+        JsonElement element,
+        string field)
+    {
+        if (element.ValueKind == JsonValueKind.Object
+            && element.TryGetProperty(field, out var value)
+            && value.ValueKind != JsonValueKind.Null)
+        {
+            return value;
+        }
+        return JsonSerializer.SerializeToElement(Array.Empty<object>());
     }
 
     private static int ReadRevision(JsonElement snapshot) =>

@@ -343,6 +343,19 @@ public sealed record KnowledgeRevisionSummary(
     int KnowledgeModelVersion,
     DateTimeOffset CreatedAt);
 
+public sealed record KnowledgeRevisionDetail(
+    Guid KnowledgeId,
+    KnowledgeStatus Status,
+    KnowledgeRevisionSummary Revision,
+    string Title,
+    string Summary,
+    Guid KnowledgeTypeId,
+    string KnowledgeTypeKey,
+    Guid? TemplateId,
+    JsonElement Properties,
+    IReadOnlyList<string> Tags,
+    IReadOnlyList<SourceReferenceView> SourceReferences);
+
 public sealed record KnowledgeContentChunk(
     Guid KnowledgeId,
     int KnowledgeRevision,

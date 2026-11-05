@@ -236,6 +236,7 @@ jobs:
           test -f v2/scripts/publish-phase8.sh
           test -f v2/scripts/package-phase8.ps1
           test -f v2/scripts/package-phase8.sh
+          test -f v2/scripts/verify-windows-artifact.ps1
           test -f v2/deploy/linux/enable-tailscale-serve.sh
           bash -n v2/deploy/linux/enable-tailscale-serve.sh
           grep -Fq -- 'tailscale serve' v2/deploy/linux/enable-tailscale-serve.sh

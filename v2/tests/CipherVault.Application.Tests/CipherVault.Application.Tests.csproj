@@ -13,6 +13,8 @@
     <Compile Include="KnowledgeRetrospectiveServiceTests.cs" />
     <Compile Include="KnowledgeSynthesisServiceTests.cs" />
     <Compile Include="KnowledgeTriageServiceTests.cs" />
+    <Compile Include="KnowledgePayloadValidationTests.cs" />
+    <Compile Include="KnowledgeSourceOrderTests.cs" />
     <Compile Include="DraftReviewEditingTests.cs" />
     <Compile Include="BackupServiceTests.cs" />
     <Compile Include="BackupSessionLeaseTests.cs" />

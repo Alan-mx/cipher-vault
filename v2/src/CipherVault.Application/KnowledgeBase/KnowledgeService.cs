@@ -36,6 +36,18 @@ public sealed class KnowledgeService(VaultSessionManager sessionManager)
                 token),
             cancellationToken).AsTask();
 
+    public Task<KnowledgeRevisionDetail> GetRevisionAsync(
+        Guid knowledgeId,
+        int revision,
+        CancellationToken cancellationToken = default) =>
+        sessionManager.ExecuteAsync(
+            async (context, token) => await KnowledgeStore.GetRevisionAsync(
+                context,
+                knowledgeId,
+                revision,
+                token),
+            cancellationToken).AsTask();
+
     public Task<PagedResult<KnowledgeRevisionSummary>> ListRevisionsAsync(
         Guid knowledgeId,
         int pageSize,
