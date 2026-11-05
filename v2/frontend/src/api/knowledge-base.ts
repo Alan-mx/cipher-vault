@@ -9,6 +9,8 @@ import type {
   PagedResult,
   SourceContentChunk,
   SourceDetail,
+  SourceLocator,
+  SourceLocatorContent,
   SourceRevision,
   SourceSummary,
 } from "../types/knowledge-base";
@@ -41,9 +43,25 @@ export const knowledgeBaseApi = {
     apiClient.request<PagedResult<SourceRevision>>(
       `/api/sources/${encodeURIComponent(sourceId)}/revisions`,
     ),
-  sourceContent: (sourceId: string, revision: number) =>
+  sourceContent: (sourceId: string, revision: number, offset = 0) =>
     apiClient.request<SourceContentChunk>(
       `/api/sources/${encodeURIComponent(sourceId)}/revisions/${revision}/content`,
+      { query: { offset, maxChars: 32_768 } },
+    ),
+  sourceLocators: (sourceId: string, revision: number) =>
+    apiClient.request<PagedResult<SourceLocator>>(
+      `/api/sources/${encodeURIComponent(sourceId)}/revisions/${revision}/locators`,
+      { query: { pageSize: 100 } },
+    ),
+  sourceLocatorContent: (
+    sourceId: string,
+    revision: number,
+    locatorId: string,
+    offset = 0,
+  ) =>
+    apiClient.request<SourceLocatorContent>(
+      `/api/sources/${encodeURIComponent(sourceId)}/revisions/${revision}/locators/${encodeURIComponent(locatorId)}/content`,
+      { query: { offset, maxChars: 32_768 } },
     ),
 
   knowledge: (query: QueryInput = {}) =>

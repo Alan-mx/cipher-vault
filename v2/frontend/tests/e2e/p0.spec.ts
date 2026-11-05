@@ -85,6 +85,18 @@ test("P0 knowledge workflow covers source, inbox, review and model", async ({
   await submitAndApplyDraft(page, "Source draft");
   await expect(page.locator("body")).not.toContainText("Source draft");
 
+  await page.goto("/sources");
+  await page.getByRole("button", { name: /Source draft/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "Source draft" }),
+  ).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "来源版本" })).toHaveValue(
+    "1",
+  );
+  await page.getByRole("button", { name: /^Section section/ }).click();
+  await expect(page.getByText(/定位内容/)).toBeVisible();
+  await expect(page.locator(".content pre")).toContainText("Paragraph text.");
+
   await page.goto("/inbox");
   await page.getByPlaceholder("标题").fill("Knowledge draft");
   await page

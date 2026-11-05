@@ -117,6 +117,28 @@ export interface SourceContentChunk {
   done: boolean;
 }
 
+export interface SourceLocator {
+  locatorId: string;
+  type: string;
+  value: unknown;
+  label: string | null;
+  startOffset: number;
+  endOffset: number;
+  ordinal: number;
+  parentLocatorId: string | null;
+}
+
+export interface SourceLocatorContent {
+  sourceId: string;
+  sourceRevision: number;
+  locator: SourceLocator;
+  offset: number;
+  nextOffset: number;
+  length: number;
+  text: string;
+  done: boolean;
+}
+
 export interface KnowledgeSummary {
   knowledgeId: string;
   title: string;
