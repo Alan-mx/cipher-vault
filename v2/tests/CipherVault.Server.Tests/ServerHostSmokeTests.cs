@@ -14,7 +14,7 @@ public sealed class ServerHostSmokeTests
             await home.Content.ReadAsStringAsync(),
             StringComparison.Ordinal);
 
-        using var deepLink = await server.Client.GetAsync("/documents/example");
+        using var deepLink = await server.Client.GetAsync("/knowledge/example");
         Assert.Equal(System.Net.HttpStatusCode.OK, deepLink.StatusCode);
         Assert.Contains(
             "CipherVault",

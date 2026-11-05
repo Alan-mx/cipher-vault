@@ -58,7 +58,7 @@ onBeforeUnmount(() => {
       type="success"
       :show-icon="false"
     >
-      已配置 · Version {{ settings.mcpStatus.version ?? 1 }}
+      已配置
       <template v-if="settings.mcpStatus.rotatedAtUtc">
         · 轮换于
         {{ new Date(settings.mcpStatus.rotatedAtUtc).toLocaleString("zh-CN") }}

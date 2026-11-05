@@ -252,7 +252,8 @@ public sealed class BackupService
                         context,
                         actor,
                         "backup.download",
-                        documentId: null,
+                        targetObjectType: "backup",
+                        targetId: null,
                         revision: null,
                         result: "started",
                         details: new
@@ -299,7 +300,8 @@ public sealed class BackupService
                         context,
                         actor,
                         "backup.download",
-                        documentId: null,
+                        targetObjectType: "backup",
+                        targetId: null,
                         revision: null,
                         result: outcome,
                         details: new
@@ -364,7 +366,8 @@ public sealed class BackupService
                         context,
                         actor,
                         "backup.create",
-                        documentId: null,
+                        targetObjectType: "backup",
+                        targetId: null,
                         revision: null,
                         result: "success",
                         details: new

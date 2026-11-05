@@ -50,7 +50,7 @@ describe("ApiClient", () => {
     });
     const client = new ApiClient();
 
-    await client.request("/api/documents/id", {
+    await client.request("/api/knowledge/id", {
       method: "PUT",
       csrf: true,
       ifMatch: 3,
@@ -90,7 +90,7 @@ describe("ApiClient", () => {
     });
 
     await expect(
-      new ApiClient().request("/api/documents"),
+      new ApiClient().request("/api/knowledge"),
     ).rejects.toBeInstanceOf(ApiClientError);
     expect(onSessionInvalid).toHaveBeenCalledOnce();
     expect(onSessionInvalid).toHaveBeenCalledWith(
@@ -116,7 +116,7 @@ describe("ApiClient", () => {
     });
 
     await expect(
-      new ApiClient().request("/api/documents", { sessionGeneration: 1 }),
+      new ApiClient().request("/api/knowledge", { sessionGeneration: 1 }),
     ).rejects.toBeInstanceOf(StaleSessionResponseError);
   });
 
@@ -146,7 +146,7 @@ describe("ApiClient", () => {
       });
 
       await expect(
-        new ApiClient().request("/api/documents", {
+        new ApiClient().request("/api/knowledge", {
           sessionGeneration: 1,
         }),
       ).rejects.toBeInstanceOf(StaleSessionResponseError);
@@ -201,7 +201,7 @@ describe("ApiClient", () => {
     });
 
     await expect(
-      new ApiClient().request("/api/documents", {
+      new ApiClient().request("/api/knowledge", {
         method: "POST",
         csrf: true,
         sessionGeneration: 1,
@@ -246,7 +246,7 @@ describe("ApiClient", () => {
     });
 
     await expect(
-      new ApiClient().request("/api/documents", {
+      new ApiClient().request("/api/knowledge", {
         method: "POST",
         csrf: true,
         sessionGeneration: 1,
@@ -276,7 +276,7 @@ describe("ApiClient", () => {
     });
 
     await expect(
-      new ApiClient().request("/api/documents", {
+      new ApiClient().request("/api/knowledge", {
         sessionGeneration: 1,
       }),
     ).rejects.toBeInstanceOf(StaleSessionResponseError);

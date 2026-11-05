@@ -13,7 +13,8 @@ public static class AuditStore
         VaultOperationContext context,
         VaultActorContext actor,
         string action,
-        Guid? documentId,
+        string? targetObjectType,
+        Guid? targetId,
         int? revision,
         string result,
         object? details,
@@ -38,7 +39,8 @@ public static class AuditStore
                 correlation_id, result, details_json)
             VALUES(
                 $eventId, $occurredAt, $actor, $action,
-                'knowledge', $targetId, $revision, $correlationId, $result, $details);
+                $targetObjectType, $targetId, $revision,
+                $correlationId, $result, $details);
             """;
         lease.Command.Parameters.AddWithValue("$eventId", eventId.ToString("D"));
         lease.Command.Parameters.AddWithValue(
@@ -47,8 +49,11 @@ public static class AuditStore
         lease.Command.Parameters.AddWithValue("$actor", ToDatabaseValue(actor.Kind));
         lease.Command.Parameters.AddWithValue("$action", action);
         lease.Command.Parameters.AddWithValue(
-                "$targetId",
-            documentId?.ToString("D") ?? (object)DBNull.Value);
+            "$targetObjectType",
+            targetObjectType ?? (object)DBNull.Value);
+        lease.Command.Parameters.AddWithValue(
+            "$targetId",
+            targetId?.ToString("D") ?? (object)DBNull.Value);
         lease.Command.Parameters.AddWithValue(
             "$revision",
             revision ?? (object)DBNull.Value);

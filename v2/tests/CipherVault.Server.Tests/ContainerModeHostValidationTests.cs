@@ -175,31 +175,23 @@ public sealed class ContainerModeHostValidationTests
     }
 
     [Fact]
-    public async Task NullOriginIsAllowedOnlyForTicketFormDownload()
+    public async Task NullOriginIsRejectedForAllRequests()
     {
         var options = CreateOptions(
             listenPort: 43127,
             allowedPorts: [43127]);
-        var ticketDownload = await InvokeAsync(
+        var result = await InvokeAsync(
             options,
             new HostString("localhost", 43127),
             origin: "null",
             method: "POST",
-            path: "/api/exports/plaintext/download",
-            contentType: "application/x-www-form-urlencoded");
-        var ordinaryApi = await InvokeAsync(
-            options,
-            new HostString("localhost", 43127),
-            origin: "null",
-            method: "POST",
-            path: "/api/documents",
+            path: "/api/knowledge",
             contentType: "application/x-www-form-urlencoded");
 
-        Assert.True(ticketDownload.Called);
-        Assert.False(ordinaryApi.Called);
+        Assert.False(result.Called);
         Assert.Equal(
             StatusCodes.Status403Forbidden,
-            ordinaryApi.Context.Response.StatusCode);
+            result.Context.Response.StatusCode);
     }
 
     [Fact]

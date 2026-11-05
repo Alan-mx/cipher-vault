@@ -55,7 +55,7 @@ internal static class TagNormalizer
             {
                 throw new VaultException(
                     VaultErrorCode.TagLimitExceeded,
-                    $"A document may have at most {MaxTags} tags.");
+                    $"Knowledge may have at most {MaxTags} tags.");
             }
 
             if (keys.Add(normalized.NormalizedKey))

@@ -21,7 +21,7 @@ public sealed class VaultTools
     }
 
     [McpServerTool(Name = McpToolNames.VaultStatus)]
-    [Description("Return the safe Vault state. This tool never refreshes activity and never returns document content.")]
+    [Description("Return the safe Vault state. This tool never refreshes activity and never returns Knowledge, Source, or Draft content.")]
     public Task<CallToolResult> VaultStatus(
         CancellationToken cancellationToken = default) =>
         invoker.ExecuteAsync(

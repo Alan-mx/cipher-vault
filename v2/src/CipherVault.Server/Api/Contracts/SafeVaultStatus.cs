@@ -23,7 +23,3 @@ public sealed record VaultUnlockApiRequest(string Password);
 public sealed record VaultChangePasswordApiRequest(
     string OldPassword,
     string NewPassword);
-
-public sealed record TrashRestoreApiRequest(string? ReplacementPath = null);
-
-public sealed record PurgeApiResult(Guid? AuditEventId);

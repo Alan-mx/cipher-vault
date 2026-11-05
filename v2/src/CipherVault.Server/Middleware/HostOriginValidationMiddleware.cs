@@ -30,14 +30,8 @@ public sealed class HostOriginValidationMiddleware
         }
 
         var origins = context.Request.Headers.Origin;
-        var allowsNullOrigin = AllowsNullOrigin(context.Request);
         if (origins.Count > 1
             || (origins.Count == 1
-                && !(allowsNullOrigin
-                    && string.Equals(
-                        origins[0],
-                        "null",
-                        StringComparison.Ordinal))
                 && !IsAllowedOrigin(origins[0])))
         {
             await ApiResponseWriter.WriteErrorAsync(
@@ -50,13 +44,6 @@ public sealed class HostOriginValidationMiddleware
 
         await next(context);
     }
-
-    private static bool AllowsNullOrigin(HttpRequest request) =>
-        HttpMethods.IsPost(request.Method)
-        && request.Path.Equals(
-            "/api/exports/plaintext/download",
-            StringComparison.Ordinal)
-        && request.HasFormContentType;
 
     private bool IsAllowedHost(HostString host)
     {

@@ -853,10 +853,6 @@ CREATE TABLE audit_events (
             'backup.create',
             'backup.download',
             'backup.restore',
-            'export.plaintext',
-            'import.start',
-            'import.complete',
-            'import.failed',
             'mcp_token.rotate'
         )),
     target_object_type TEXT
@@ -877,8 +873,6 @@ CREATE TABLE audit_events (
                 'relation',
                 'draft',
                 'backup',
-                'export',
-                'import',
                 'mcp_token'
             )
         ),
