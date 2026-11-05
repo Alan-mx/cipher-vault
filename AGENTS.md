@@ -33,6 +33,7 @@
 
 - CipherVault 是本地优先、加密存储、由外部 AI 通过 MCP 使用的个人知识基础设施；不建设内置 Ask AI、Chat LLM Provider、Agent Runtime、自有聊天历史或独立 Agent 身份授权体系。
 - MCP 是主要外部能力入口。Tools、Resources、Prompts 和 Instructions 必须先按实际 SDK/客户端能力审计；Tools 是最稳定基线，不支持 Resource 的客户端必须有等价 Tool 回退。
+- MCP Prompts 只提供可复用的工作流说明，不执行 Agent，不保存外部 AI 聊天历史，也不能替代服务端权限校验、Draft 审核或正式写入流程。
 - 知识类型、属性、模板、关系类型和来源规则必须可配置，不得把 PARA、Zettelkasten、项目中心等固定方法写死为系统规则。
 - Source 与 Knowledge 使用独立表和数据对象。Source 包含统一 `SourceKind + metadata`、不可变版本、内容快照和段落/章节定位；页码与时间戳字段只预留，按来源类型逐步启用。知识提取、综合和 AI 草稿必须保留来源、来源版本、定位类型、定位值、原文摘录和提取元数据；跨来源内容保留多个来源依据。
 - 正式知识写入必须经过服务端校验。MCP 永久 Draft-only，是产品边界，不提供 Direct Write Mode；MCP 只能读取、搜索、创建/修改 Draft、提交审核，不得自行批准、应用或拒绝 Draft/关系建议。正式 Knowledge、Source 和关系只能由 Web 用户批准后变更。

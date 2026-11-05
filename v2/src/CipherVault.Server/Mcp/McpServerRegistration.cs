@@ -45,7 +45,8 @@ public static class McpServerRegistration
                 options.SessionMode = HttpServerSessionMode.Stateless;
             })
             .WithToolsFromAssembly(typeof(McpServerRegistration).Assembly)
-            .WithResourcesFromAssembly(typeof(McpServerRegistration).Assembly);
+            .WithResourcesFromAssembly(typeof(McpServerRegistration).Assembly)
+            .WithPromptsFromAssembly(typeof(McpServerRegistration).Assembly);
         return services;
     }
 

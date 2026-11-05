@@ -141,6 +141,18 @@ http://127.0.0.1:8080/mcp
 - 不提供 Direct Write Mode。
 - 所有 MCP 副作用调用都要求 UUID `idempotencyKey`。
 
+MCP Prompts 提供以下可复用工作流说明：
+
+- `answer_with_knowledge`
+- `extract_source_to_notes`
+- `synthesize_selected_knowledge`
+- `suggest_knowledge_relations`
+- `review_knowledge_quality`
+- `review_personal_progress`
+
+Prompts 只返回工作流模板，不执行 Agent，也不产生正式写入；实际读取、搜索和 Draft
+操作仍由外部 AI 通过 MCP Tools 完成。
+
 Resource：
 
 ```text

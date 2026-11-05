@@ -73,6 +73,53 @@ internal static class McpTestClient
             .Clone();
     }
 
+    internal static async Task<JsonElement> ListPromptsAsync(
+        HttpClient client,
+        string token)
+    {
+        var request = CreateRequest(
+            token,
+            """
+            {
+              "jsonrpc": "2.0",
+              "id": 3,
+              "method": "prompts/list",
+              "params": {}
+            }
+            """);
+        using var response = await client.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.True(response.IsSuccessStatusCode, body);
+        return JsonDocument.Parse(ExtractJson(body))
+            .RootElement
+            .GetProperty("result")
+            .Clone();
+    }
+
+    internal static async Task<JsonElement> GetPromptAsync(
+        HttpClient client,
+        string token,
+        string name,
+        IReadOnlyDictionary<string, string> arguments)
+    {
+        var request = CreateRequest(
+            token,
+            JsonSerializer.Serialize(new
+            {
+                jsonrpc = "2.0",
+                id = Random.Shared.Next(10, int.MaxValue),
+                method = "prompts/get",
+                @params = new { name, arguments }
+            }));
+        using var response = await client.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.True(response.IsSuccessStatusCode, body);
+        return JsonDocument.Parse(ExtractJson(body))
+            .RootElement
+            .GetProperty("result")
+            .Clone();
+    }
+
     private static HttpRequestMessage CreateRequest(string token, string body)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, "/mcp")

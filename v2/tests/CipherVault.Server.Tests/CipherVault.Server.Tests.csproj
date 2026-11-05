@@ -26,6 +26,7 @@
     <Compile Include="ManualTimeProvider.cs" />
     <Compile Include="McpEndpointAuthenticationTests.cs" />
     <Compile Include="McpKnowledgeBaseTests.cs" />
+    <Compile Include="McpPromptTests.cs" />
     <Compile Include="McpTokenApiTests.cs" />
     <Compile Include="McpTokenStoreTests.cs" />
     <Compile Include="McpTestClient.cs" />
