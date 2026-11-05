@@ -11,11 +11,11 @@ defineEmits<{
   <button
     class="search-box"
     type="button"
-    aria-label="搜索文档"
+    aria-label="搜索知识"
     @click="$emit('open')"
   >
     <NIcon :component="Search" size="15" aria-hidden="true" />
-    <span>搜索文档</span>
+    <span>搜索知识</span>
   </button>
 </template>
 

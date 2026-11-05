@@ -15,7 +15,7 @@ namespace CipherVault.Server.Backup;
 
 internal sealed class GitBackupCoordinator :
     BackgroundService,
-    IDocumentMutationObserver
+    IVaultMutationObserver
 {
     private readonly GitBackupOptions options;
     private readonly GitBackupStateStore stateStore;
@@ -71,7 +71,7 @@ internal sealed class GitBackupCoordinator :
     }
 
     public async ValueTask NotifyAsync(
-        DocumentMutationKind kind,
+        VaultMutationKind kind,
         CancellationToken cancellationToken = default)
     {
         if (!options.Enabled)

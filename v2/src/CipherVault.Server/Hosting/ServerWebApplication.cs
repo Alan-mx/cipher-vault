@@ -1,24 +1,13 @@
 using CipherVault.Application.Vault;
 using CipherVault.Application.Audit;
-using CipherVault.Application.Drafts;
 using CipherVault.Application.Backup;
-using CipherVault.Application.Documents;
-using CipherVault.Application.Exports;
-using CipherVault.Application.Graph;
-using CipherVault.Application.Import;
-using CipherVault.Application.Knowledge;
-using CipherVault.Application.RelatedKnowledge;
-using CipherVault.Application.Relations;
-using CipherVault.Application.Search;
-using CipherVault.Application.Semantic;
-using CipherVault.Core.Semantic;
+using CipherVault.Application.KnowledgeBase;
 using CipherVault.Server.Api;
 using CipherVault.Server.Api.Endpoints;
 using CipherVault.Server.Backup;
 using CipherVault.Server.Middleware;
 using CipherVault.Server.Mcp;
 using CipherVault.Server.Security;
-using CipherVault.Server.Semantic;
 using Microsoft.Extensions.Logging;
 
 namespace CipherVault.Server.Hosting;
@@ -55,7 +44,6 @@ public static class ServerWebApplication
         });
         builder.Logging.AddFilter("Microsoft", LogLevel.Warning);
         configureLogging?.Invoke(builder.Logging);
-        var embeddingOptions = EmbeddingOptions.Load(builder.Configuration);
 
         builder.Services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(
             ApiJson.Configure);
@@ -66,64 +54,22 @@ public static class ServerWebApplication
             options.Paths.BackupLockPath));
         builder.Services.AddSingleton(options.GitBackup);
         builder.Services.AddSingleton(timeProvider);
-        builder.Services.AddSingleton(embeddingOptions);
-        if (embeddingOptions.IsConfigured)
-        {
-            builder.Services.AddSingleton<IEmbeddingProvider>(_ =>
-                new OpenAiCompatibleEmbeddingProvider(embeddingOptions));
-        }
         builder.Services.AddSingleton(sessionManager);
         builder.Services.AddSingleton(tokenStore);
         builder.Services.AddSingleton<VaultLifecycleService>();
-        builder.Services.AddSingleton<IdempotencyService>();
-        builder.Services.AddSingleton<McpWriteModeService>();
-        builder.Services.AddSingleton<DocumentDraftService>();
-        builder.Services.AddSingleton<RelationSuggestionService>();
-        builder.Services.AddSingleton<RelationReviewService>();
-        builder.Services.AddSingleton<RelationMaintenanceService>();
-        builder.Services.AddSingleton<DocumentService>();
-        builder.Services.AddSingleton<DocumentAuthoringService>();
-        builder.Services.AddSingleton<DocumentRevisionService>();
-        builder.Services.AddSingleton<TrashService>();
-        builder.Services.AddSingleton<SearchService>();
-        builder.Services.AddSingleton(provider =>
-            new SemanticIndexService(
-                provider.GetRequiredService<VaultSessionManager>(),
-                provider.GetService<IEmbeddingProvider>(),
-                embeddingOptions.ProfileVersion,
-                embeddingOptions.AllowRemote,
-                embeddingOptions.IsConfigured
-                    ? embeddingOptions.EndpointDisplay
-                    : null,
-                provider.GetRequiredService<TimeProvider>(),
-                provider.GetRequiredService<IdempotencyService>()));
-        builder.Services.AddSingleton<SemanticIndexProcessor>();
-        builder.Services.AddSingleton<SemanticSearchService>();
-        builder.Services.AddHostedService<SemanticIndexWorker>();
-        builder.Services.AddSingleton<GraphService>();
-        builder.Services.AddSingleton<KnowledgeViewService>();
-        builder.Services.AddSingleton<KnowledgeMaturityQueueService>();
-        builder.Services.AddSingleton<RelatedKnowledgeService>();
-        builder.Services.AddSingleton<ImportService>();
+        builder.Services.AddSingleton<KnowledgeModelService>();
+        builder.Services.AddSingleton<SourceService>();
+        builder.Services.AddSingleton<KnowledgeService>();
+        builder.Services.AddSingleton<UnifiedDraftService>();
+        builder.Services.AddSingleton<DashboardService>();
         builder.Services.AddSingleton<AuditQueryService>();
         builder.Services.AddSingleton<UnlockAttemptLimiter>();
         builder.Services.AddSingleton<ActivityTouchLimiter>();
         builder.Services.AddSingleton<BackupService>();
-        builder.Services.AddSingleton<
-            IPlaintextExportAuditFailureSink,
-            PlaintextExportAuditFailureSink>();
-        builder.Services.AddSingleton(provider =>
-            new PlaintextExportService(
-                provider.GetRequiredService<VaultSessionManager>(),
-                provider.GetRequiredService<TimeProvider>(),
-                provider.GetRequiredService<IPlaintextExportAuditFailureSink>()));
-        builder.Services.AddSingleton<ExportDownloadTicketStore>();
         builder.Services.AddSingleton<GitBackupStateStore>();
         builder.Services.AddSingleton<IGitCommandRunner, GitCommandRunner>();
         builder.Services.AddSingleton<IGitBackupRepository, GitBackupRepository>();
         builder.Services.AddSingleton<GitBackupCoordinator>();
-        builder.Services.AddSingleton<IDocumentMutationObserver>(
-            provider => provider.GetRequiredService<GitBackupCoordinator>());
         builder.Services.AddHostedService(
             provider => provider.GetRequiredService<GitBackupCoordinator>());
         builder.Services.AddCipherVaultDataProtection(options.Paths);
@@ -131,7 +77,6 @@ public static class ServerWebApplication
         builder.Services.AddVaultAntiforgery();
         builder.Services.AddCipherVaultMcp();
         builder.Services.AddHostedService<VaultIdleLockService>();
-        builder.Services.AddHostedService<DocumentDraftCleanupService>();
         var app = builder.Build();
         app.UseMiddleware<RequestCorrelationMiddleware>();
         app.UseMiddleware<SecurityHeadersMiddleware>();
@@ -147,17 +92,13 @@ public static class ServerWebApplication
         app.UseSpaFallback(webRoot);
         app.MapVaultEndpoints();
         app.MapVersionEndpoints();
-        app.MapDocumentEndpoints();
-        app.MapDraftEndpoints();
-        app.MapRelationSuggestionEndpoints();
-        app.MapTrashEndpoints();
-        app.MapRevisionEndpoints();
-        app.MapKnowledgeEndpoints();
-        app.MapSemanticIndexEndpoints();
-        app.MapImportEndpoints();
+        app.MapKnowledgeModelEndpoints();
+        app.MapSourceEndpoints();
+        app.MapKnowledgeBaseEndpoints();
+        app.MapUnifiedDraftEndpoints();
+        app.MapDashboardEndpoints();
         app.MapAuditEndpoints();
         app.MapBackupEndpoints();
-        app.MapExportEndpoints();
         app.MapMcpTokenEndpoints();
         app.MapCipherVaultMcp();
         await app.StartAsync(cancellationToken);

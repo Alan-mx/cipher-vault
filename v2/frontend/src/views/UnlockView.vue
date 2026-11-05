@@ -49,7 +49,7 @@ const submit = async (): Promise<void> => {
   try {
     await session.unlock(password.value);
     message.success("Vault 已解锁。");
-    await router.replace({ name: "documents" });
+    await router.replace({ name: "home" });
   } catch (error) {
     errorMessage.value = describeApiError(error);
   } finally {

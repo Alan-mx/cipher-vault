@@ -5,7 +5,33 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Argon2PasswordDeriverTests.cs" />
+    <Compile Include="BackupDatabaseStoreTests.cs" />
+    <Compile Include="BackupFileNameTests.cs" />
+    <Compile Include="BackupFileStoreTests.cs" />
+    <Compile Include="BackupPackageTests.cs" />
+    <Compile Include="DatabaseFactoryTests.cs" />
+    <Compile Include="DatabaseLifecycleTests.cs" />
+    <Compile Include="DatabaseSchemaTests.cs" />
+    <Compile Include="MigrationChecksumBaselineTests.cs" />
+    <Compile Include="PasswordChangeTests.cs" />
+    <Compile Include="PathSafetyTests.cs" />
+    <Compile Include="RegularFileIdentityTests.cs" />
+    <Compile Include="SnapshotDatabaseKeyCredentialTests.cs" />
+    <Compile Include="TestAssembly.cs" />
+    <Compile Include="VaultDatabaseRuntimeDisposeTests.cs" />
+    <Compile Include="VaultDatabaseRuntimeExecuteTests.cs" />
+    <Compile Include="VaultDatabaseRuntimeInterruptTests.cs" />
+    <Compile Include="VaultDatabaseRuntimeTests.cs" />
+    <Compile Include="VaultKeyEnvelopeTests.cs" />
+    <Compile Include="VaultKeyServiceTests.cs" />
+    <Compile Include="VaultOperationContextTests.cs" />
+    <Compile Include="VerifiedBackupCacheTests.cs" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />

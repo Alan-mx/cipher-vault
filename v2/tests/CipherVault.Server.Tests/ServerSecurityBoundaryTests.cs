@@ -1,8 +1,8 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using CipherVault.Application.Vault;
-using CipherVault.Core.Documents;
 using Microsoft.Extensions.Logging;
 
 namespace CipherVault.Server.Tests;
@@ -149,19 +149,34 @@ public sealed class ServerSecurityBoundaryTests
 
         const string bodyMarker = "body-secret-marker";
         using var created = await server.Client.PostJsonWithAntiforgeryAsync(
-            "/api/documents",
+            "/api/drafts",
             token,
-            new CreateDocumentRequest(
-                "Logs",
-                null,
-                null,
-                VaultDocumentFormat.Text,
-                bodyMarker,
-                null));
-        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+            new
+            {
+                targetObjectType = "source",
+                operationType = "create",
+                payload = new
+                {
+                    sourceKind = "other",
+                    title = "Logs",
+                    metadata = new { },
+                    contentFormat = "markdown",
+                    contentText = bodyMarker
+                }
+            },
+            Guid.NewGuid());
+        var createdBody = await created.Content.ReadAsStringAsync();
+        Assert.True(
+            created.StatusCode == HttpStatusCode.Created,
+            createdBody);
 
-        using var search = await server.Client.GetAsync(
-            "/api/search?query=query-secret-marker");
+        using var search = await server.Client.PostAsJsonAsync(
+            "/api/knowledge/search",
+            new
+            {
+                query = "query-secret-marker",
+                mode = "keyword"
+            });
         Assert.Equal(HttpStatusCode.OK, search.StatusCode);
 
         var logText = string.Join('\n', logs.Messages);

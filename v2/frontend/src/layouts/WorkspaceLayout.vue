@@ -3,16 +3,16 @@ import { computed, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { NButton, NDrawer, NDrawerContent, NIcon, NTooltip } from "naive-ui";
 import {
-  Activity,
   BookOpenText,
   ClipboardCheck,
-  FileInput,
+  Database,
+  Home,
+  Inbox,
   LayoutGrid,
   LockKeyhole,
   Menu,
   Network,
   Settings,
-  Trash2,
 } from "@lucide/vue";
 import { useSessionStore } from "../stores/session";
 import IdleWarningDialog from "../components/lifecycle/IdleWarningDialog.vue";
@@ -26,13 +26,13 @@ const drawerOpen = ref(false);
 const searchOpen = ref(false);
 
 const items = [
-  { name: "documents", label: "知识库", icon: BookOpenText },
-  { name: "knowledge-views", label: "知识视图", icon: LayoutGrid },
+  { name: "home", label: "首页", icon: Home },
+  { name: "knowledge", label: "知识库", icon: BookOpenText },
+  { name: "inbox", label: "收集箱", icon: Inbox },
+  { name: "sources", label: "来源", icon: Database },
   { name: "review", label: "AI 工作区", icon: ClipboardCheck },
   { name: "graph", label: "知识网络", icon: Network },
-  { name: "trash", label: "回收站", icon: Trash2 },
-  { name: "import", label: "导入", icon: FileInput },
-  { name: "audit", label: "活动记录", icon: Activity },
+  { name: "knowledge-model", label: "知识模型", icon: LayoutGrid },
   { name: "settings", label: "设置", icon: Settings },
 ] as const;
 
@@ -45,11 +45,11 @@ const navigate = async (name: string): Promise<void> => {
   await router.push({ name });
 };
 
-const openSearchResult = async (documentId: string): Promise<void> => {
+const openSearchResult = async (knowledgeId: string): Promise<void> => {
   searchOpen.value = false;
   await router.push({
-    name: "document",
-    params: { id: documentId },
+    name: "knowledge-detail",
+    params: { id: knowledgeId },
   });
 };
 
@@ -78,7 +78,8 @@ const lock = async (): Promise<void> => {
               :class="{
                 'rail-link--active':
                   route.name === item.name ||
-                  (item.name === 'documents' && route.name === 'document'),
+                  (item.name === 'knowledge' &&
+                    route.name === 'knowledge-detail'),
               }"
               type="button"
               :aria-label="item.label"
@@ -145,7 +146,8 @@ const lock = async (): Promise<void> => {
             :class="{
               'drawer-link--active':
                 route.name === item.name ||
-                (item.name === 'documents' && route.name === 'document'),
+                (item.name === 'knowledge' &&
+                  route.name === 'knowledge-detail'),
             }"
             @click="navigate(item.name)"
           >

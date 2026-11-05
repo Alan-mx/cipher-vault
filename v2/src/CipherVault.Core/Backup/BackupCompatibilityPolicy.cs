@@ -10,7 +10,7 @@ public enum BackupSchemaPolicy
 
 internal static class BackupCompatibilityPolicy
 {
-    public const int MinimumSupportedSchemaVersion = 5;
+    public const int MinimumSupportedSchemaVersion = 1;
 
     public static bool IsSupported(int schemaVersion) =>
         schemaVersion >= MinimumSupportedSchemaVersion

@@ -149,7 +149,7 @@ export const installSessionLifecycle = (
       return to.name === "boot" ? true : { name: "boot" };
     }
     if (to.name === "setup" || to.name === "unlock" || to.name === "boot") {
-      return { name: "documents" };
+      return { name: "home" };
     }
     return true;
   });

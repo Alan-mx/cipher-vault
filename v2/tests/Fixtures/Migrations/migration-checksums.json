@@ -4,48 +4,8 @@
   "migrations": [
     {
       "version": 1,
-      "name": "initial",
-      "sha256": "b0978acddba58dbd167556ec739456cdf76acb2f866ed04a4f653cc8cc9687ff"
-    },
-    {
-      "version": 2,
-      "name": "documents",
-      "sha256": "1568de5cb2899bf7ef6e0506e543fdfa67e2480d0102da0cb30bd53a0c29511c"
-    },
-    {
-      "version": 3,
-      "name": "backup_audit_actions",
-      "sha256": "fc94e1c0f2784f7387979815778cb42cf04b5caf4a550557480e281b1438c42e"
-    },
-    {
-      "version": 4,
-      "name": "plaintext_export_audit",
-      "sha256": "b06c0ca2bcc04591007291639af7f244b18472aca56edbde2073666429387eb0"
-    },
-    {
-      "version": 5,
-      "name": "plaintext_export_audit_phase",
-      "sha256": "dbaa9573aebb09e0b4c3d08613f916bf34c57029e0ccc59545830e0008ddf886"
-    },
-    {
-      "version": 6,
-      "name": "knowledge_drafts",
-      "sha256": "6cd4ef28d2b9d5f3cfa1aee1ed5016f114380c10c7f831e3226182e535f04113"
-    },
-    {
-      "version": 7,
-      "name": "markdown_links",
-      "sha256": "8902d824df72779fc443d3681b00be95e7c31de58f0ce9ad779d2cc42c9c2cfc"
-    },
-    {
-      "version": 8,
-      "name": "semantic_index",
-      "sha256": "dfda3dbe880eb33617eb16c702ddb8013a881de03cee95258000c0fc2581dd73"
-    },
-    {
-      "version": 9,
-      "name": "relation_suggestions",
-      "sha256": "99e90637a83b83c06e7215e65d889209f7632ff66393c5e661cef9e83635cabd"
+      "name": "mcp_first_baseline",
+      "sha256": "695817e5789d54b25bea8b0a182942338024725a2d11d08e6dde4f329b0504e4"
     }
   ]
 }

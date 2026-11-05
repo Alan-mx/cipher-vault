@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
+import { RouterLink, useRouter } from "vue-router";
 import {
   NAlert,
   NButton,
@@ -9,14 +9,11 @@ import {
   NInput,
   useMessage,
 } from "naive-ui";
-import McpTokenPanel from "../components/settings/McpTokenPanel.vue";
-import McpWriteModePanel from "../components/settings/McpWriteModePanel.vue";
-import SemanticEmbeddingPanel from "../components/settings/SemanticEmbeddingPanel.vue";
 import BackupPanel from "../components/settings/BackupPanel.vue";
-import PlaintextExportPanel from "../components/settings/PlaintextExportPanel.vue";
+import McpTokenPanel from "../components/settings/McpTokenPanel.vue";
+import { registerSensitiveStore } from "../session/lifecycle";
 import { useSessionStore } from "../stores/session";
 import { useSettingsStore } from "../stores/settings";
-import { registerSensitiveStore } from "../session/lifecycle";
 import { describeApiError } from "../utils/api-error";
 import { isValidNewPassword } from "../utils/password";
 
@@ -36,6 +33,13 @@ const canChangePassword = computed(
     !settings.changingPassword,
 );
 
+const resetSensitive = (): void => {
+  oldPassword.value = "";
+  newPassword.value = "";
+  confirmation.value = "";
+  passwordError.value = "";
+};
+
 const changePassword = async (): Promise<void> => {
   passwordError.value = "";
   if (!canChangePassword.value) {
@@ -47,9 +51,7 @@ const changePassword = async (): Promise<void> => {
       oldPassword.value,
       newPassword.value,
     );
-    oldPassword.value = "";
-    newPassword.value = "";
-    confirmation.value = "";
+    resetSensitive();
     session.updateStatus(status);
     session.clearSensitive("password_changed");
     message.success("密码已修改，Vault 已锁定。");
@@ -59,18 +61,10 @@ const changePassword = async (): Promise<void> => {
   }
 };
 
-const resetSensitive = (): void => {
-  oldPassword.value = "";
-  newPassword.value = "";
-  confirmation.value = "";
-  passwordError.value = "";
-};
-
 let unregisterSensitiveStore: (() => void) | null = null;
 
 onMounted(() => {
   unregisterSensitiveStore = registerSensitiveStore({ resetSensitive });
-  void settings.loadVersion();
 });
 
 onBeforeUnmount(() => {
@@ -81,178 +75,99 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="settings-view">
-    <header class="page-heading">
-      <p>配置</p>
+  <section class="page">
+    <header>
+      <p class="eyebrow">Settings</p>
       <h1>设置</h1>
     </header>
-
-    <section class="settings-section">
-      <header>
-        <div>
-          <h2>运行配置</h2>
-          <p>配置通过环境变量和 Server 重启完成。</p>
-        </div>
-      </header>
-      <dl class="config-list">
-        <dt>产品版本</dt>
-        <dd>
-          {{
-            settings.loadingVersion
-              ? "加载中…"
-              : (settings.version?.productVersion ??
-                (settings.versionError ? "版本信息不可用" : "—"))
-          }}
-        </dd>
-        <dt>运行时 RID</dt>
-        <dd>
-          {{
-            settings.version?.rid ??
-            (settings.versionError ? "版本信息不可用" : "—")
-          }}
-        </dd>
-        <dt>闲置锁定</dt>
-        <dd>{{ session.status?.idleTimeoutMinutes ?? "—" }} 分钟</dd>
-        <dt>闲置时间变量</dt>
-        <dd><code>CIPHERVAULT_IDLE_TIMEOUT_MINUTES</code></dd>
-        <dt>Vault 目录变量</dt>
-        <dd><code>CIPHERVAULT_DATA_DIR</code></dd>
-      </dl>
-      <p class="muted-note">出于安全边界，页面不显示真实服务器文件路径。</p>
-    </section>
-
-    <section class="settings-section">
-      <header>
-        <div>
-          <h2>修改 Vault 密码</h2>
-          <p>修改成功后 Vault 会立即锁定，所有旧 Web Cookie 失效。</p>
-        </div>
-      </header>
-      <NAlert v-if="passwordError" type="error" :show-icon="false">
-        {{ passwordError }}
-      </NAlert>
-      <NForm class="password-form" @submit.prevent="changePassword">
-        <NFormItem label="旧密码">
-          <NInput
-            v-model:value="oldPassword"
-            type="password"
-            show-password-on="click"
-          />
-        </NFormItem>
-        <NFormItem label="新密码">
-          <NInput
-            v-model:value="newPassword"
-            type="password"
-            show-password-on="click"
-            placeholder="至少 12 个字符"
-          />
-        </NFormItem>
-        <NFormItem label="确认新密码">
-          <NInput
-            v-model:value="confirmation"
-            type="password"
-            show-password-on="click"
-          />
-        </NFormItem>
-        <NButton
-          type="primary"
-          attr-type="submit"
-          :disabled="!canChangePassword"
-          :loading="settings.changingPassword"
-        >
-          修改密码并锁定
-        </NButton>
-      </NForm>
-    </section>
-
-    <McpWriteModePanel />
-
-    <SemanticEmbeddingPanel />
-
-    <McpTokenPanel />
-
-    <PlaintextExportPanel />
-
-    <BackupPanel />
+    <div class="grid">
+      <article>
+        <h2>知识模型</h2>
+        <p>维护类型、属性、模板、关系和来源规则。</p>
+        <RouterLink to="/settings/knowledge-model">打开模型维护</RouterLink>
+      </article>
+      <article>
+        <h2>修改 Vault 密码</h2>
+        <p>修改成功后 Vault 会立即锁定。</p>
+        <NAlert v-if="passwordError" type="error" :show-icon="false">
+          {{ passwordError }}
+        </NAlert>
+        <NForm class="password-form" @submit.prevent="changePassword">
+          <NFormItem label="旧密码">
+            <NInput v-model:value="oldPassword" type="password" />
+          </NFormItem>
+          <NFormItem label="新密码">
+            <NInput v-model:value="newPassword" type="password" />
+          </NFormItem>
+          <NFormItem label="确认新密码">
+            <NInput v-model:value="confirmation" type="password" />
+          </NFormItem>
+          <NButton
+            type="primary"
+            attr-type="submit"
+            :disabled="!canChangePassword"
+            :loading="settings.changingPassword"
+          >
+            修改密码并锁定
+          </NButton>
+        </NForm>
+      </article>
+      <article>
+        <h2>MCP</h2>
+        <McpTokenPanel />
+      </article>
+      <article>
+        <h2>加密备份</h2>
+        <BackupPanel />
+      </article>
+    </div>
   </section>
 </template>
 
 <style scoped>
-.settings-view {
-  display: grid;
-  width: min(100%, 900px);
-  gap: 16px;
-  padding: 32px 40px 80px;
+.page {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 28px;
 }
-
-.page-heading p {
-  margin: 0 0 5px;
-  color: var(--cv-muted);
-  font-size: 12px;
+.eyebrow {
+  margin: 0 0 6px;
+  color: var(--cv-accent);
+  font-size: 11px;
+  text-transform: uppercase;
 }
-
-.page-heading h1 {
-  margin: 0;
-  font-size: 2rem;
-  letter-spacing: 0;
+h1 {
+  margin: 0 0 18px;
+  font-size: 28px;
 }
-
-.settings-section {
+.grid {
   display: grid;
   gap: 14px;
-  padding: 20px;
+}
+article {
+  padding: 16px;
   border: 1px solid var(--cv-border);
   border-radius: 8px;
   background: var(--cv-surface);
 }
-
-.settings-section h2 {
-  margin: 0;
-  font-size: 1.1rem;
+h2 {
+  margin: 0 0 8px;
+  font-size: 15px;
 }
-
-.settings-section p {
-  margin: 4px 0 0;
-  color: var(--cv-muted);
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.config-list {
-  display: grid;
-  grid-template-columns: 150px minmax(0, 1fr);
-  gap: 8px 12px;
-  margin: 0;
-  font-size: 12px;
-}
-
-.config-list dt {
+p {
   color: var(--cv-muted);
 }
-
-.config-list dd {
-  margin: 0;
+a {
+  color: var(--cv-accent);
 }
-
-.config-list code {
-  padding: 2px 5px;
-  border-radius: 4px;
-  background: var(--cv-bg);
-}
-
-.muted-note {
-  margin: 0;
-}
-
 .password-form {
   display: grid;
-  gap: 4px;
-  max-width: 520px;
+  max-width: 440px;
+  margin-top: 12px;
 }
-
-@media (max-width: 899px) {
-  .settings-view {
-    padding: 24px 20px 64px;
+@media (max-width: 700px) {
+  .page {
+    padding: 18px;
   }
 }
 </style>

@@ -1,0 +1,126 @@
+using CipherVault.Core.KnowledgeBase;
+using CipherVault.Core.Storage.KnowledgeBase;
+using CipherVault.Application.KnowledgeBase;
+using System.Text.Json;
+using CipherVault.Core.Documents;
+
+namespace CipherVault.Application.Tests;
+
+public sealed class KnowledgeModelStoreTests
+{
+    [Fact]
+    public async Task UnifiedDraftCanBeCreatedAndSubmitted()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var service = new UnifiedDraftService(
+            fixture.Manager,
+            fixture.TimeProvider);
+        var actor = new VaultActorContext(VaultActorKind.UserUi);
+        var payload = JsonSerializer.SerializeToElement(new
+        {
+            sourceKind = "web_page",
+            title = "Source",
+            metadata = new { url = "https://example.com" },
+            contentFormat = "markdown",
+            contentText = "# Section\n\nParagraph"
+        });
+        var created = await service.CreateAsync(
+            new CreateDraftInput(
+                DraftTargetObjectType.Source,
+                DraftOperationType.Create,
+                null,
+                null,
+                payload),
+            actor,
+            Guid.NewGuid());
+        var submitted = await service.SubmitAsync(
+            created.DraftId,
+            created.DraftRevision,
+            actor,
+            Guid.NewGuid());
+        var applied = await service.ApplyAsync(
+            submitted.DraftId,
+            submitted.DraftRevision,
+            actor,
+            Guid.NewGuid());
+
+        Assert.Equal(DraftStatus.PendingReview, submitted.Status);
+        Assert.Equal(DraftTargetObjectType.Source, applied.ObjectType);
+    }
+
+    [Fact]
+    public async Task ReplacePersistsModelVersion()
+    {
+        await using var fixture = await VaultApplicationFixture.CreateAsync();
+        var result = await fixture.Manager.ExecuteAsync(
+            async (context, token) =>
+            {
+                await context.BeginTransactionAsync(token);
+                var model = await KnowledgeModelStore.GetAsync(context, token);
+                var update = new KnowledgeModelUpdate(
+                    model.KnowledgeTypes.Select(type => new KnowledgeTypeUpdate(
+                        type.TypeId,
+                        type.Key,
+                        type.Name,
+                        type.Description,
+                        type.IsEnabled,
+                        type.SortOrder,
+                        type.Properties.Select(property =>
+                            new KnowledgePropertyUpdate(
+                                property.PropertyId,
+                                property.Key,
+                                property.Name,
+                                property.ValueType,
+                                property.Required,
+                                property.DefaultValue,
+                                property.Constraints,
+                                property.IsEnabled,
+                                property.SortOrder)).ToArray())).ToArray(),
+                    model.Templates.Select(template =>
+                        new KnowledgeTemplateUpdate(
+                            template.TemplateId,
+                            template.KnowledgeTypeId,
+                            template.Key,
+                            template.Name,
+                            template.Description,
+                            template.BodyTemplate,
+                            template.Fields,
+                            template.IsEnabled,
+                            template.SortOrder)).ToArray(),
+                    model.RelationTypes.Select(relation =>
+                        new RelationTypeUpdate(
+                            relation.RelationTypeId,
+                            relation.Key,
+                            relation.Name,
+                            relation.Description,
+                            relation.IsDirected,
+                            relation.IsEnabled,
+                            relation.SortOrder)).ToArray(),
+                    model.SourceRules.Select(rule => new SourceRuleUpdate(
+                        rule.SourceRuleId,
+                        rule.Kind,
+                        rule.MetadataSchema,
+                        rule.SupportedLocatorTypes,
+                        rule.IsEnabled)).ToArray(),
+                    model.Workflows.Select(workflow => new WorkflowUpdate(
+                        workflow.WorkflowId,
+                        workflow.Key,
+                        workflow.Name,
+                        workflow.Description,
+                        workflow.TargetObjectTypes,
+                        workflow.Constraints,
+                        workflow.IsEnabled,
+                        workflow.SortOrder)).ToArray());
+                var replaced = await KnowledgeModelStore.ReplaceAsync(
+                    context,
+                    model.Version,
+                    update,
+                    fixture.TimeProvider.GetUtcNow(),
+                    token);
+                await context.CommitTransactionAsync(token);
+                return replaced;
+            });
+
+        Assert.Equal(2, result.Version);
+    }
+}

@@ -165,15 +165,12 @@ public sealed class McpEndpointAuthenticationTests
         Assert.True(list.IsSuccessStatusCode, listBody);
         var expected = new[]
         {
-            "vault_status", "list_notes", "read_note", "search_notes",
-            "scan_notes", "list_tags", "get_document_map", "get_backlinks",
-            "find_unlinked_mentions", "get_local_graph", "create_note",
-            "append_note", "update_note", "patch_note", "delete_note",
-            "list_drafts", "read_draft", "create_draft", "update_draft",
-            "rebase_draft", "submit_draft_for_review", "discard_draft",
-            "create_relation_suggestion", "list_relation_suggestions",
-            "read_relation_suggestion", "update_relation_suggestion",
-            "discard_relation_suggestion"
+            "vault_status", "get_knowledge_model", "list_sources",
+            "read_source", "list_source_revisions", "list_source_locators",
+            "read_source_locator", "search_knowledge", "read_knowledge",
+            "get_local_graph", "list_drafts", "read_draft", "create_draft",
+            "update_draft", "rebase_draft", "submit_draft_for_review",
+            "discard_draft"
         };
         Assert.All(
             expected,

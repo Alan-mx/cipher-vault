@@ -43,13 +43,20 @@ internal static class ServerHttpTestExtensions
         this HttpClient client,
         string path,
         string token,
-        T value)
+        T value,
+        Guid? idempotencyKey = null)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, path)
         {
             Content = JsonContent.Create(value, options: JsonOptions)
         };
         request.Headers.Add("X-CSRF-TOKEN", token);
+        if (idempotencyKey is not null)
+        {
+            request.Headers.Add(
+                "Idempotency-Key",
+                idempotencyKey.Value.ToString("D"));
+        }
         return client.SendAsync(request);
     }
 
@@ -71,22 +78,4 @@ internal static class ServerHttpTestExtensions
         return client.SendAsync(request);
     }
 
-    internal static async Task SetMcpWriteModeAsync(
-        this HttpClient client,
-        string mode)
-    {
-        var token = await client.GetAntiforgeryTokenAsync();
-        var request = new HttpRequestMessage(
-            HttpMethod.Put,
-            "/api/vault/session/mcp-write-mode")
-        {
-            Content = JsonContent.Create(new { mode })
-        };
-        request.Headers.Add("X-CSRF-TOKEN", token);
-        request.Headers.Add(
-            "Idempotency-Key",
-            Guid.NewGuid().ToString("D"));
-        using var response = await client.SendAsync(request);
-        response.EnsureSuccessStatusCode();
-    }
 }

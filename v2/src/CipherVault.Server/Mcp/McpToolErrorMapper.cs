@@ -10,21 +10,17 @@ public static class McpToolErrorMapper
     [
         "currentRevision",
         "currentDraftRevision",
-        "currentSuggestionRevision",
         "currentSourceRevision",
         "currentTargetRevision",
-        "documentId",
         "draftId",
-        "suggestionId",
+        "sourceId",
+        "knowledgeId",
         "relationId",
-        "revisionId",
-        "candidateHeadingPaths",
         "limit",
         "maximum",
         "field",
         "expected",
         "actual",
-        "mode",
         "sessionGeneration",
         "status",
         "reasonCode"
@@ -35,35 +31,27 @@ public static class McpToolErrorMapper
         string correlationId) =>
         exception switch
         {
-            McpToolRequestException request => new(
+            McpToolRequestException request => FromCode(
                 request.Code,
                 request.Message,
-                Sanitize(request.Details),
-                correlationId,
-                HintFor(request.Code),
-                RetryableFor(request.Code)),
-            ApiRequestException request => new(
+                request.Details,
+                correlationId),
+            ApiRequestException request => FromCode(
                 request.Code,
                 request.Message,
-                Sanitize(request.Details),
-                correlationId,
-                HintFor(request.Code),
-                RetryableFor(request.Code)),
+                request.Details,
+                correlationId),
             VaultException vault => MapVault(vault, correlationId),
-            System.Text.Json.JsonException => new(
+            System.Text.Json.JsonException => FromCode(
                 "invalid_input",
                 "Tool arguments are invalid.",
-                new Dictionary<string, object?>(StringComparer.Ordinal),
-                correlationId,
-                HintFor("invalid_input"),
-                false),
-            _ => new(
+                null,
+                correlationId),
+            _ => FromCode(
                 "internal_error",
                 "The tool call failed.",
-                new Dictionary<string, object?>(StringComparer.Ordinal),
-                correlationId,
-                HintFor("internal_error"),
-                false)
+                null,
+                correlationId)
         };
 
     private static McpToolError MapVault(
@@ -72,138 +60,118 @@ public static class McpToolErrorMapper
     {
         var code = exception.Code switch
         {
-            VaultErrorCode.DocumentNotFound => "not_found",
-            VaultErrorCode.RevisionConflict => "document_revision_conflict",
-            VaultErrorCode.DraftRevisionConflict => "draft_revision_conflict",
+            VaultErrorCode.InvalidInput or VaultErrorCode.InvalidCursor =>
+                "invalid_input",
+            VaultErrorCode.KnowledgeModelInvalid => "knowledge_model_invalid",
+            VaultErrorCode.PreconditionFailed => "precondition_failed",
+            VaultErrorCode.PayloadTooLarge => "payload_too_large",
+            VaultErrorCode.SourceNotFound => "source_not_found",
+            VaultErrorCode.SourceRevisionNotFound =>
+                "source_revision_not_found",
+            VaultErrorCode.SourceLocatorNotFound => "source_locator_not_found",
+            VaultErrorCode.KnowledgeNotFound => "knowledge_not_found",
+            VaultErrorCode.KnowledgeRevisionNotFound =>
+                "knowledge_revision_not_found",
+            VaultErrorCode.RelationNotFound => "relation_not_found",
+            VaultErrorCode.InvalidSearchMode => "invalid_search_mode",
+            VaultErrorCode.SearchQueryRequired => "search_query_required",
+            VaultErrorCode.SearchQueryTooShort => "search_query_too_short",
+            VaultErrorCode.SourceMetadataInvalid => "source_metadata_invalid",
+            VaultErrorCode.SourceReferenceInvalid => "source_reference_invalid",
+            VaultErrorCode.RelationAlreadyExists => "relation_already_exists",
             VaultErrorCode.DraftNotFound => "draft_not_found",
-            VaultErrorCode.DraftNotEditable => "draft_not_editable",
+            VaultErrorCode.DraftRevisionConflict => "draft_revision_conflict",
             VaultErrorCode.DraftOperationInvalid => "draft_operation_invalid",
-            VaultErrorCode.DraftPayloadTooLarge => "draft_payload_too_large",
-            VaultErrorCode.DraftLimitExceeded => "draft_limit_exceeded",
-            VaultErrorCode.DraftStorageLimitExceeded => "draft_storage_limit_exceeded",
-            VaultErrorCode.WriteModeDraftRequired => "write_mode_draft_required",
-            VaultErrorCode.IdempotencyKeyRequired => "idempotency_key_required",
-            VaultErrorCode.IdempotencyKeyReused => "idempotency_key_reused",
-            VaultErrorCode.InvalidDocumentId => "invalid_document_id",
-            VaultErrorCode.DocumentIdConflict => "document_id_conflict",
-            VaultErrorCode.DocumentIdMismatch => "document_id_mismatch",
-            VaultErrorCode.DocumentIdProtected => "document_id_protected",
-            VaultErrorCode.TrashedDocumentIdConflict =>
-                "trashed_document_id_conflict",
-            VaultErrorCode.DuplicateDocumentIdInImport =>
-                "duplicate_document_id_in_import",
-            VaultErrorCode.UnsupportedManifestVersion =>
-                "unsupported_manifest_version",
-            VaultErrorCode.InvalidManifest => "invalid_manifest",
-            VaultErrorCode.InvalidInput => "invalid_input",
-            VaultErrorCode.InvalidCursor => "invalid_input",
-            VaultErrorCode.SemanticSearchUnavailable =>
-                "semantic_search_unavailable",
-            VaultErrorCode.SemanticProfileMismatch =>
-                "semantic_profile_mismatch",
-            VaultErrorCode.SemanticRemoteNotAllowed =>
-                "semantic_remote_not_allowed",
-            VaultErrorCode.SemanticRebuildInProgress =>
-                "semantic_rebuild_in_progress",
-            VaultErrorCode.RelationSuggestionNotFound =>
-                "relation_suggestion_not_found",
-            VaultErrorCode.RelationSuggestionRevisionConflict =>
-                "relation_suggestion_revision_conflict",
-            VaultErrorCode.RelationSuggestionNotEditable =>
-                "relation_suggestion_not_editable",
-            VaultErrorCode.RelationSuggestionExists =>
-                "relation_suggestion_exists",
-            VaultErrorCode.RelationSuggestionLimitExceeded =>
-                "relation_suggestion_limit_exceeded",
-            VaultErrorCode.RelationSuggestionStale =>
-                "relation_suggestion_stale",
-            VaultErrorCode.DocumentRelationNotFound =>
-                "document_relation_not_found",
-            VaultErrorCode.DocumentPathConflict => "path_conflict",
-            VaultErrorCode.PatchTargetNotFound => "patch_target_not_found",
-            VaultErrorCode.PatchTargetAmbiguous => "patch_target_ambiguous",
-            VaultErrorCode.DocumentTooLarge => "document_too_large",
+            VaultErrorCode.DraftTargetInvalid => "draft_target_invalid",
+            VaultErrorCode.DraftStateConflict => "draft_state_conflict",
+            VaultErrorCode.DraftBaseRevisionConflict =>
+                "draft_base_revision_conflict",
+            VaultErrorCode.DraftModelConflict => "draft_model_conflict",
+            VaultErrorCode.FrontMatterModelMismatch =>
+                "frontmatter_model_mismatch",
+            VaultErrorCode.ImmutableDefinitionConflict =>
+                "immutable_definition_conflict",
             VaultErrorCode.TagLimitExceeded => "tag_limit_exceeded",
-            VaultErrorCode.FrontMatterInvalid => "frontmatter_invalid",
-            VaultErrorCode.VaultLocked => "vault_locked",
-            VaultErrorCode.VaultNotInitialized => "vault_locked",
+            VaultErrorCode.IdempotencyKeyRequired =>
+                "idempotency_key_required",
+            VaultErrorCode.IdempotencyKeyReused => "idempotency_key_reused",
+            VaultErrorCode.VaultLocked or VaultErrorCode.VaultNotInitialized =>
+                "vault_locked",
             VaultErrorCode.VaultBusy => "vault_busy",
             VaultErrorCode.VaultLockFailed => "vault_lock_failed",
-            VaultErrorCode.StorageError => "database_error",
-            VaultErrorCode.DatabaseError => "database_error",
+            VaultErrorCode.StorageError or VaultErrorCode.DatabaseError =>
+                "database_error",
             _ => "internal_error"
         };
-        return new McpToolError(
+        return FromCode(
             code,
             MessageFor(code),
-            Sanitize(exception.Details),
+            exception.Details,
+            correlationId);
+    }
+
+    private static McpToolError FromCode(
+        string code,
+        string message,
+        IReadOnlyDictionary<string, object?>? details,
+        string correlationId) =>
+        new(
+            code,
+            message,
+            Sanitize(details),
             correlationId,
             HintFor(code),
             RetryableFor(code));
-    }
 
     private static IReadOnlyDictionary<string, object?> Sanitize(
-        IReadOnlyDictionary<string, object?> details) =>
-        details
-            .Where(pair => SafeDetailKeys.Contains(pair.Key))
-            .ToDictionary(
-                pair => pair.Key,
-                pair => pair.Value,
-                StringComparer.Ordinal);
+        IReadOnlyDictionary<string, object?>? details) =>
+        details is null
+            ? new Dictionary<string, object?>(StringComparer.Ordinal)
+            : details
+                .Where(pair => SafeDetailKeys.Contains(pair.Key))
+                .ToDictionary(
+                    pair => pair.Key,
+                    pair => pair.Value,
+                    StringComparer.Ordinal);
 
     private static string MessageFor(string code) =>
         code switch
         {
-            "not_found" => "Document was not found.",
-            "document_revision_conflict" => "Document revision changed.",
-            "draft_revision_conflict" => "Document draft revision changed.",
-            "draft_not_found" => "Document draft was not found.",
-            "draft_not_editable" => "Document draft state does not allow this operation.",
-            "draft_operation_invalid" => "Document draft operation is invalid.",
-            "draft_payload_too_large" => "Document draft payload is too large.",
-            "draft_limit_exceeded" => "The active document draft limit was reached.",
-            "draft_storage_limit_exceeded" => "The active document draft storage limit was reached.",
-            "write_mode_draft_required" => "MCP document writes require Direct Write Mode.",
-            "idempotency_key_required" => "An idempotency key is required.",
-            "idempotency_key_reused" => "The idempotency key was used for a different request.",
-            "invalid_document_id" => "Document ID is invalid.",
-            "document_id_conflict" => "Document ID is already in use.",
-            "document_id_mismatch" => "Document ID does not match document content.",
-            "document_id_protected" => "Document ID is protected.",
-            "trashed_document_id_conflict" => "Document ID belongs to a trashed document.",
-            "duplicate_document_id_in_import" => "The import batch contains duplicate document IDs.",
-            "unsupported_manifest_version" => "Import Manifest version is not supported.",
-            "invalid_manifest" => "Import Manifest is invalid.",
             "invalid_input" => "Tool arguments are invalid.",
-            "invalid_offset" => "Document content offset is invalid.",
-            "semantic_search_unavailable" =>
-                "Semantic search is unavailable.",
-            "semantic_profile_mismatch" =>
-                "Semantic embedding profile changed.",
-            "semantic_remote_not_allowed" =>
-                "Remote semantic embedding is not allowed.",
-            "semantic_rebuild_in_progress" =>
-                "Semantic index rebuild is already in progress.",
-            "relation_suggestion_not_found" =>
-                "Relation suggestion was not found.",
-            "relation_suggestion_revision_conflict" =>
-                "Relation suggestion revision changed.",
-            "relation_suggestion_not_editable" =>
-                "Relation suggestion status does not allow this operation.",
-            "relation_suggestion_exists" =>
-                "A pending relation suggestion already exists.",
-            "relation_suggestion_limit_exceeded" =>
-                "The active relation suggestion limit was reached.",
-            "relation_suggestion_stale" =>
-                "Relation suggestion source or target changed.",
-            "document_relation_not_found" =>
-                "Active document relation was not found.",
-            "path_conflict" => "Document path is already in use.",
-            "patch_target_not_found" => "Patch target was not found.",
-            "patch_target_ambiguous" => "Patch target is ambiguous.",
-            "document_too_large" => "Document is too large.",
-            "tag_limit_exceeded" => "Document tags exceed the allowed limit.",
-            "frontmatter_invalid" => "Markdown Frontmatter is invalid.",
+            "knowledge_model_invalid" => "Knowledge Model is invalid.",
+            "precondition_failed" => "The resource version changed.",
+            "payload_too_large" => "Payload is too large.",
+            "source_not_found" => "Source was not found.",
+            "source_revision_not_found" => "Source revision was not found.",
+            "source_locator_not_found" => "Source locator was not found.",
+            "knowledge_not_found" => "Knowledge was not found.",
+            "knowledge_revision_not_found" =>
+                "Knowledge revision was not found.",
+            "relation_not_found" => "Relation was not found.",
+            "invalid_search_mode" => "Search mode is invalid.",
+            "search_query_required" => "A search query or filter is required.",
+            "search_query_too_short" =>
+                "Fulltext query must contain at least three characters.",
+            "source_metadata_invalid" => "Source metadata is invalid.",
+            "source_reference_invalid" => "Source reference is invalid.",
+            "relation_already_exists" => "An active relation already exists.",
+            "draft_not_found" => "Draft was not found.",
+            "draft_revision_conflict" => "Draft revision changed.",
+            "draft_operation_invalid" => "Draft operation is invalid.",
+            "draft_target_invalid" => "Draft target is invalid.",
+            "draft_state_conflict" =>
+                "Draft state does not allow this operation.",
+            "draft_base_revision_conflict" =>
+                "Draft base revision changed.",
+            "draft_model_conflict" => "Knowledge Model changed.",
+            "frontmatter_model_mismatch" =>
+                "Frontmatter conflicts with structured Knowledge data.",
+            "immutable_definition_conflict" =>
+                "A stable definition field cannot be changed.",
+            "tag_limit_exceeded" => "Knowledge tags exceed the allowed limit.",
+            "idempotency_key_required" => "An idempotency key is required.",
+            "idempotency_key_reused" =>
+                "The idempotency key was used for a different request.",
             "vault_locked" => "Vault is locked.",
             "vault_busy" => "Vault is transitioning.",
             "vault_lock_failed" => "Vault lock failed; restart the server.",
@@ -214,56 +182,52 @@ public static class McpToolErrorMapper
     private static string HintFor(string code) =>
         code switch
         {
-            "not_found" => "List or search active documents to find a current documentId.",
-            "document_revision_conflict" => "Read the latest revision and rebuild the draft or write.",
-            "draft_revision_conflict" => "Read the latest draft revision and retry.",
-            "draft_not_found" => "List drafts and use a current draftId.",
-            "draft_not_editable" => "Read the draft status and choose an allowed operation.",
-            "draft_operation_invalid" => "Correct the typed draft payload.",
-            "draft_payload_too_large" => "Reduce the draft payload size.",
-            "draft_limit_exceeded" => "Review or discard active drafts before creating another.",
-            "draft_storage_limit_exceeded" => "Review or discard active drafts to free storage.",
-            "write_mode_draft_required" => "Create a draft, or ask the user to enable Direct Write Mode in the Web UI.",
-            "idempotency_key_required" => "Generate a new UUID idempotencyKey.",
-            "idempotency_key_reused" => "Use a new idempotencyKey for a different request.",
-            "invalid_document_id" => "Use a non-empty D-format UUID in Frontmatter id.",
-            "document_id_conflict" => "Use a different document identity or skip the import.",
-            "document_id_mismatch" => "Restore the document's current Frontmatter id.",
-            "document_id_protected" => "Do not set, modify, or remove the system document id.",
-            "trashed_document_id_conflict" => "Restore the trashed document or choose another source.",
-            "duplicate_document_id_in_import" => "Remove duplicate document IDs from the import source.",
-            "unsupported_manifest_version" => "Export the source again with Manifest v2.",
-            "invalid_manifest" => "Regenerate the plaintext export and retry.",
             "invalid_input" => "Correct the tool arguments and retry.",
-            "invalid_offset" => "Use an offset within the document and outside a surrogate pair.",
-            "semantic_search_unavailable" =>
-                "Retry later or use keyword search while semantic indexing is unavailable.",
-            "semantic_profile_mismatch" =>
-                "Read semantic index status and retry with the active profile.",
-            "semantic_remote_not_allowed" =>
-                "Ask the user to configure and confirm remote embedding in the Web UI.",
-            "semantic_rebuild_in_progress" =>
-                "Wait for the current semantic index rebuild to finish.",
-            "relation_suggestion_not_found" =>
-                "List relation suggestions and use a current suggestionId.",
-            "relation_suggestion_revision_conflict" =>
-                "Read the latest suggestion revision and retry.",
-            "relation_suggestion_not_editable" =>
-                "Read the suggestion status and choose an allowed operation.",
-            "relation_suggestion_exists" =>
-                "Read the existing pending suggestion instead of creating a duplicate.",
-            "relation_suggestion_limit_exceeded" =>
-                "Review or discard stale suggestions before creating another.",
-            "relation_suggestion_stale" =>
-                "Update the stale suggestion with current document revisions.",
-            "document_relation_not_found" =>
-                "Refresh confirmed document relations before retrying.",
-            "path_conflict" => "Choose a different virtual path or update the existing document.",
-            "patch_target_not_found" => "Read the document map and choose an existing target.",
-            "patch_target_ambiguous" => "Use a more specific heading path.",
-            "document_too_large" => "Reduce the content size.",
+            "knowledge_model_invalid" =>
+                "Read the current Knowledge Model and correct the definition.",
+            "precondition_failed" => "Read the latest version before retrying.",
+            "payload_too_large" => "Reduce the payload size.",
+            "source_not_found" => "List sources and use a current sourceId.",
+            "source_revision_not_found" =>
+                "List source revisions and choose an existing revision.",
+            "source_locator_not_found" =>
+                "List source locators and use a current locatorId.",
+            "knowledge_not_found" =>
+                "Search Knowledge and use a current knowledgeId.",
+            "knowledge_revision_not_found" =>
+                "List Knowledge revisions and choose an existing revision.",
+            "relation_not_found" => "Refresh relations and retry.",
+            "invalid_search_mode" => "Use keyword or fulltext.",
+            "search_query_required" =>
+                "Provide a query or at least one type, source, or tag filter.",
+            "search_query_too_short" =>
+                "Use at least three characters or switch to keyword.",
+            "source_metadata_invalid" =>
+                "Read the source rule and provide valid metadata.",
+            "source_reference_invalid" =>
+                "Use a real source revision/locator and an exact excerpt.",
+            "relation_already_exists" =>
+                "Use the existing active relation or retract it first.",
+            "draft_not_found" => "List drafts and use a current draftId.",
+            "draft_revision_conflict" =>
+                "Read the latest draft revision and retry.",
+            "draft_operation_invalid" => "Correct the typed draft payload.",
+            "draft_target_invalid" =>
+                "Use a current target and its current revision.",
+            "draft_state_conflict" =>
+                "Read the latest Draft state before retrying.",
+            "draft_base_revision_conflict" =>
+                "Rebase the Draft against the current target revision.",
+            "draft_model_conflict" =>
+                "Read the current Knowledge Model and rebase the Draft.",
+            "frontmatter_model_mismatch" =>
+                "Align Frontmatter with the explicit structured fields.",
+            "immutable_definition_conflict" =>
+                "Create a new object instead of changing stable identity fields.",
             "tag_limit_exceeded" => "Use fewer or shorter tags.",
-            "frontmatter_invalid" => "Correct the Markdown Frontmatter.",
+            "idempotency_key_required" => "Generate a new UUID idempotencyKey.",
+            "idempotency_key_reused" =>
+                "Use a new idempotencyKey for a different request.",
             "vault_locked" => "Unlock the Vault in the Web UI before retrying.",
             "vault_busy" => "Wait for the Vault transition to finish.",
             "vault_lock_failed" => "Restart CipherVault.Server.",
@@ -272,8 +236,5 @@ public static class McpToolErrorMapper
         };
 
     private static bool RetryableFor(string code) =>
-        code is "vault_locked"
-            or "vault_busy"
-            or "database_error"
-            or "semantic_search_unavailable";
+        code is "vault_locked" or "vault_busy" or "database_error";
 }

@@ -1,11 +1,4 @@
 using CipherVault.Application.Audit;
-using CipherVault.Application.Drafts;
-using CipherVault.Application.Documents;
-using CipherVault.Application.Graph;
-using CipherVault.Application.Import;
-using CipherVault.Application.Knowledge;
-using CipherVault.Application.Search;
-using CipherVault.Application.Relations;
 using CipherVault.Application.Vault;
 
 namespace CipherVault.Application.Tests;
@@ -22,36 +15,6 @@ internal sealed class VaultApplicationFixture : IAsyncDisposable
         Parent = parent;
         Manager = manager;
         TimeProvider = timeProvider;
-        Documents = new DocumentService(manager, timeProvider);
-        Authoring = new DocumentAuthoringService(manager, timeProvider);
-        Trash = new TrashService(manager, timeProvider);
-        Revisions = new DocumentRevisionService(manager, timeProvider);
-        Search = new SearchService(manager, timeProvider);
-        Graph = new GraphService(manager);
-        MaturityQueue = new KnowledgeMaturityQueueService(manager);
-        Import = new ImportService(manager, timeProvider);
-        Audit = new AuditQueryService(manager, timeProvider);
-        Idempotency = new IdempotencyService();
-        Drafts = new DocumentDraftService(
-            manager,
-            Idempotency,
-            timeProvider);
-        WriteMode = new McpWriteModeService(
-            manager,
-            Idempotency,
-            timeProvider);
-        RelationSuggestions = new RelationSuggestionService(
-            manager,
-            Idempotency,
-            timeProvider);
-        RelationReview = new RelationReviewService(
-            manager,
-            Idempotency,
-            timeProvider);
-        RelationMaintenance = new RelationMaintenanceService(
-            manager,
-            Idempotency,
-            timeProvider);
     }
 
     internal string Parent { get; }
@@ -61,36 +24,6 @@ internal sealed class VaultApplicationFixture : IAsyncDisposable
     internal VaultSessionManager Manager { get; }
 
     internal TimeProvider TimeProvider { get; }
-
-    internal DocumentService Documents { get; }
-
-    internal DocumentAuthoringService Authoring { get; }
-
-    internal TrashService Trash { get; }
-
-    internal DocumentRevisionService Revisions { get; }
-
-    internal SearchService Search { get; }
-
-    internal GraphService Graph { get; }
-
-    internal KnowledgeMaturityQueueService MaturityQueue { get; }
-
-    internal ImportService Import { get; }
-
-    internal AuditQueryService Audit { get; }
-
-    internal IdempotencyService Idempotency { get; }
-
-    internal DocumentDraftService Drafts { get; }
-
-    internal McpWriteModeService WriteMode { get; }
-
-    internal RelationSuggestionService RelationSuggestions { get; }
-
-    internal RelationReviewService RelationReview { get; }
-
-    internal RelationMaintenanceService RelationMaintenance { get; }
 
     internal static async Task<VaultApplicationFixture> CreateAsync(
         TimeProvider? timeProvider = null)
@@ -133,14 +66,6 @@ internal sealed class VaultApplicationFixture : IAsyncDisposable
 
     internal Task<VaultSessionStatus> UnlockAgainAsync() =>
         Manager.UnlockAsync(Password);
-
-    internal Task<McpWriteModeStatus> EnableDirectWriteAsync() =>
-        WriteMode.ChangeAsync(
-            new McpWriteModeChangeRequest(
-                CipherVault.Core.Documents.McpWriteMode.Direct),
-            new CipherVault.Core.Documents.VaultActorContext(
-                CipherVault.Core.Documents.VaultActorKind.UserUi),
-            Guid.NewGuid());
 
     public async ValueTask DisposeAsync()
     {

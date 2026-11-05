@@ -13,7 +13,7 @@ internal sealed record DatabaseMigration(
 
 internal static class DatabaseMigrationCatalog
 {
-    public const int CurrentVersion = 9;
+    public const int CurrentVersion = 1;
 
     public static IReadOnlyList<DatabaseMigration> Load()
     {

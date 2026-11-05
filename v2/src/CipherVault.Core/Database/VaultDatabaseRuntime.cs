@@ -128,7 +128,7 @@ public sealed class VaultDatabaseRuntime : IAsyncDisposable
 
             throw;
         }
-        catch
+        catch (Exception exception)
         {
             if (context is not null && !operationSucceeded)
             {
@@ -146,7 +146,8 @@ public sealed class VaultDatabaseRuntime : IAsyncDisposable
 
             throw new VaultException(
                 VaultErrorCode.DatabaseError,
-                "Vault database operation failed.");
+                "Vault database operation failed.",
+                exception);
         }
         finally
         {

@@ -34,10 +34,11 @@ public static class AuditStore
             """
             INSERT INTO audit_events(
                 event_id, occurred_at, actor_kind, action,
-                document_id, revision, correlation_id, result, details_json)
+                target_object_type, target_id, target_revision,
+                correlation_id, result, details_json)
             VALUES(
                 $eventId, $occurredAt, $actor, $action,
-                $documentId, $revision, $correlationId, $result, $details);
+                'knowledge', $targetId, $revision, $correlationId, $result, $details);
             """;
         lease.Command.Parameters.AddWithValue("$eventId", eventId.ToString("D"));
         lease.Command.Parameters.AddWithValue(
@@ -46,7 +47,7 @@ public static class AuditStore
         lease.Command.Parameters.AddWithValue("$actor", ToDatabaseValue(actor.Kind));
         lease.Command.Parameters.AddWithValue("$action", action);
         lease.Command.Parameters.AddWithValue(
-            "$documentId",
+                "$targetId",
             documentId?.ToString("D") ?? (object)DBNull.Value);
         lease.Command.Parameters.AddWithValue(
             "$revision",
@@ -92,7 +93,8 @@ public static class AuditStore
             "audit",
             query.Actor?.ToString(),
             action,
-            query.DocumentId?.ToString("D"),
+            query.TargetObjectType,
+            query.TargetId?.ToString("D"),
             query.OccurredAfter?.ToUniversalTime().ToString("O"),
             query.OccurredBefore?.ToUniversalTime().ToString("O"));
         var hasCursor = CursorCodec.TryDecode(
@@ -113,7 +115,8 @@ public static class AuditStore
         var sql = new StringBuilder(
             """
             SELECT event_id, occurred_at, actor_kind, action,
-                   document_id, revision, result, details_json
+                   target_object_type, target_id, target_revision,
+                   result, details_json
             FROM audit_events
             WHERE occurred_at <= $snapshotAt
             """);
@@ -129,12 +132,19 @@ public static class AuditStore
             sql.Append(" AND action = $action");
             read.Command.Parameters.AddWithValue("$action", action);
         }
-        if (query.DocumentId is not null)
+        if (query.TargetObjectType is not null)
         {
-            sql.Append(" AND document_id = $documentId");
+            sql.Append(" AND target_object_type = $targetObjectType");
             read.Command.Parameters.AddWithValue(
-                "$documentId",
-                query.DocumentId.Value.ToString("D"));
+                "$targetObjectType",
+                query.TargetObjectType);
+        }
+        if (query.TargetId is not null)
+        {
+            sql.Append(" AND target_id = $targetId");
+            read.Command.Parameters.AddWithValue(
+                "$targetId",
+                query.TargetId.Value.ToString("D"));
         }
         if (query.OccurredAfter is { } occurredAfter)
         {
@@ -188,10 +198,11 @@ public static class AuditStore
                     ParseTimestamp(reader.GetString(1)),
                     ParseActor(reader.GetString(2)),
                     reader.GetString(3),
-                    reader.IsDBNull(4) ? null : Guid.Parse(reader.GetString(4)),
-                    reader.IsDBNull(5) ? null : reader.GetInt32(5),
-                    reader.GetString(6),
-                    reader.GetString(7)),
+                    reader.IsDBNull(4) ? null : reader.GetString(4),
+                    reader.IsDBNull(5) ? null : Guid.Parse(reader.GetString(5)),
+                    reader.IsDBNull(6) ? null : reader.GetInt32(6),
+                    reader.GetString(7),
+                    reader.GetString(8)),
                 eventId.ToString("D")));
         }
 

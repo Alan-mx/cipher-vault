@@ -48,9 +48,20 @@ export const router = createRouter({
       },
     },
     {
-      path: "/documents",
-      name: "documents",
-      component: () => import("../views/DocumentsView.vue"),
+      path: "/home",
+      name: "home",
+      component: () => import("../views/HomeView.vue"),
+      meta: {
+        vault: "unlocked",
+        sensitive: true,
+        layout: "workspace",
+        title: "首页",
+      },
+    },
+    {
+      path: "/knowledge",
+      name: "knowledge",
+      component: () => import("../views/KnowledgeLibraryView.vue"),
       meta: {
         vault: "unlocked",
         sensitive: true,
@@ -59,25 +70,36 @@ export const router = createRouter({
       },
     },
     {
-      path: "/documents/:id",
-      name: "document",
-      component: () => import("../views/DocumentView.vue"),
+      path: "/knowledge/:id",
+      name: "knowledge-detail",
+      component: () => import("../views/KnowledgeDetailView.vue"),
       meta: {
         vault: "unlocked",
         sensitive: true,
         layout: "workspace",
-        title: "文档",
+        title: "知识",
       },
     },
     {
-      path: "/views",
-      name: "knowledge-views",
-      component: () => import("../views/KnowledgeViewsView.vue"),
+      path: "/inbox",
+      name: "inbox",
+      component: () => import("../views/InboxView.vue"),
       meta: {
         vault: "unlocked",
         sensitive: true,
         layout: "workspace",
-        title: "知识视图",
+        title: "收集箱",
+      },
+    },
+    {
+      path: "/sources",
+      name: "sources",
+      component: () => import("../views/SourcesView.vue"),
+      meta: {
+        vault: "unlocked",
+        sensitive: true,
+        layout: "workspace",
+        title: "来源",
       },
     },
     {
@@ -94,7 +116,7 @@ export const router = createRouter({
     {
       path: "/review",
       name: "review",
-      component: () => import("../views/ReviewView.vue"),
+      component: () => import("../views/UnifiedReviewView.vue"),
       meta: {
         vault: "unlocked",
         sensitive: true,
@@ -103,36 +125,14 @@ export const router = createRouter({
       },
     },
     {
-      path: "/trash",
-      name: "trash",
-      component: () => import("../views/TrashView.vue"),
+      path: "/settings/knowledge-model",
+      name: "knowledge-model",
+      component: () => import("../views/KnowledgeModelView.vue"),
       meta: {
         vault: "unlocked",
         sensitive: true,
         layout: "workspace",
-        title: "回收站",
-      },
-    },
-    {
-      path: "/tools/import",
-      name: "import",
-      component: () => import("../views/ImportView.vue"),
-      meta: {
-        vault: "unlocked",
-        sensitive: true,
-        layout: "workspace",
-        title: "导入",
-      },
-    },
-    {
-      path: "/audit",
-      name: "audit",
-      component: () => import("../views/AuditView.vue"),
-      meta: {
-        vault: "unlocked",
-        sensitive: true,
-        layout: "workspace",
-        title: "活动记录",
+        title: "知识模型",
       },
     },
     {

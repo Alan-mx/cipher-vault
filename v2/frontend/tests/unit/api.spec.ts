@@ -4,7 +4,6 @@ import {
   buildQueryString,
   configureApiClient,
 } from "../../src/api/client";
-import { documentApi, knowledgeApi } from "../../src/api";
 import {
   ApiClientError,
   StaleSessionResponseError,
@@ -170,7 +169,7 @@ describe("ApiClient", () => {
     });
 
     await expect(
-      new ApiClient().request("/api/documents", {
+      new ApiClient().request("/api/knowledge", {
         sessionGeneration: 1,
       }),
     ).rejects.toBeInstanceOf(StaleSessionResponseError);
@@ -281,114 +280,5 @@ describe("ApiClient", () => {
         sessionGeneration: 1,
       }),
     ).rejects.toBeInstanceOf(StaleSessionResponseError);
-  });
-});
-
-describe("document related API", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("uses the read-only related endpoint with a bounded default limit", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ items: [] }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-    configureApiClient({
-      getCsrfToken: () => null,
-      refreshCsrfToken: async () => "",
-      currentSessionGeneration: () => 0,
-      onSessionInvalid: () => false,
-    });
-
-    await expect(documentApi.related("doc-1")).resolves.toEqual({
-      items: [],
-    });
-
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "/api/documents/doc-1/related?limit=10",
-    );
-    const request = fetchMock.mock.calls[0]?.[1];
-    expect(request?.method ?? "GET").toBe("GET");
-    const headers = request?.headers as Headers;
-    expect(headers.get("X-CSRF-TOKEN")).toBeNull();
-  });
-});
-
-describe("knowledge view API", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("loads facets and document pages with encoded view parameters", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            field: "project",
-            items: [],
-            truncated: false,
-          }),
-          {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ items: [], nextCursor: null }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-      );
-    configureApiClient({
-      getCsrfToken: () => null,
-      refreshCsrfToken: async () => "",
-      currentSessionGeneration: () => 0,
-      onSessionInvalid: () => false,
-    });
-
-    await knowledgeApi.viewFacets("project", true);
-    await knowledgeApi.viewDocuments("project", {
-      facetKey: "PROJECT A",
-      activeOnly: true,
-      pageSize: 30,
-    });
-
-    expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "/api/knowledge/views/project/facets?activeOnly=true",
-    );
-    expect(fetchMock.mock.calls[1]?.[0]).toBe(
-      "/api/knowledge/views/project/documents" +
-        "?activeOnly=true&facetKey=PROJECT+A&pageSize=30",
-    );
-  });
-
-  it("omits project-only activeOnly for type views", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ items: [], nextCursor: null }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-    configureApiClient({
-      getCsrfToken: () => null,
-      refreshCsrfToken: async () => "",
-      currentSessionGeneration: () => 0,
-      onSessionInvalid: () => false,
-    });
-
-    await knowledgeApi.viewDocuments("type", {
-      facetKey: "NOTE",
-      activeOnly: true,
-    });
-
-    expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "/api/knowledge/views/type/documents?facetKey=NOTE",
-    );
   });
 });

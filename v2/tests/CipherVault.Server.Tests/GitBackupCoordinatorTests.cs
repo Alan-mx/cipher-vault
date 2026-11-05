@@ -99,7 +99,7 @@ public sealed class GitBackupCoordinatorTests
             rotatedOptions,
             runner);
         await rotated.NotifyAsync(
-            CipherVault.Application.Backup.DocumentMutationKind.Update);
+            CipherVault.Application.Backup.VaultMutationKind.KnowledgeChanged);
         await rotated.RunOnceForTestAsync(CancellationToken.None);
 
         var status = await rotated.GetStatusAsync();
@@ -159,7 +159,7 @@ public sealed class GitBackupCoordinatorTests
             gitFixture.Options,
             new GitCommandRunner());
 
-        await coordinator.NotifyAsync(DocumentMutationKind.Update);
+        await coordinator.NotifyAsync(VaultMutationKind.KnowledgeChanged);
         await coordinator.RunOnceForTestAsync(CancellationToken.None);
 
         var status = await coordinator.GetStatusAsync();

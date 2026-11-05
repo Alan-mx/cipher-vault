@@ -1,5 +1,4 @@
 using CipherVault.Application.Vault;
-using CipherVault.Application.Drafts;
 using CipherVault.Server.Api.Contracts;
 using CipherVault.Core.Errors;
 using CipherVault.Server.Security;
@@ -154,35 +153,6 @@ public static class VaultEndpoints
                 })
             .RequireAuthorization()
             .WithName("GetAntiforgeryToken");
-
-        group.MapGet(
-                "/session/mcp-write-mode",
-                (
-                    McpWriteModeService writeMode) =>
-                    Results.Ok(writeMode.Get().ToApiResponse()))
-            .RequireAuthorization()
-            .WithName("GetMcpWriteMode");
-
-        group.MapPut(
-                "/session/mcp-write-mode",
-                async (
-                    McpWriteModeApiRequest request,
-                    McpWriteModeService writeMode,
-                    HttpContext context,
-                    CancellationToken cancellationToken) =>
-                {
-                    var key = ApiInputValidation.RequireIdempotencyKey(
-                        context.Request.Headers["Idempotency-Key"].ToString());
-                    var result = await writeMode.ChangeAsync(
-                        request.ToApplicationRequest(),
-                        context.CreateUserActor(),
-                        key,
-                        cancellationToken);
-                    return Results.Ok(result.ToApiResponse());
-                })
-            .RequireAuthorization()
-            .RequireAntiforgery()
-            .WithName("SetMcpWriteMode");
 
         group.MapPost(
                 "/lock",

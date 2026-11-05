@@ -73,31 +73,6 @@ internal static class McpTestClient
             .Clone();
     }
 
-    internal static async Task<(Guid DocumentId, int Revision)> CreateDocumentAsync(
-        HttpClient client,
-        string title,
-        string path)
-    {
-        var csrf = await client.GetAntiforgeryTokenAsync();
-        using var response = await client.PostJsonWithAntiforgeryAsync(
-            "/api/documents",
-            csrf,
-            new
-            {
-                title,
-                virtualPath = path,
-                format = "md",
-                content = $"---\nstatus: active\n---\n\n# {title}",
-                tags = Array.Empty<string>()
-            });
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.True(response.IsSuccessStatusCode, body);
-        using var json = JsonDocument.Parse(body);
-        return (
-            json.RootElement.GetProperty("documentId").GetGuid(),
-            json.RootElement.GetProperty("revision").GetInt32());
-    }
-
     private static HttpRequestMessage CreateRequest(string token, string body)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, "/mcp")

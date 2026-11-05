@@ -5,7 +5,29 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="KnowledgeModelStoreTests.cs" />
+    <Compile Include="BackupServiceTests.cs" />
+    <Compile Include="BackupSessionLeaseTests.cs" />
+    <Compile Include="BackupSnapshotLockTests.cs" />
+    <Compile Include="BackupStorageTests.cs" />
+    <Compile Include="SessionDataTests.cs" />
+    <Compile Include="VaultSessionManagerActivityTests.cs" />
+    <Compile Include="VaultSessionManagerDisposeTests.cs" />
+    <Compile Include="VaultSessionManagerExecuteTests.cs" />
+    <Compile Include="VaultSessionManagerIdleTests.cs" />
+    <Compile Include="VaultSessionManagerInitializeTests.cs" />
+    <Compile Include="VaultSessionManagerLockTests.cs" />
+    <Compile Include="VaultSessionManagerStatusTests.cs" />
+    <Compile Include="VaultSessionManagerUnlockTests.cs" />
+    <Compile Include="ManualTimeProvider.cs" />
+    <Compile Include="TestAssembly.cs" />
+    <Compile Include="TestDirectoryCleanup.cs" />
+    <Compile Include="VaultApplicationFixture.cs" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />

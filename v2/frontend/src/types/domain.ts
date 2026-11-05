@@ -1,6 +1,4 @@
-export type GuidString = string;
 export type UtcTimestamp = string;
-export type VaultFormat = "md" | "txt";
 
 export type VaultState =
   | "uninitialized"
@@ -17,8 +15,6 @@ export type LockReason =
   | "idle_timeout"
   | "process_exit"
   | "runtime_failure";
-
-export type ActorKind = "user_ui" | "mcp" | "system";
 
 export interface ApiErrorBody {
   code: string;
@@ -56,15 +52,4 @@ export class StaleSessionResponseError extends Error {
     super("The response belongs to an invalidated Vault session.");
     this.name = "StaleSessionResponseError";
   }
-}
-
-export type AsyncState<T> =
-  | { status: "idle" }
-  | { status: "loading" }
-  | { status: "success"; data: T }
-  | { status: "error"; error: ApiClientError };
-
-export interface CursorPage<T> {
-  items: T[];
-  nextCursor?: string | null;
 }

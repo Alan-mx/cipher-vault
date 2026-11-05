@@ -10,15 +10,6 @@ public static class ApiQueryBinding
             ? id
             : throw InvalidQuery($"{fieldName} must be a non-empty GUID.");
 
-    public static VaultDocumentFormat? ParseFormat(string? value) =>
-        value switch
-        {
-            null => null,
-            "md" => VaultDocumentFormat.Markdown,
-            "txt" => VaultDocumentFormat.Text,
-            _ => throw InvalidQuery("format must be md or txt.")
-        };
-
     public static DateTimeOffset? ParseTimestamp(
         string? value,
         string fieldName)

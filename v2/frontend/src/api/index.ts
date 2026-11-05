@@ -8,15 +8,6 @@ export {
   type QueryInput,
 } from "./client";
 export { vaultApi } from "./vault";
-export { catalogApi } from "./catalog";
-export { documentApi } from "./documents";
-export { knowledgeApi } from "./knowledge";
-export { semanticIndexApi } from "./semantic-index";
-export { relationSuggestionsApi } from "./relation-suggestions";
-export { revisionApi } from "./revisions";
-export { trashApi } from "./trash";
-export { importApi } from "./imports";
-export { auditApi } from "./audit";
 export { settingsApi } from "./settings";
 export { backupApi } from "./backups";
 export { versionApi } from "./version";

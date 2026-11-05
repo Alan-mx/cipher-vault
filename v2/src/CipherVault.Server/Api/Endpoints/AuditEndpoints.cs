@@ -14,7 +14,8 @@ public static class AuditEndpoints
                 async (
                     string? actor,
                     string? action,
-                    string? documentId,
+                    string? targetObjectType,
+                    string? targetId,
                     string? occurredAfter,
                     string? occurredBefore,
                     int? pageSize,
@@ -25,11 +26,12 @@ public static class AuditEndpoints
                     var request = new AuditQuery(
                         ApiQueryBinding.ParseActor(actor),
                         action,
-                        string.IsNullOrWhiteSpace(documentId)
+                        targetObjectType,
+                        string.IsNullOrWhiteSpace(targetId)
                             ? null
                             : ApiQueryBinding.ParseGuid(
-                                documentId,
-                                nameof(documentId)),
+                                targetId,
+                                nameof(targetId)),
                         ApiQueryBinding.ParseTimestamp(
                             occurredAfter,
                             nameof(occurredAfter)),
