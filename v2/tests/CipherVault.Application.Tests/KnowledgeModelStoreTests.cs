@@ -203,6 +203,42 @@ public sealed class KnowledgeModelStoreTests
                 fixture.TimeProvider.GetUtcNow(),
                 CancellationToken.None)));
         Assert.Equal(VaultErrorCode.KnowledgeModelInvalid, ruleError.Code);
+
+        var invalidDate = new KnowledgeTypeUpdate(
+            firstType.TypeId,
+            firstType.Key,
+            firstType.Name,
+            firstType.Description,
+            firstType.IsEnabled,
+            firstType.SortOrder,
+            [
+                new KnowledgePropertyUpdate(
+                    null,
+                    "publishedOn",
+                    "Published on",
+                    "date",
+                    false,
+                    JsonSerializer.SerializeToElement("not-a-date"),
+                    JsonSerializer.SerializeToElement(new { }),
+                    true,
+                    10)
+            ]);
+        var dateUpdate = ToUpdate(model) with
+        {
+            KnowledgeTypes =
+            [
+                invalidDate,
+                .. model.KnowledgeTypes.Skip(1).Select(ToUpdate)
+            ]
+        };
+        var dateError = await Assert.ThrowsAsync<VaultException>(() =>
+            fixture.QueryAsync(context => KnowledgeModelStore.ReplaceAsync(
+                context,
+                model.Version,
+                dateUpdate,
+                fixture.TimeProvider.GetUtcNow(),
+                CancellationToken.None)));
+        Assert.Equal(VaultErrorCode.KnowledgeModelInvalid, dateError.Code);
     }
 
     private static KnowledgeModelUpdate ToUpdate(KnowledgeModelSnapshot model) =>

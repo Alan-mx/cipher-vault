@@ -539,7 +539,9 @@ public static class KnowledgeModelStore
     {
         return valueType switch
         {
-            "string" or "date" => value.ValueKind == JsonValueKind.String,
+            "string" => value.ValueKind == JsonValueKind.String,
+            "date" => value.ValueKind == JsonValueKind.String
+                && IsDateValue(value.GetString()),
             "number" => value.ValueKind == JsonValueKind.Number,
             "boolean" => value.ValueKind is
                 JsonValueKind.True or JsonValueKind.False,
@@ -555,6 +557,19 @@ public static class KnowledgeModelStore
             _ => false
         };
     }
+
+    private static bool IsDateValue(string? value) =>
+        DateOnly.TryParse(
+            value,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AllowWhiteSpaces,
+            out _)
+        || DateTimeOffset.TryParse(
+            value,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AllowWhiteSpaces
+                | DateTimeStyles.RoundtripKind,
+            out _);
 
     private static VaultException ModelInvalid(
         string fieldPath,

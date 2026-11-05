@@ -33,6 +33,23 @@ public sealed class KnowledgePayloadValidationTests
     }
 
     [Fact]
+    public void KnowledgeRejectsInvalidDateProperty()
+    {
+        var exception = Assert.Throws<VaultException>(() =>
+            KnowledgeBasePayloadParser.ParseKnowledge(
+                KnowledgePayload(
+                    "---\ntype: note\n---\n# Body",
+                    JsonSerializer.SerializeToElement(
+                        new { publishedOn = "not-a-date" })),
+                Model()));
+
+        Assert.Equal(VaultErrorCode.DraftOperationInvalid, exception.Code);
+        Assert.Equal(
+            "properties.publishedOn",
+            exception.Details["fieldPath"]);
+    }
+
+    [Fact]
     public void KnowledgeValidatesMatchingFrontmatterAndRemovesIt()
     {
         var result = KnowledgeBasePayloadParser.ParseKnowledge(
@@ -135,7 +152,17 @@ public sealed class KnowledgePayloadValidationTests
                     JsonSerializer.SerializeToElement(
                         new { options = new[] { "red", "blue" } }),
                     true,
-                    10)
+                    10),
+                new KnowledgePropertyDefinition(
+                    Guid.NewGuid(),
+                    "publishedOn",
+                    "Published on",
+                    "date",
+                    false,
+                    null,
+                    JsonSerializer.SerializeToElement(new { }),
+                    true,
+                    20)
             ]);
         var sourceRule = new SourceRuleDefinition(
             SourceRuleId,

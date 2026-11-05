@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using CipherVault.Core.Documents;
 using CipherVault.Core.Errors;
@@ -322,7 +323,9 @@ internal static class KnowledgeBasePayloadParser
     {
         var valid = definition.ValueType switch
         {
-            "string" or "date" => value.ValueKind == JsonValueKind.String,
+            "string" => value.ValueKind == JsonValueKind.String,
+            "date" => value.ValueKind == JsonValueKind.String
+                && IsDateValue(value.GetString()),
             "number" => value.ValueKind == JsonValueKind.Number,
             "boolean" => value.ValueKind is JsonValueKind.True or JsonValueKind.False,
             "enum" => value.ValueKind == JsonValueKind.String,
@@ -538,12 +541,7 @@ internal static class KnowledgeBasePayloadParser
         {
             "string" => value.ValueKind == JsonValueKind.String,
             "date" => value.ValueKind == JsonValueKind.String
-                && (DateOnly.TryParse(
-                        value.GetString(),
-                        out _)
-                    || DateTimeOffset.TryParse(
-                        value.GetString(),
-                        out _)),
+                && IsDateValue(value.GetString()),
             "number" => value.ValueKind == JsonValueKind.Number,
             "boolean" => value.ValueKind is
                 JsonValueKind.True or JsonValueKind.False,
@@ -971,4 +969,17 @@ internal static class KnowledgeBasePayloadParser
             {
                 ["fieldPath"] = fieldPath
             });
+
+    private static bool IsDateValue(string? value) =>
+        DateOnly.TryParse(
+            value,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AllowWhiteSpaces,
+            out _)
+        || DateTimeOffset.TryParse(
+            value,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AllowWhiteSpaces
+                | DateTimeStyles.RoundtripKind,
+            out _);
 }
