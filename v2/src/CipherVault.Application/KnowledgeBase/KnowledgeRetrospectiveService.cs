@@ -9,9 +9,6 @@ namespace CipherVault.Application.KnowledgeBase;
 public sealed class KnowledgeRetrospectiveService(
     UnifiedDraftService drafts)
 {
-    private const int MaxTopicScalars = 193;
-    private const int MaxKnowledgeCount = 20;
-
     public Task<DraftMutation> CreateAsync(
         KnowledgeRetrospectiveCreateInput input,
         VaultActorContext actor,
@@ -63,35 +60,16 @@ public sealed class KnowledgeRetrospectiveService(
     private static KnowledgeRetrospectiveCreateInput NormalizeAndValidate(
         KnowledgeRetrospectiveCreateInput input)
     {
-        var topic = input.Topic
-            .Replace("\r\n", " ", StringComparison.Ordinal)
-            .Replace('\r', ' ')
-            .Replace('\n', ' ')
-            .Trim();
+        var topic = KnowledgeWorkflowDraftSupport.NormalizeTopic(input.Topic);
         var topicLength = topic.EnumerateRunes().Count();
-        if (topicLength is < 1 or > MaxTopicScalars)
+        if (topicLength is < 1
+            or > KnowledgeWorkflowDraftSupport.MaxTopicScalars)
         {
             throw new VaultException(
                 VaultErrorCode.InvalidInput,
-                $"Topic must contain 1 to {MaxTopicScalars} characters.");
+                $"Topic must contain 1 to {KnowledgeWorkflowDraftSupport.MaxTopicScalars} characters.");
         }
-        if (input.KnowledgeIds.Count is < 1 or > MaxKnowledgeCount)
-        {
-            throw new VaultException(
-                VaultErrorCode.InvalidInput,
-                $"Select 1 to {MaxKnowledgeCount} Knowledge records.");
-        }
-
-        var seen = new HashSet<Guid>();
-        foreach (var knowledgeId in input.KnowledgeIds)
-        {
-            if (knowledgeId == Guid.Empty || !seen.Add(knowledgeId))
-            {
-                throw new VaultException(
-                    VaultErrorCode.InvalidInput,
-                    "Knowledge identifiers must be non-empty and unique.");
-            }
-        }
+        KnowledgeWorkflowDraftSupport.ValidateKnowledgeIds(input.KnowledgeIds);
         return new KnowledgeRetrospectiveCreateInput(
             input.KnowledgeIds.ToArray(),
             topic);

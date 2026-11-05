@@ -154,7 +154,7 @@ onMounted(async () => {
           <dt>模型版本</dt>
           <dd>{{ selected.record.baseModelVersion }}</dd>
         </dl>
-        <pre>{{ selected.preview.diff }}</pre>
+        <pre tabindex="0">{{ selected.preview.diff }}</pre>
         <section v-if="selected.preview.sourceReferences.length">
           <h3>来源依据</h3>
           <blockquote

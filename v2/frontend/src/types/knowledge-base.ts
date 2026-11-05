@@ -249,3 +249,20 @@ export interface DraftMutation {
   operationType: string;
   updatedAt: string;
 }
+
+export interface CreateKnowledgeSynthesisDraftRequest {
+  topic: string;
+  question?: string | null;
+  knowledgeIds: string[];
+  knowledgeTypeId: string;
+}
+
+export interface KnowledgeSynthesisHandoff {
+  draftId: string;
+  topic: string;
+  question: string;
+  knowledgeTypeId: string;
+  knowledgeTypeKey: string;
+  knowledgeTypeName: string;
+  knowledge: Array<{ knowledgeId: string; title: string }>;
+}

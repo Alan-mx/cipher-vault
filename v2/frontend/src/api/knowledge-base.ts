@@ -1,5 +1,6 @@
 import type {
   CreateKnowledgeRetrospectiveDraftRequest,
+  CreateKnowledgeSynthesisDraftRequest,
   DashboardView,
   DraftDetail,
   DraftListItem,
@@ -84,6 +85,16 @@ export const knowledgeBaseApi = {
     idempotencyKey: string = key(),
   ) =>
     apiClient.request<DraftMutation>("/api/knowledge/retrospective-draft", {
+      method: "POST",
+      csrf: true,
+      idempotencyKey,
+      body: request,
+    }),
+  createKnowledgeSynthesisDraft: (
+    request: CreateKnowledgeSynthesisDraftRequest,
+    idempotencyKey: string = key(),
+  ) =>
+    apiClient.request<DraftMutation>("/api/knowledge/synthesis-draft", {
       method: "POST",
       csrf: true,
       idempotencyKey,

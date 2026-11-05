@@ -22,6 +22,7 @@
     <Compile Include="GitBackupStatusApiTests.cs" />
     <Compile Include="KnowledgeBaseApiTests.cs" />
     <Compile Include="KnowledgeRetrospectiveApiTests.cs" />
+    <Compile Include="KnowledgeSynthesisApiTests.cs" />
     <Compile Include="KnowledgeModelApiTests.cs" />
     <Compile Include="LoopbackOnlyFilterTests.cs" />
     <Compile Include="ManualTimeProvider.cs" />

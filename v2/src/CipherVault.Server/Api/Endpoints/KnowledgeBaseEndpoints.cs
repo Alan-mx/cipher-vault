@@ -182,6 +182,33 @@ public static class KnowledgeBaseEndpoints
             .AddEndpointFilter<RejectMcpIdentityEndpointFilter>()
             .RequireAntiforgery()
             .WithName("CreateKnowledgeRetrospectiveDraft");
+
+        endpoints.MapPost(
+                "/api/knowledge/synthesis-draft",
+                async (
+                    CreateKnowledgeSynthesisDraftApiRequest request,
+                    KnowledgeSynthesisService syntheses,
+                    HttpContext context,
+                    CancellationToken cancellationToken) =>
+                {
+                    var idempotencyKey =
+                        ApiInputValidation.RequireIdempotencyKey(
+                            context.Request.Headers["Idempotency-Key"]
+                                .ToString());
+                    var result = await syntheses.CreateAsync(
+                        request.ToDomain(),
+                        context.CreateUserActor(),
+                        idempotencyKey,
+                        cancellationToken);
+                    var location = $"/api/drafts/{result.DraftId:D}";
+                    context.Response.Headers.Location = location;
+                    return Results.Created(location, result);
+                })
+            .RequireAuthorization(
+                McpBearerAuthentication.UserUiOrMcpPolicy)
+            .AddEndpointFilter<RejectMcpIdentityEndpointFilter>()
+            .RequireAntiforgery()
+            .WithName("CreateKnowledgeSynthesisDraft");
         return endpoints;
     }
 
