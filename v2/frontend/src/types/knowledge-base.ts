@@ -284,3 +284,36 @@ export interface KnowledgeSynthesisHandoff {
   knowledgeTypeName: string;
   knowledge: Array<{ knowledgeId: string; title: string }>;
 }
+
+export type KnowledgeTriageReason =
+  "missing_required_property" | "missing_source" | "stale";
+
+export interface KnowledgeTriageItem {
+  knowledgeId: string;
+  title: string;
+  knowledgeTypeId: string;
+  typeKey: string;
+  typeName: string;
+  tags: string[];
+  revision: number;
+  updatedAt: string;
+  reasonCodes: KnowledgeTriageReason[];
+  missingPropertyKeys: string[];
+  sourceReferenceCount: number;
+}
+
+export interface KnowledgeTriageCounts {
+  missingSource: number;
+  missingRequiredProperty: number;
+  stale: number;
+  totalDistinct: number;
+  draft: number;
+  conflict: number;
+}
+
+export interface KnowledgeTriagePage {
+  items: KnowledgeTriageItem[];
+  nextCursor: string | null;
+  hasMore: boolean;
+  counts: KnowledgeTriageCounts;
+}

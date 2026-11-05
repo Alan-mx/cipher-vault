@@ -2,16 +2,27 @@
 import { onMounted, ref } from "vue";
 import { RouterLink } from "vue-router";
 import { knowledgeBaseApi } from "../api/knowledge-base";
-import type { DashboardView } from "../types/knowledge-base";
+import type {
+  DashboardView,
+  KnowledgeTriagePage,
+} from "../types/knowledge-base";
 
 const dashboard = ref<DashboardView | null>(null);
+const triage = ref<KnowledgeTriagePage | null>(null);
 const error = ref<string | null>(null);
+const triageError = ref<string | null>(null);
 
 onMounted(async () => {
   try {
     dashboard.value = await knowledgeBaseApi.dashboard();
   } catch (caught) {
     error.value = caught instanceof Error ? caught.message : "加载失败";
+  }
+  try {
+    triage.value = await knowledgeBaseApi.triage({ pageSize: 1 });
+  } catch (caught) {
+    triageError.value =
+      caught instanceof Error ? caught.message : "整理摘要加载失败";
   }
 });
 </script>
@@ -28,12 +39,27 @@ onMounted(async () => {
     </header>
 
     <p v-if="error" class="error">{{ error }}</p>
+    <p v-if="triageError" class="error">{{ triageError }}</p>
     <div v-if="dashboard" class="stat-grid">
       <article v-for="(value, name) in dashboard.counts" :key="name">
         <span>{{ name }}</span>
         <strong>{{ value }}</strong>
       </article>
     </div>
+
+    <section v-if="triage" class="triage-panel">
+      <div>
+        <p class="eyebrow">Triage</p>
+        <h2>知识整理</h2>
+        <p class="muted">
+          {{ triage.counts.totalDistinct }} 条待处理：缺来源
+          {{ triage.counts.missingSource }} · 缺必填属性
+          {{ triage.counts.missingRequiredProperty }} · 长期未更新
+          {{ triage.counts.stale }}
+        </p>
+      </div>
+      <RouterLink to="/triage">开始整理</RouterLink>
+    </section>
 
     <div v-if="dashboard" class="dashboard-grid">
       <section class="panel">
@@ -174,6 +200,27 @@ h2 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
+.triage-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding: 16px;
+  border: 1px solid var(--cv-border);
+  border-radius: 8px;
+  background: var(--cv-surface);
+}
+.triage-panel h2 {
+  font-size: 18px;
+}
+.triage-panel a {
+  padding: 9px 14px;
+  border-radius: 7px;
+  background: var(--cv-accent);
+  color: white;
+  text-decoration: none;
+}
 .panel {
   padding: 16px;
   border: 1px solid var(--cv-border);
@@ -213,6 +260,10 @@ h2 {
   .stat-grid,
   .dashboard-grid {
     grid-template-columns: 1fr;
+  }
+  .triage-panel {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 </style>

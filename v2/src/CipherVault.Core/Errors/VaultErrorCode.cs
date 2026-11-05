@@ -21,6 +21,7 @@ public enum VaultErrorCode
     IdempotencyKeyReused,
     TagLimitExceeded,
     InvalidCursor,
+    InvalidPageSize,
     Forbidden,
     BackupInProgress,
     BackupTooLarge,

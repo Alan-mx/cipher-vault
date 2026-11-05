@@ -60,6 +60,7 @@ public static class ServerWebApplication
         builder.Services.AddSingleton<KnowledgeModelService>();
         builder.Services.AddSingleton<SourceService>();
         builder.Services.AddSingleton<KnowledgeService>();
+        builder.Services.AddSingleton<KnowledgeTriageService>();
         builder.Services.AddSingleton<UnifiedDraftService>();
         builder.Services.AddSingleton<KnowledgeRetrospectiveService>();
         builder.Services.AddSingleton<KnowledgeSynthesisService>();

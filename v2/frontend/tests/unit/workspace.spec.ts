@@ -35,6 +35,7 @@ describe("WorkspaceLayout", () => {
       .findAll(".rail-link")
       .map((link) => link.attributes("aria-label"));
     expect(labels).toContain("知识库");
+    expect(labels).toContain("整理");
     expect(labels).toContain("设置");
     expect(labels).toContain("锁定 Vault");
     expect(wrapper.find("[data-test='content']").exists()).toBe(true);

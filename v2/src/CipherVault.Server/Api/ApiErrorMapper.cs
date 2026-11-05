@@ -85,6 +85,10 @@ public static class ApiErrorMapper
                 StatusCodes.Status400BadRequest,
                 ApiErrorCodes.InvalidCursor,
                 "Cursor is invalid for this query."),
+            VaultErrorCode.InvalidPageSize => Failure(
+                StatusCodes.Status400BadRequest,
+                ApiErrorCodes.InvalidPageSize,
+                "Page size is invalid."),
             VaultErrorCode.KnowledgeModelInvalid => Failure(
                 StatusCodes.Status400BadRequest,
                 ApiErrorCodes.KnowledgeModelInvalid,

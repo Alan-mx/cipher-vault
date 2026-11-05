@@ -23,6 +23,7 @@
     <Compile Include="KnowledgeBaseApiTests.cs" />
     <Compile Include="KnowledgeRetrospectiveApiTests.cs" />
     <Compile Include="KnowledgeSynthesisApiTests.cs" />
+    <Compile Include="KnowledgeTriageApiTests.cs" />
     <Compile Include="DraftReviewEditingApiTests.cs" />
     <Compile Include="KnowledgeModelApiTests.cs" />
     <Compile Include="LoopbackOnlyFilterTests.cs" />

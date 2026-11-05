@@ -47,6 +47,17 @@ public static class KnowledgeBaseEndpoints
             .WithName("SearchKnowledge");
 
         knowledge.MapGet(
+                "/triage",
+                async (
+                    [AsParameters] KnowledgeTriageApiRequest request,
+                    KnowledgeTriageService triage,
+                    CancellationToken cancellationToken) =>
+                    Results.Ok(await triage.GetAsync(
+                        request.ToDomain(),
+                        cancellationToken)))
+            .WithName("GetKnowledgeTriage");
+
+        knowledge.MapGet(
                 "/{knowledgeId}",
                 async (
                     string knowledgeId,

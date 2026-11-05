@@ -92,6 +92,17 @@ export const router = createRouter({
       },
     },
     {
+      path: "/triage",
+      name: "triage",
+      component: () => import("../views/TriageView.vue"),
+      meta: {
+        vault: "unlocked",
+        sensitive: true,
+        layout: "workspace",
+        title: "知识整理",
+      },
+    },
+    {
       path: "/sources",
       name: "sources",
       component: () => import("../views/SourcesView.vue"),

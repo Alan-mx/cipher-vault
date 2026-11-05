@@ -9,6 +9,7 @@ import type {
   KnowledgeDetail,
   KnowledgeModel,
   KnowledgeSummary,
+  KnowledgeTriagePage,
   PagedResult,
   SourceContentChunk,
   SourceDetail,
@@ -69,6 +70,10 @@ export const knowledgeBaseApi = {
 
   knowledge: (query: QueryInput = {}) =>
     apiClient.request<PagedResult<KnowledgeSummary>>("/api/knowledge", {
+      query,
+    }),
+  triage: (query: QueryInput = {}) =>
+    apiClient.request<KnowledgeTriagePage>("/api/knowledge/triage", {
       query,
     }),
   searchKnowledge: (body: Record<string, unknown>) =>
