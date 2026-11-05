@@ -156,6 +156,9 @@ Prompts 只返回工作流模板，不执行 Agent，也不产生正式写入；
 Web 的 `设置 -> 打开 MCP 接入` 页面提供当前 MCP 地址、Bearer 鉴权模板、Draft-only
 边界，以及服务端当前注册的 Tools 和 Prompts 清单。
 
+自动化测试使用官方 `ModelContextProtocol.Client` 通过真实 HTTP `/mcp` 验证资源发现、
+Prompt、来源拆解、跨来源综合、Web 审核和来源定位保留。
+
 Resource：
 
 ```text
