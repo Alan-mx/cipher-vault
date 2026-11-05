@@ -19,4 +19,25 @@ public static class McpToolNames
     public const string RebaseDraft = "rebase_draft";
     public const string SubmitDraftForReview = "submit_draft_for_review";
     public const string DiscardDraft = "discard_draft";
+
+    public static IReadOnlyList<string> All { get; } =
+    [
+        VaultStatus,
+        GetKnowledgeModel,
+        ListSources,
+        ReadSource,
+        ListSourceRevisions,
+        ListSourceLocators,
+        ReadSourceLocator,
+        SearchKnowledge,
+        ReadKnowledge,
+        GetLocalGraph,
+        ListDrafts,
+        ReadDraft,
+        CreateDraft,
+        UpdateDraft,
+        RebaseDraft,
+        SubmitDraftForReview,
+        DiscardDraft
+    ];
 }

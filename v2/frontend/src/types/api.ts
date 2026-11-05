@@ -85,3 +85,24 @@ export interface VersionInfo {
   runtimeVersion: string;
   aspNetCoreVersion: string;
 }
+
+export interface McpToolCapability {
+  name: string;
+  group: string;
+  summary: string;
+}
+
+export interface McpPromptCapability {
+  name: string;
+  title: string;
+  summary: string;
+}
+
+export interface McpInfo {
+  transport: string;
+  endpointPath: string;
+  draftOnly: boolean;
+  requiresVaultUnlock: boolean;
+  tools: McpToolCapability[];
+  prompts: McpPromptCapability[];
+}

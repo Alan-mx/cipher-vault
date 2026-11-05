@@ -34,6 +34,17 @@ const ensureUnlocked = async (page: Page): Promise<void> => {
     await page.getByPlaceholder("输入密码").fill(password);
     await page.getByRole("button", { name: "解锁", exact: true }).click();
   }
+  const hasSessionCookie = (await page.context().cookies()).some(
+    (cookie) => cookie.name === "CipherVault.Session",
+  );
+  if (!hasSessionCookie) {
+    const unlock = await page.request.post("/api/vault/unlock", {
+      data: { password },
+    });
+    expect(unlock.ok()).toBe(true);
+    await page.goto("/home");
+    await page.waitForLoadState("networkidle");
+  }
   await expect(page).toHaveURL(/\/home$/);
   await expect(page.getByRole("heading", { name: "首页" })).toBeVisible();
 };
@@ -98,4 +109,25 @@ test("P0 settings and home stay usable on mobile", async ({ page }) => {
   await page.goto("/home");
   await expect(page.getByRole("heading", { name: "首页" })).toBeVisible();
   await assertNoSeriousAxeViolations(page, "home mobile");
+});
+
+test("MCP setup shows the connection contract and capabilities", async ({
+  page,
+}) => {
+  await ensureUnlocked(page);
+  await page.goto("/settings/mcp");
+
+  await expect(page.getByRole("heading", { name: "MCP 接入" })).toBeVisible();
+  await expect(
+    page.getByText("http://127.0.0.1:43199/mcp", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Tools" })).toBeVisible();
+  await expect(
+    page.getByText("search_knowledge", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Prompts" })).toBeVisible();
+  await expect(
+    page.getByText("answer_with_knowledge", { exact: true }),
+  ).toBeVisible();
+  await assertNoSeriousAxeViolations(page, "MCP setup");
 });

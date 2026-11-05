@@ -100,6 +100,7 @@ public static class ServerWebApplication
         app.MapAuditEndpoints();
         app.MapBackupEndpoints();
         app.MapMcpTokenEndpoints();
+        app.MapMcpInfoEndpoints();
         app.MapCipherVaultMcp();
         await app.StartAsync(cancellationToken);
         return app;

@@ -114,6 +114,7 @@ onBeforeUnmount(() => {
       </article>
       <article>
         <h2>MCP</h2>
+        <RouterLink to="/settings/mcp">打开 MCP 接入</RouterLink>
         <McpTokenPanel />
       </article>
       <article>

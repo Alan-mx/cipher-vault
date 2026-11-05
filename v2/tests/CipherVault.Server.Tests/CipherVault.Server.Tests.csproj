@@ -25,6 +25,7 @@
     <Compile Include="LoopbackOnlyFilterTests.cs" />
     <Compile Include="ManualTimeProvider.cs" />
     <Compile Include="McpEndpointAuthenticationTests.cs" />
+    <Compile Include="McpInfoApiTests.cs" />
     <Compile Include="McpKnowledgeBaseTests.cs" />
     <Compile Include="McpPromptTests.cs" />
     <Compile Include="McpTokenApiTests.cs" />

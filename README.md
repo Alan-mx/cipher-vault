@@ -113,7 +113,7 @@ Unlock。Vault 在进程退出、闲置超时或手动 Lock 后回到 Locked。
 - AI 工作区：把草稿提交审核，并批准、拒绝或丢弃 Draft。
 - 知识网络：查看局部已确认关系。
 - 知识模型：维护类型、属性、模板、关系和来源规则。
-- 设置：修改密码、MCP Token 和加密备份。
+- 设置：修改密码、MCP 接入与 Token、知识模型和加密备份。
 
 Knowledge 正文以 Markdown 为主，但类型、属性、标签和来源引用由数据库结构化字段
 作为权威数据源。Frontmatter 只作为导入、导出和展示格式，并必须与结构化数据校验。
@@ -152,6 +152,9 @@ MCP Prompts 提供以下可复用工作流说明：
 
 Prompts 只返回工作流模板，不执行 Agent，也不产生正式写入；实际读取、搜索和 Draft
 操作仍由外部 AI 通过 MCP Tools 完成。
+
+Web 的 `设置 -> 打开 MCP 接入` 页面提供当前 MCP 地址、Bearer 鉴权模板、Draft-only
+边界，以及服务端当前注册的 Tools 和 Prompts 清单。
 
 Resource：
 

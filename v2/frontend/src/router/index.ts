@@ -136,6 +136,17 @@ export const router = createRouter({
       },
     },
     {
+      path: "/settings/mcp",
+      name: "mcp",
+      component: () => import("../views/McpSetupView.vue"),
+      meta: {
+        vault: "unlocked",
+        sensitive: false,
+        layout: "workspace",
+        title: "MCP 接入",
+      },
+    },
+    {
       path: "/settings",
       name: "settings",
       component: () => import("../views/SettingsView.vue"),

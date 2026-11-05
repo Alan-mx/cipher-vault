@@ -10,4 +10,14 @@ public static class McpPromptNames
         "suggest_knowledge_relations";
     public const string ReviewKnowledgeQuality = "review_knowledge_quality";
     public const string ReviewPersonalProgress = "review_personal_progress";
+
+    public static IReadOnlyList<string> All { get; } =
+    [
+        AnswerWithKnowledge,
+        ExtractSourceToNotes,
+        SynthesizeSelectedKnowledge,
+        SuggestKnowledgeRelations,
+        ReviewKnowledgeQuality,
+        ReviewPersonalProgress
+    ];
 }
