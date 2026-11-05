@@ -22,7 +22,9 @@ internal static class KnowledgeBasePayloadParser
         var title = RequiredString(payload, "title").Trim();
         if (title.Length is < 1 or > 200)
         {
-            throw Invalid("Source title must contain 1 to 200 characters.");
+            throw InvalidAt(
+                "title",
+                "Source title must contain 1 to 200 characters.");
         }
         var metadata = RequiredObject(payload, "metadata");
         var format = ParseContentFormat(
@@ -54,19 +56,25 @@ internal static class KnowledgeBasePayloadParser
         var title = RequiredString(payload, "title").Trim();
         if (title.Length is < 1 or > 200)
         {
-            throw Invalid("Knowledge title must contain 1 to 200 characters.");
+            throw InvalidAt(
+                "title",
+                "Knowledge title must contain 1 to 200 characters.");
         }
         var summary = OptionalString(payload, "summary") ?? string.Empty;
         if (summary.Length > 4000)
         {
-            throw Invalid("Knowledge summary is too long.");
+            throw InvalidAt("summary", "Knowledge summary is too long.");
         }
         var typeId = RequiredGuid(payload, "knowledgeTypeId");
         var type = model.KnowledgeTypes.FirstOrDefault(item => item.TypeId == typeId)
-            ?? throw Invalid("Knowledge type does not exist.");
+            ?? throw InvalidAt(
+                "knowledgeTypeId",
+                "Knowledge type does not exist.");
         if (!type.IsEnabled)
         {
-            throw Invalid("Knowledge type is disabled.");
+            throw InvalidAt(
+                "knowledgeTypeId",
+                "Knowledge type is disabled.");
         }
         var templateId = OptionalGuid(payload, "templateId");
         if (templateId is { } id
@@ -75,7 +83,9 @@ internal static class KnowledgeBasePayloadParser
                 && item.KnowledgeTypeId == typeId
                 && item.IsEnabled))
         {
-            throw Invalid("Knowledge template is invalid.");
+            throw InvalidAt(
+                "templateId",
+                "Knowledge template is invalid.");
         }
         var content = RequiredString(payload, "contentMarkdown");
         var properties = RequiredObject(payload, "properties");
@@ -83,7 +93,7 @@ internal static class KnowledgeBasePayloadParser
         var tags = OptionalStringArray(payload, "tags");
         if (tags.Count > 50)
         {
-            throw Invalid("Too many tags.");
+            throw InvalidAt("tags", "Too many tags.");
         }
         var references = OptionalArray(payload, "sourceReferences")
             .Select(ParseSourceReference)
@@ -116,13 +126,17 @@ internal static class KnowledgeBasePayloadParser
         if (!model.RelationTypes.Any(item =>
                 item.RelationTypeId == relationTypeId && item.IsEnabled))
         {
-            throw Invalid("Relation type is invalid.");
+            throw InvalidAt(
+                "relationTypeId",
+                "Relation type is invalid.");
         }
         var sourceId = RequiredGuid(payload, "sourceKnowledgeId");
         var targetId = RequiredGuid(payload, "targetKnowledgeId");
         if (sourceId == targetId)
         {
-            throw Invalid("Relation endpoints must be different.");
+            throw InvalidAt(
+                "targetKnowledgeId",
+                "Relation endpoints must be different.");
         }
         var sourceRevision = RequiredInt(
             payload,
@@ -132,12 +146,18 @@ internal static class KnowledgeBasePayloadParser
             "targetKnowledgeRevision");
         if (sourceRevision < 1 || targetRevision < 1)
         {
-            throw Invalid("Relation revision must be positive.");
+            throw InvalidAt(
+                sourceRevision < 1
+                    ? "sourceKnowledgeRevision"
+                    : "targetKnowledgeRevision",
+                "Relation revision must be positive.");
         }
         var rationale = RequiredString(payload, "rationale").Trim();
         if (rationale.Length is < 1 or > 4000)
         {
-            throw Invalid("Relation rationale is invalid.");
+            throw InvalidAt(
+                "rationale",
+                "Relation rationale is invalid.");
         }
         var evidence = OptionalArray(payload, "evidence");
         return new RelationMutationPayload(
@@ -195,14 +215,18 @@ internal static class KnowledgeBasePayloadParser
         var revision = RequiredInt(element, "sourceRevision");
         if (revision < 1)
         {
-            throw Invalid("Source revision must be positive.");
+            throw InvalidAt(
+                "sourceReferences",
+                "Source revision must be positive.");
         }
         var type = ParseLocatorType(RequiredString(element, "locatorType"));
         var value = RequiredElement(element, "locatorValue");
         var excerpt = RequiredString(element, "excerpt");
         if (excerpt.Length is < 1 or > 4000)
         {
-            throw Invalid("Source excerpt is invalid.");
+            throw InvalidAt(
+                "sourceReferences",
+                "Source excerpt is invalid.");
         }
         var metadata = OptionalObject(element, "extractionMetadata")
             ?? JsonSerializer.SerializeToElement(
@@ -263,7 +287,9 @@ internal static class KnowledgeBasePayloadParser
         {
             if (!definitions.ContainsKey(property.Name))
             {
-                throw Invalid($"Property {property.Name} is not defined.");
+                throw InvalidAt(
+                    $"properties.{property.Name}",
+                    $"Property {property.Name} is not defined.");
             }
         }
         foreach (var definition in definitions.Values)
@@ -274,7 +300,9 @@ internal static class KnowledgeBasePayloadParser
                         out var value)
                     || value.ValueKind == JsonValueKind.Null))
             {
-                throw Invalid($"Property {definition.Key} is required.");
+                throw InvalidAt(
+                    $"properties.{definition.Key}",
+                    $"Property {definition.Key} is required.");
             }
             if (properties.TryGetProperty(definition.Key, out var actual))
             {
@@ -299,7 +327,9 @@ internal static class KnowledgeBasePayloadParser
         };
         if (!valid)
         {
-            throw Invalid($"Property {definition.Key} has an invalid type.");
+            throw InvalidAt(
+                $"properties.{definition.Key}",
+                $"Property {definition.Key} has an invalid type.");
         }
     }
 
@@ -330,7 +360,11 @@ internal static class KnowledgeBasePayloadParser
             {
                 throw new VaultException(
                     VaultErrorCode.SourceMetadataInvalid,
-                    $"Source metadata {name} is required.");
+                    $"Source metadata {name} is required.",
+                    details: new Dictionary<string, object?>
+                    {
+                        ["fieldPath"] = $"metadata.{name}"
+                    });
             }
         }
     }
@@ -398,7 +432,9 @@ internal static class KnowledgeBasePayloadParser
         {
             if (!seen.Add(property.Name) || !allowed.Contains(property.Name))
             {
-                throw Invalid("Payload contains an unknown or duplicate field.");
+                throw InvalidAt(
+                    property.Name,
+                    "Payload contains an unknown or duplicate field.");
             }
         }
     }
@@ -408,19 +444,19 @@ internal static class KnowledgeBasePayloadParser
         && value.ValueKind == JsonValueKind.String
         && value.GetString() is { } text
             ? text
-            : throw Invalid($"{name} is required.");
+            : throw InvalidAt(name, $"{name} is required.");
 
     private static string? OptionalString(JsonElement element, string name) =>
         element.TryGetProperty(name, out var value)
         && value.ValueKind != JsonValueKind.Null
             ? value.ValueKind == JsonValueKind.String
                 ? value.GetString()
-                : throw Invalid($"{name} must be a string.")
+                : throw InvalidAt(name, $"{name} must be a string.")
             : null;
 
     private static Guid RequiredGuid(JsonElement element, string name) =>
         OptionalGuid(element, name)
-        ?? throw Invalid($"{name} is required.");
+        ?? throw InvalidAt(name, $"{name} is required.");
 
     private static Guid? OptionalGuid(JsonElement element, string name)
     {
@@ -433,7 +469,7 @@ internal static class KnowledgeBasePayloadParser
             && Guid.TryParse(value.GetString(), out var id)
             && id != Guid.Empty
                 ? id
-                : throw Invalid($"{name} must be a UUID.");
+                : throw InvalidAt(name, $"{name} must be a UUID.");
     }
 
     private static int RequiredInt(JsonElement element, string name) =>
@@ -441,11 +477,11 @@ internal static class KnowledgeBasePayloadParser
         && value.ValueKind == JsonValueKind.Number
         && value.TryGetInt32(out var result)
             ? result
-            : throw Invalid($"{name} must be an integer.");
+            : throw InvalidAt(name, $"{name} must be an integer.");
 
     private static JsonElement RequiredObject(JsonElement element, string name) =>
         OptionalObject(element, name)
-        ?? throw Invalid($"{name} is required.");
+        ?? throw InvalidAt(name, $"{name} is required.");
 
     private static JsonElement? OptionalObject(
         JsonElement element,
@@ -458,7 +494,7 @@ internal static class KnowledgeBasePayloadParser
         }
         return value.ValueKind == JsonValueKind.Object
             ? value.Clone()
-            : throw Invalid($"{name} must be an object.");
+            : throw InvalidAt(name, $"{name} must be an object.");
     }
 
     private static JsonElement RequiredElement(JsonElement element, string name) =>
@@ -479,7 +515,7 @@ internal static class KnowledgeBasePayloadParser
             || value.EnumerateArray().Any(item =>
                 item.ValueKind != JsonValueKind.String))
         {
-            throw Invalid($"{name} must be a string array.");
+            throw InvalidAt(name, $"{name} must be a string array.");
         }
         return value.EnumerateArray()
             .Select(item => item.GetString() ?? string.Empty)
@@ -497,9 +533,18 @@ internal static class KnowledgeBasePayloadParser
         }
         return value.ValueKind == JsonValueKind.Array
             ? value.EnumerateArray().Select(item => item.Clone()).ToArray()
-            : throw Invalid($"{name} must be an array.");
+            : throw InvalidAt(name, $"{name} must be an array.");
     }
 
+    private static VaultException InvalidAt(string fieldPath, string message) =>
+        new(
+            VaultErrorCode.DraftOperationInvalid,
+            message,
+            details: new Dictionary<string, object?>
+            {
+                ["fieldPath"] = fieldPath
+            });
+
     private static VaultException Invalid(string message) =>
-        new(VaultErrorCode.DraftOperationInvalid, message);
+        InvalidAt("$", message);
 }

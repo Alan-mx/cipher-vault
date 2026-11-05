@@ -25,7 +25,8 @@ public static class ApiErrorMapper
         "sessionGeneration",
         "status",
         "actual",
-        "expected"
+        "expected",
+        "fieldPath"
     ];
 
     public static ApiFailure Map(Exception exception) =>

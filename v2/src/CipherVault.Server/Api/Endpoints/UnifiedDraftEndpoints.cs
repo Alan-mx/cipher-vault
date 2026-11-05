@@ -87,8 +87,8 @@ public static class UnifiedDraftEndpoints
             .RequireAntiforgery()
             .WithName("CreateUnifiedDraft");
 
-        group.MapPut(
-                "/{draftId}",
+        endpoints.MapPut(
+                "/api/drafts/{draftId}",
                 async (
                     string draftId,
                     UpdateUnifiedDraftApiRequest request,
@@ -106,6 +106,9 @@ public static class UnifiedDraftEndpoints
                         key,
                         cancellationToken));
                 })
+            .RequireAuthorization(
+                McpBearerAuthentication.UserUiOrMcpPolicy)
+            .AddEndpointFilter<RejectMcpIdentityEndpointFilter>()
             .RequireAntiforgery()
             .WithName("UpdateUnifiedDraft");
 

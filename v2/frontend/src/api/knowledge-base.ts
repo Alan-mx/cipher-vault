@@ -124,6 +124,21 @@ export const knowledgeBaseApi = {
     apiClient.request<DraftDetail>(
       `/api/drafts/${encodeURIComponent(draftId)}`,
     ),
+  updateDraft: (
+    draftId: string,
+    expectedDraftRevision: number,
+    payload: Record<string, unknown>,
+    idempotencyKey: string = key(),
+  ) =>
+    apiClient.request<DraftMutation>(
+      `/api/drafts/${encodeURIComponent(draftId)}`,
+      {
+        method: "PUT",
+        csrf: true,
+        idempotencyKey,
+        body: { expectedDraftRevision, payload },
+      },
+    ),
   createDraft: (request: Record<string, unknown>) =>
     apiClient.request<DraftListItem>("/api/drafts", {
       method: "POST",

@@ -444,12 +444,43 @@ public sealed record DraftListItem(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
+public enum DraftFieldChangeKind
+{
+    New,
+    Added,
+    Modified,
+    Removed,
+    BaselineUnavailable
+}
+
+public enum DraftValidationSeverity
+{
+    Warning,
+    Error
+}
+
+public sealed record DraftFieldChange(
+    string FieldPath,
+    DraftFieldChangeKind Kind,
+    string? Before,
+    string? After,
+    string ValueType,
+    bool BeforeTruncated,
+    bool AfterTruncated);
+
+public sealed record DraftValidationIssue(
+    string FieldPath,
+    string Message,
+    DraftValidationSeverity Severity);
+
 public sealed record DraftPreview(
     string Summary,
     string Diff,
     bool DiffTruncated,
     IReadOnlyList<SourceReferenceView> SourceReferences,
-    IReadOnlyList<string> ValidationIssues);
+    IReadOnlyList<DraftFieldChange> Changes,
+    bool ChangesTruncated,
+    IReadOnlyList<DraftValidationIssue> ValidationIssues);
 
 public sealed record DraftDetail(
     DraftRecord Record,

@@ -233,6 +233,8 @@ describe("Knowledge retrospective", () => {
         diff: "",
         diffTruncated: false,
         sourceReferences: [],
+        changes: [],
+        changesTruncated: false,
         validationIssues: [],
       },
     } satisfies DraftDetail;

@@ -223,8 +223,26 @@ export interface DraftDetail {
     diff: string;
     diffTruncated: boolean;
     sourceReferences: SourceReference[];
-    validationIssues: string[];
+    changes: DraftFieldChange[];
+    changesTruncated: boolean;
+    validationIssues: DraftValidationIssue[];
   };
+}
+
+export interface DraftFieldChange {
+  fieldPath: string;
+  kind: "new" | "added" | "modified" | "removed" | "baseline_unavailable";
+  before: string | null;
+  after: string | null;
+  valueType: string;
+  beforeTruncated: boolean;
+  afterTruncated: boolean;
+}
+
+export interface DraftValidationIssue {
+  fieldPath: string;
+  message: string;
+  severity: "warning" | "error";
 }
 
 export interface DashboardView {

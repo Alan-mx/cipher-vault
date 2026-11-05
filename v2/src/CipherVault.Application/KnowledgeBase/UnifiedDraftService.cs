@@ -41,9 +41,10 @@ public sealed class UnifiedDraftService(
                     context,
                     draftId,
                     token);
+                var model = await KnowledgeModelStore.GetAsync(context, token);
                 return new DraftDetail(
                     record,
-                    BuildPreview(record));
+                    BuildPreview(record, model));
             },
             cancellationToken).AsTask();
 
@@ -189,7 +190,7 @@ public sealed class UnifiedDraftService(
                     context,
                     draftId,
                     token);
-                EnsureEditable(current);
+                EnsureEditable(current, actor);
                 var model = await KnowledgeModelStore.GetAsync(context, token);
                 ValidatePayload(
                     current.TargetObjectType,
@@ -631,13 +632,25 @@ public sealed class UnifiedDraftService(
         }
     }
 
-    private static DraftPreview BuildPreview(DraftRecord record)
+    private static DraftPreview BuildPreview(
+        DraftRecord record,
+        KnowledgeModelSnapshot model)
     {
         var payload = record.Payload.GetRawText();
         var title = ReadString(record.Payload, "title")
             ?? $"{record.TargetObjectType} {record.OperationType}";
-        var sourceRefs = KnowledgeBasePayloadParser.PreviewSourceReferences(
-            record.Payload);
+        IReadOnlyList<SourceReferenceView> sourceRefs;
+        try
+        {
+            sourceRefs =
+                KnowledgeBasePayloadParser.PreviewSourceReferences(record.Payload);
+        }
+        catch (VaultException)
+        {
+            sourceRefs = [];
+        }
+        var (changes, changesTruncated) =
+            DraftFieldDiffBuilder.Build(record);
         return new DraftPreview(
             title,
             payload.Length <= 16_384
@@ -645,12 +658,19 @@ public sealed class UnifiedDraftService(
                 : payload[..16_384],
             payload.Length > 16_384,
             sourceRefs,
-            []);
+            changes,
+            changesTruncated,
+            DraftValidationService.Validate(record, model));
     }
 
-    private static void EnsureEditable(DraftRecord draft)
+    private static void EnsureEditable(
+        DraftRecord draft,
+        VaultActorContext actor)
     {
-        if (draft.Status is not (DraftStatus.Draft or DraftStatus.Conflict))
+        var editable = draft.Status is DraftStatus.Draft or DraftStatus.Conflict
+            || (draft.Status == DraftStatus.PendingReview
+                && actor.Kind == VaultActorKind.UserUi);
+        if (!editable)
         {
             throw new VaultException(
                 VaultErrorCode.DraftStateConflict,

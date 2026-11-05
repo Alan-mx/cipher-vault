@@ -1361,9 +1361,11 @@ public static class KnowledgeBaseMutationStore
             """
             SELECT json_object(
                 'sourceId', s.source_id,
+                'sourceKind', s.source_kind,
                 'title', s.title,
                 'metadata', json(s.metadata_json),
-                'kind', s.source_kind,
+                'contentFormat', r.content_format,
+                'contentText', r.content_text,
                 'status', s.status,
                 'revision', r.revision
             )
@@ -1390,6 +1392,8 @@ public static class KnowledgeBaseMutationStore
                 'title', k.title,
                 'summary', k.summary,
                 'knowledgeTypeId', k.knowledge_type_id,
+                'templateId', r.template_id,
+                'contentMarkdown', r.content_markdown,
                 'status', k.status,
                 'revision', r.revision,
                 'properties', json(r.properties_json),
@@ -1418,6 +1422,8 @@ public static class KnowledgeBaseMutationStore
                 'relationTypeId', r.relation_type_id,
                 'sourceKnowledgeId', r.source_knowledge_id,
                 'targetKnowledgeId', r.target_knowledge_id,
+                'sourceKnowledgeRevision', sr.revision,
+                'targetKnowledgeRevision', tr.revision,
                 'status', r.status,
                 'revision', rv.revision,
                 'rationale', rv.rationale,
@@ -1426,6 +1432,10 @@ public static class KnowledgeBaseMutationStore
             FROM knowledge_relations AS r
             JOIN knowledge_relation_revisions AS rv
               ON rv.relation_revision_id = r.current_revision_id
+            JOIN knowledge_revisions AS sr
+              ON sr.knowledge_revision_id = rv.source_knowledge_revision_id
+            JOIN knowledge_revisions AS tr
+              ON tr.knowledge_revision_id = rv.target_knowledge_revision_id
             WHERE r.relation_id = $id;
             """;
         command.Command.Parameters.AddWithValue("$id", relationId.ToString("D"));
