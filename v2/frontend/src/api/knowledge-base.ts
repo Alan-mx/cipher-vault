@@ -12,6 +12,7 @@ import type {
   SourceRevision,
   SourceSummary,
 } from "../types/knowledge-base";
+import { toKnowledgeModelUpdateRequest } from "../utils/knowledge-model";
 import { apiClient, type QueryInput } from "./client";
 
 const key = () => crypto.randomUUID();
@@ -27,13 +28,7 @@ export const knowledgeBaseApi = {
       ifMatch: model.version,
       csrf: true,
       idempotencyKey: key(),
-      body: {
-        knowledgeTypes: model.knowledgeTypes,
-        templates: model.templates,
-        relationTypes: model.relationTypes,
-        sourceRules: model.sourceRules,
-        workflows: model.workflows,
-      },
+      body: toKnowledgeModelUpdateRequest(model),
     }),
 
   sources: (query: QueryInput = {}) =>

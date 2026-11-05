@@ -131,3 +131,18 @@ test("MCP setup shows the connection contract and capabilities", async ({
   ).toBeVisible();
   await assertNoSeriousAxeViolations(page, "MCP setup");
 });
+
+test("Knowledge Model editor saves a structured type", async ({ page }) => {
+  await ensureUnlocked(page);
+  await page.goto("/settings/knowledge-model");
+
+  await expect(page.getByRole("heading", { name: "知识模型" })).toBeVisible();
+  await page.getByRole("button", { name: "新增类型" }).click();
+  await page.getByLabel("类型稳定 key").fill("e2e_note");
+  await page.getByLabel("类型名称").fill("E2E Note");
+  await page.getByRole("button", { name: "保存模型" }).click();
+
+  await expect(page.getByText(/模型 v\d+ 已保存/)).toBeVisible();
+  await expect(page.getByRole("button", { name: /E2E Note/ })).toBeVisible();
+  await assertNoSeriousAxeViolations(page, "knowledge model editor");
+});

@@ -6,7 +6,7 @@ export interface PagedResult<T> {
 }
 
 export interface KnowledgeType {
-  typeId: string;
+  typeId: string | null;
   key: string;
   name: string;
   description: string | null;
@@ -16,7 +16,7 @@ export interface KnowledgeType {
 }
 
 export interface KnowledgeProperty {
-  propertyId: string;
+  propertyId: string | null;
   key: string;
   name: string;
   valueType: string;
@@ -27,22 +27,55 @@ export interface KnowledgeProperty {
   sortOrder: number;
 }
 
+export interface KnowledgeTemplate {
+  templateId: string | null;
+  knowledgeTypeId: string;
+  key: string;
+  name: string;
+  description: string | null;
+  bodyTemplate: string;
+  fields: unknown[];
+  isEnabled: boolean;
+  sortOrder: number;
+}
+
+export interface RelationType {
+  relationTypeId: string | null;
+  key: string;
+  name: string;
+  description: string | null;
+  isDirected: boolean;
+  isEnabled: boolean;
+  sortOrder: number;
+}
+
+export interface SourceRule {
+  sourceRuleId: string | null;
+  kind: string;
+  metadataSchema: Record<string, unknown>;
+  supportedLocatorTypes: string[];
+  isEnabled: boolean;
+}
+
+export interface Workflow {
+  workflowId: string | null;
+  key: string;
+  name: string;
+  description: string | null;
+  targetObjectTypes: string[];
+  constraints: Record<string, unknown>;
+  isEnabled: boolean;
+  sortOrder: number;
+}
+
 export interface KnowledgeModel {
   version: number;
   updatedAt: string;
   knowledgeTypes: KnowledgeType[];
-  templates: unknown[];
-  relationTypes: Array<{
-    relationTypeId: string;
-    key: string;
-    name: string;
-    description: string | null;
-    isDirected: boolean;
-    isEnabled: boolean;
-    sortOrder: number;
-  }>;
-  sourceRules: unknown[];
-  workflows: unknown[];
+  templates: KnowledgeTemplate[];
+  relationTypes: RelationType[];
+  sourceRules: SourceRule[];
+  workflows: Workflow[];
 }
 
 export interface SourceSummary {

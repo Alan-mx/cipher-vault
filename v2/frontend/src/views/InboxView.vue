@@ -63,7 +63,7 @@ onMounted(load);
       <select v-model="typeId">
         <option
           v-for="type in model?.knowledgeTypes.filter((item) => item.isEnabled)"
-          :key="type.typeId"
+          :key="type.typeId ?? type.key"
           :value="type.typeId"
         >
           {{ type.name }}
