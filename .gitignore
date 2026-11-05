@@ -8,7 +8,6 @@ v2/src/CipherVault.Server/wwwroot/
 artifacts/
 v2/artifacts/
 *.cvbackup
-!v2/tests/Fixtures/BackupUnsupportedSchema/*.cvbackup
 vault.db
 vault.db-journal
 vault.db-wal

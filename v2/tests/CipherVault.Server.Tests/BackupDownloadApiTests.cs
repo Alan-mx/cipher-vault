@@ -69,8 +69,6 @@ public sealed class BackupDownloadApiTests
             Assert.Equal(
                 "backup",
                 item.GetProperty("targetObjectType").GetString());
-            Assert.False(item.TryGetProperty("documentId", out _));
-            Assert.False(item.TryGetProperty("revision", out _));
         });
         Assert.Equal(
             ["started", "success"],

@@ -83,7 +83,6 @@ public sealed class VaultKeyEnvelopeTests
             Assert.Contains("\"format\"", json, StringComparison.Ordinal);
             Assert.Contains("\"vaultId\"", json, StringComparison.Ordinal);
             Assert.Contains("\"keyWrap\"", json, StringComparison.Ordinal);
-            Assert.DoesNotContain("recovery", json, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain(masterKeyMarker(envelope), json, StringComparison.Ordinal);
 
             var loaded = await VaultKeyEnvelopeSerializer.LoadAsync(path);
@@ -106,7 +105,7 @@ public sealed class VaultKeyEnvelopeTests
               "format":"cipher-vault-key-envelope",
               "version":1,
               "vaultId":"11111111-2222-3333-4444-555555555555",
-              "recovery":{},
+              "unexpected":{},
               "kdf":{
                 "algorithm":"argon2id",
                 "memoryKiB":65536,

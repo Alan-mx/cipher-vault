@@ -165,9 +165,9 @@ internal static class DatabaseInitializer
         await SqliteMcDatabaseFactory.ExecuteNonQueryAsync(
             connection,
             """
-            CREATE VIRTUAL TABLE temp.phase1_fts_probe USING fts5(value);
-            INSERT INTO temp.phase1_fts_probe(value) VALUES ('fts5 available');
-            DROP TABLE temp.phase1_fts_probe;
+            CREATE VIRTUAL TABLE temp.fts5_capability_probe USING fts5(value);
+            INSERT INTO temp.fts5_capability_probe(value) VALUES ('fts5 available');
+            DROP TABLE temp.fts5_capability_probe;
             """,
             cancellationToken);
     }

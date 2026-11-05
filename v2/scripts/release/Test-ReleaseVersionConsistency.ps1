@@ -50,7 +50,6 @@ if ($versionsScript.Contains(
 }
 
 foreach ($relativePath in @(
-    "v2/scripts/verify-phase8.ps1",
     "v2/scripts/verify-phase8.sh",
     "v2/scripts/verify-phase8-docker.sh",
     "v2/scripts/release/Scan-ReleaseArtifacts.ps1"

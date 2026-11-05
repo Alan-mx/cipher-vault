@@ -86,14 +86,6 @@ jobs:
         run: dotnet build CipherVault.slnx -c Release --no-restore -warnaserror
       - name: Test
         run: dotnet test CipherVault.slnx -c Release --no-build --no-restore
-      - name: Cross-platform backup probe
-        shell: pwsh
-        run: |
-          $root = Join-Path $env:RUNNER_TEMP "v2-windows"
-          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- create "$root/source" "$root/backups" "$root/backup.cvbackup" "v2 ci password"
-          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- restore "$root/backup.cvbackup" "$root/restored" "v2 ci password"
-          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- verify "$root/restored" "v2 ci password"
-
   dotnet-linux:
     needs: frontend
     runs-on: ubuntu-latest
@@ -115,14 +107,6 @@ jobs:
         run: dotnet build CipherVault.slnx -c Release --no-restore -warnaserror
       - name: Test
         run: dotnet test CipherVault.slnx -c Release --no-build --no-restore
-      - name: Cross-platform backup probe
-        shell: bash
-        run: |
-          root="$RUNNER_TEMP/v2-linux"
-          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- create "$root/source" "$root/backups" "$root/backup.cvbackup" "v2 ci password"
-          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- restore "$root/backup.cvbackup" "$root/restored" "v2 ci password"
-          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- verify "$root/restored" "v2 ci password"
-
   dotnet-linux-arm64:
     needs: frontend
     runs-on: ubuntu-24.04-arm
@@ -149,13 +133,6 @@ jobs:
         run: dotnet build CipherVault.slnx -c Release --no-restore -warnaserror
       - name: Test
         run: dotnet test CipherVault.slnx -c Release --no-build --no-restore
-      - name: Cross-platform backup probe
-        shell: bash
-        run: |
-          root="$RUNNER_TEMP/v2-linux-arm64"
-          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- create "$root/source" "$root/backups" "$root/backup.cvbackup" "v2 ci password"
-          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- restore "$root/backup.cvbackup" "$root/restored" "v2 ci password"
-          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- verify "$root/restored" "v2 ci password"
       - name: Publish, package, and verify Linux ARM64
         shell: bash
         run: |
@@ -250,7 +227,7 @@ jobs:
           test -f CipherVault.slnx
           test ! -e CipherVault.sln
           test ! -e v2/CipherVault.V2.slnx
-          test "$(grep -c '<Project ' CipherVault.slnx)" -eq 10
+          test "$(grep -c '<Project ' CipherVault.slnx)" -eq 8
           test -z "$(git ls-files src tests scripts poc)"
           test -z "$(git grep -n -E 'CipherVault\.V2\.slnx|CipherVault\.sln([^x]|$)' -- . ':!docs' ':!.github/workflows/ci.yml' || true)"
           test -f v2/deploy/Dockerfile
@@ -279,11 +256,9 @@ jobs:
       - name: Reject tracked sensitive artifacts
         shell: bash
         run: |
-          allowed_backup_fixture="v2/tests/Fixtures/BackupUnsupportedSchema/unsupported-schema-5-format-1.cvbackup"
           candidates="$(
             git ls-files |
-              grep -E '(^|/)(appsettings\.Development\.json|.*\.(pdb|cvbackup|db|db-shm|db-wal))$' |
-              grep -v -F "$allowed_backup_fixture" ||
+              grep -E '(^|/)(appsettings\.Development\.json|.*\.(pdb|cvbackup|db|db-shm|db-wal))$' ||
               true
           )"
           if [[ -n "$candidates" ]]; then

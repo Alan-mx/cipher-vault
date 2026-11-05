@@ -30,7 +30,7 @@ internal sealed class VaultApplicationFixture : IAsyncDisposable
     {
         var parent = Path.Combine(
             Path.GetTempPath(),
-            $"cipher-vault-phase3-{Guid.NewGuid():N}");
+            $"cipher-vault-application-{Guid.NewGuid():N}");
         Directory.CreateDirectory(parent);
         timeProvider ??= new ManualTimeProvider();
         var manager = await VaultSessionManager.CreateAsync(

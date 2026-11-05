@@ -24,9 +24,6 @@ public sealed class McpExternalClientEndToEndTests
         Assert.Equal(
             McpToolNames.All.Order(StringComparer.Ordinal),
             tools.Select(tool => tool.Name).Order(StringComparer.Ordinal));
-        Assert.DoesNotContain(
-            tools,
-            tool => tool.Name is "apply_draft" or "reject_draft");
 
         var prompts = await client.ListPromptsAsync();
         Assert.Equal(

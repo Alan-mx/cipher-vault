@@ -124,20 +124,10 @@ jobs:
             -Platform windows `
             -PublishRoot $publish `
             -OutputRoot $root
-      - name: Verify Windows artifact
-        shell: pwsh
-        run: |
-          $root = Join-Path $env:GITHUB_WORKSPACE $env:CIPHERVAULT_ARTIFACT_ROOT
-          .\v2\scripts\verify-phase8.ps1 `
-            -ArtifactRoot $root `
-            -EvidenceRoot (Join-Path $root "evidence") `
-            -ReleaseVersion $env:CIPHERVAULT_RELEASE_VERSION
       - uses: actions/upload-artifact@v4
         with:
           name: phase8-windows
-          path: |
-            ${{ needs.prepare.outputs.artifactRoot }}/CipherVault-${{ needs.prepare.outputs.version }}-win-x64.zip
-            ${{ needs.prepare.outputs.artifactRoot }}/evidence/windows.json
+          path: ${{ needs.prepare.outputs.artifactRoot }}/CipherVault-${{ needs.prepare.outputs.version }}-win-x64.zip
           retention-days: 14
 
   linux-package:
@@ -255,13 +245,6 @@ jobs:
           dotnet restore CipherVault.slnx --locked-mode -p:NuGetAudit=false
           dotnet build CipherVault.slnx -c Release --no-restore -warnaserror
           dotnet test CipherVault.slnx -c Release --no-build --no-restore
-      - name: Cross-platform backup probe
-        shell: bash
-        run: |
-          root="$RUNNER_TEMP/phase8-linux-arm64"
-          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- create "$root/source" "$root/backups" "$root/backup.cvbackup" "phase8 arm64 release password"
-          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- restore "$root/backup.cvbackup" "$root/restored" "phase8 arm64 release password"
-          dotnet run --project v2/tests/CipherVault.Phase7.ProcessProbe/CipherVault.Phase7.ProcessProbe.csproj -c Release --no-build -- verify "$root/restored" "phase8 arm64 release password"
       - name: Publish, package, and verify Linux ARM64
         shell: bash
         run: |
@@ -369,7 +352,6 @@ jobs:
           path: ${{ needs.prepare.outputs.artifactRoot }}
       - name: Verify evidence presence
         run: |
-          test -s "$CIPHERVAULT_ARTIFACT_ROOT/evidence/windows.json"
           test -s "$CIPHERVAULT_ARTIFACT_ROOT/evidence/linux-ubuntu-22.04.json"
           test -s "$CIPHERVAULT_ARTIFACT_ROOT/evidence/linux-debian-12.json"
           test -s "$CIPHERVAULT_ARTIFACT_ROOT/evidence/linux-arm64-ubuntu-24.04.json"

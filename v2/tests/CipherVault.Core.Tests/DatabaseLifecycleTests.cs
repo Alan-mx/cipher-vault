@@ -25,11 +25,11 @@ public sealed class DatabaseLifecycleTests
             var probe = Path.Combine(
                 v2Root,
                 "tests",
-                "CipherVault.Phase1.ProcessProbe",
+                "CipherVault.LifecycleProbe",
                 "bin",
                 configuration,
                 "net10.0",
-                "CipherVault.Phase1.ProcessProbe.dll");
+                "CipherVault.LifecycleProbe.dll");
             Assert.True(File.Exists(probe), $"Process probe not found: {probe}");
 
             var startInfo = new ProcessStartInfo("dotnet")
@@ -74,7 +74,7 @@ public sealed class DatabaseLifecycleTests
         Directory.CreateDirectory(root);
         VaultFilePermissions.ProtectDirectory(root);
         Environment.SetEnvironmentVariable("SQLITE_TMPDIR", root);
-        var marker = $"CV_PHASE1_TEMP_{Guid.NewGuid():N}";
+        var marker = $"CV_LIFECYCLE_TEMP_{Guid.NewGuid():N}";
         using var material = new VaultKeyMaterial(
             Guid.NewGuid(),
             RandomNumberGenerator.GetBytes(32),

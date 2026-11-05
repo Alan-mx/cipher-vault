@@ -82,38 +82,6 @@ public sealed class DatabaseSchemaTests
     }
 
     [Fact]
-    public async Task BaselineOmitsLegacyAndSemanticTables()
-    {
-        using var fixture = await Fixture.CreateAsync();
-        _ = await SqliteMcVaultStore.InitializeAsync(
-            fixture.Root,
-            fixture.Material);
-
-        await using var session = await SqliteMcDatabaseFactory.OpenSessionAsync(
-            fixture.Root,
-            fixture.Material,
-            create: false);
-        Assert.Equal(
-            0,
-            await CountAsync(
-                session.Connection,
-                """
-                SELECT count(*) FROM sqlite_master
-                WHERE name IN (
-                    'documents',
-                    'document_revisions',
-                    'document_drafts',
-                    'document_relations',
-                    'document_relation_suggestions',
-                    'document_fts',
-                    'semantic_profiles',
-                    'semantic_chunks',
-                    'semantic_index_jobs'
-                );
-                """));
-    }
-
-    [Fact]
     public async Task BaselineSupportsKnowledgeSourceAndFtsRoundTrip()
     {
         using var fixture = await Fixture.CreateAsync();

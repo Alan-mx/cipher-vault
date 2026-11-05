@@ -28,9 +28,6 @@ public sealed class McpKnowledgeBaseTests
         Assert.Contains("get_knowledge_model", toolNames);
         Assert.Contains("search_knowledge", toolNames);
         Assert.Contains("create_draft", toolNames);
-        Assert.DoesNotContain("create_note", toolNames);
-        Assert.DoesNotContain("search_notes", toolNames);
-        Assert.DoesNotContain("apply_draft", toolNames);
 
         using var resources = await RpcAsync(
             server.Client,

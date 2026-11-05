@@ -1,4 +1,3 @@
-import type { DraftValidationIssue } from "../types/knowledge-base";
 import type {
   EditableDraftObjectType,
   EditableDraftPayload,
@@ -107,18 +106,6 @@ export const isDraftPayloadDirty = (
     canonicalizeDraftPayload(targetType, baseline) !==
     canonicalizeDraftPayload(targetType, form)
   );
-};
-
-export const issuesByField = (
-  issues: DraftValidationIssue[],
-): Map<string, DraftValidationIssue[]> => {
-  const result = new Map<string, DraftValidationIssue[]>();
-  for (const issue of issues) {
-    const existing = result.get(issue.fieldPath) ?? [];
-    existing.push(issue);
-    result.set(issue.fieldPath, existing);
-  }
-  return result;
 };
 
 export const draftFieldId = (fieldPath: string): string =>
