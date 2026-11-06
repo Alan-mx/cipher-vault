@@ -9,11 +9,14 @@ internal sealed record DatabaseMigration(
     int Version,
     string Name,
     string Sql,
-    string ChecksumSha256);
+    string ChecksumSha256,
+    IReadOnlyList<string> LegacyChecksumSha256);
 
 internal static class DatabaseMigrationCatalog
 {
     public const int CurrentVersion = 1;
+    private const string LegacyBaselineChecksumSha256 =
+        "0ff5c23e6c5caa63e85f2d8c0febc0b09377426908a6ad70899b42ce4df12ae0";
 
     public static IReadOnlyList<DatabaseMigration> Load()
     {
@@ -54,13 +57,18 @@ internal static class DatabaseMigrationCatalog
                     $"Migration resource was not found: {resourceName}");
             using var reader = new StreamReader(stream, Encoding.UTF8);
             var sql = reader.ReadToEnd();
+            var canonicalSql = sql
+                .Replace("\r\n", "\n", StringComparison.Ordinal)
+                .Replace('\r', '\n');
             var checksum = Convert.ToHexString(
-                SHA256.HashData(Encoding.UTF8.GetBytes(sql))).ToLowerInvariant();
+                SHA256.HashData(Encoding.UTF8.GetBytes(canonicalSql)))
+                .ToLowerInvariant();
             migrations.Add(new DatabaseMigration(
                 version,
                 stem[(separator + 1)..],
                 sql,
-                checksum));
+                checksum,
+                version == 1 ? [LegacyBaselineChecksumSha256] : []));
         }
 
         return migrations;

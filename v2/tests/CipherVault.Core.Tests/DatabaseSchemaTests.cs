@@ -254,7 +254,8 @@ public sealed class DatabaseSchemaTests
             CREATE TABLE vault_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
             INSERT INTO missing_table VALUES(1);
             """,
-            new string('0', 64));
+            new string('0', 64),
+            []);
 
         await Assert.ThrowsAnyAsync<SqliteException>(() =>
             DatabaseInitializer.EnsureSchemaAsync(

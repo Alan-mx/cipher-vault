@@ -223,15 +223,19 @@ internal static class DatabaseInitializer
         {
             var version = reader.GetInt32(0);
             appliedVersions.Add(version);
+            var storedChecksum = reader.GetString(2);
             if (!expected.TryGetValue(version, out var migration)
                 || !string.Equals(
                     reader.GetString(1),
                     migration.Name,
                     StringComparison.Ordinal)
-                || !string.Equals(
-                    reader.GetString(2),
-                    migration.ChecksumSha256,
-                    StringComparison.Ordinal))
+                || (!string.Equals(
+                        storedChecksum,
+                        migration.ChecksumSha256,
+                        StringComparison.Ordinal)
+                    && !migration.LegacyChecksumSha256.Contains(
+                        storedChecksum,
+                        StringComparer.Ordinal)))
             {
                 throw new VaultException(
                     VaultErrorCode.CorruptVault,

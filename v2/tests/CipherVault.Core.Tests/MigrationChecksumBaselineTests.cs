@@ -27,7 +27,12 @@ public sealed class MigrationChecksumBaselineTests
             {
                 Version = item.GetProperty("version").GetInt32(),
                 Name = item.GetProperty("name").GetString(),
-                Sha256 = item.GetProperty("sha256").GetString()
+                Sha256 = item.GetProperty("sha256").GetString(),
+                LegacySha256 = item.TryGetProperty("legacySha256", out var legacy)
+                    ? legacy.EnumerateArray()
+                        .Select(value => value.GetString()!)
+                        .ToArray()
+                    : []
             })
             .ToArray();
         var actual = DatabaseMigrationCatalog.Load();
@@ -40,6 +45,9 @@ public sealed class MigrationChecksumBaselineTests
             Assert.Equal(
                 expected[index].Sha256,
                 actual[index].ChecksumSha256);
+            Assert.Equal(
+                expected[index].LegacySha256,
+                actual[index].LegacyChecksumSha256);
         }
     }
 }

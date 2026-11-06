@@ -5,7 +5,10 @@
     {
       "version": 1,
       "name": "mcp_first_baseline",
-      "sha256": "0ff5c23e6c5caa63e85f2d8c0febc0b09377426908a6ad70899b42ce4df12ae0"
+      "sha256": "d0e667101d09049262866b9b20fd354e308cf2fc0ce1d0fbe3025030d81ae54e",
+      "legacySha256": [
+        "0ff5c23e6c5caa63e85f2d8c0febc0b09377426908a6ad70899b42ce4df12ae0"
+      ]
     }
   ]
 }
