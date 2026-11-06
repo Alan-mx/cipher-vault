@@ -25,3 +25,6 @@
 - 裁决：Migration checksum 先统一换行再计算 SHA256，并接受白名单中的旧 Windows
   checksum。理由：Git 索引使用 LF，Windows 工作区可能为混合换行；直接比较会使同一
   Migration 在两个平台不一致。代价：新库写入规范 checksum，已有本地 Vault 仍可打开。
+- 裁决：普通 `main`/PR 只运行快速 CI，完整跨平台任务仅由 `workflow_dispatch` 或正式
+  release workflow 触发。理由：开发阶段避免每次 commit 重复安装 Chromium 和运行全平台
+  任务；发布前仍执行完整验收。代价：日常 push 不自动覆盖完整跨平台回归。

@@ -107,8 +107,9 @@ Linux CI 缺少 Playwright 截图基准。
   Raw/Excerpt/Organized/Verified/Practiced 枚举或默认种子。
 - AC31: WHEN 本轮实施 THE SYSTEM SHALL NOT 修改 `KnowledgeTriageStore`、
   `KnowledgeTriageContracts`、Triage API 或 `TriageView` 的业务行为。
-- AC32: WHEN 本轮实施 THE SYSTEM SHALL NOT 修改 DatabaseMigrationCatalog、Migration
-  SQL、Schema Version、备份 FormatVersion 或现有表结构。
+- AC32: WHEN 本轮实施 THE SYSTEM SHALL NOT 修改 Migration SQL、Schema Version、
+  备份 FormatVersion 或现有表结构；G5 批准的跨平台 checksum 规范化与旧 checksum
+  白名单兼容属于允许例外。
 - AC33: WHEN 本轮实施 THE SYSTEM SHALL NOT 新增、删除或修改 MCP Tool、Resource、
   Prompt、Instructions 或 MCP 权限边界。
 - AC34: WHEN 本轮实施 THE SYSTEM SHALL NOT 新增复盘/综合专用 MCP Tool，也不新增
@@ -192,7 +193,17 @@ Linux CI 缺少 Playwright 截图基准。
 - 不提交整个 `docs/` 目录。
 - 不调整截图断言、视口、主题或容忍度来绕开 Linux 差异。
 
-## 8. 影响面
+## 8. G5 已确认范围例外
+
+2026-11-06 用户确认：
+
+- Migration SQL、Schema Version、Backup FormatVersion 和表结构保持不变。
+- `DatabaseMigrationCatalog` 统一按 LF 计算 checksum，并接受白名单中的旧 Windows
+  checksum，作为必要的跨平台兼容修复。
+- 完整 E2E 和跨平台任务只在 `workflow_dispatch` 或正式 release 流程执行；普通
+  `main`/PR 只跑快速检查。
+
+## 9. 影响面
 
 - 涉及模块：
   - `docs/CipherVault v1.3 产品与知识架构设计.md`

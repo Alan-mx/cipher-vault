@@ -36,6 +36,14 @@ Linux 测试使用可再生成的 `v2/artifacts/e2e/` 临时运行时和 Chromiu
 | GitHub Actions dotnet-linux-arm64（含打包） | 通过 |
 | GitHub Actions docker | 通过 |
 
+### 2.1 已批准范围例外
+
+- Migration SQL、Schema Version、Backup FormatVersion 和表结构未修改。
+- `DatabaseMigrationCatalog` 将换行统一为 LF 后计算 checksum，并兼容白名单中的旧
+  Windows checksum；该修复用于消除 Windows/Linux 平台差异，避免已有 Vault 被误判。
+- 完整跨平台 CI 保持手动或正式发布触发；普通 push/PR 只运行快速检查，这是已确认的
+  CI 资源策略。
+
 ## 3. AC 收敛矩阵
 
 | AC | 结论 | 证据 / 差距 |
@@ -71,7 +79,7 @@ Linux 测试使用可再生成的 `v2/artifacts/e2e/` 临时运行时和 Chromiu
 | AC29 | verified | 未用 Windows 结果替代 Linux；GitHub runner 使用 `knowledge-library-linux.png` 通过 |
 | AC30 | verified | 未修改 `KnowledgeStatus` 或成熟度枚举/种子 |
 | AC31 | verified | Triage 源码与视图无变更 |
-| AC32 | verified | Migration、Schema、Backup Format 无变更 |
+| AC32 | verified（批准例外） | SQL Migration、Schema、Backup Format、表结构未变；checksum 规范化与旧 checksum 白名单为 G5 批准例外 |
 | AC33 | verified | MCP 注册与契约无变更 |
 | AC34 | verified | 未新增专用 MCP Tool 或其他范围外能力 |
 | AC35 | verified | 后端、前端静态检查、单元、构建和 E2E 全部通过 |
@@ -85,8 +93,9 @@ Linux 测试使用可再生成的 `v2/artifacts/e2e/` 临时运行时和 Chromiu
 
 - GitHub Actions ARM64 job 已完成构建、测试、打包和脚本验收；未将 CI runner 结果表述为
   新的物理 ARM64 设备验收。
-- 未修改或验证真实用户 Vault 数据；本轮不涉及数据库、备份或恢复。
+- 未直接打开或修改真实用户 Vault；迁移历史兼容通过代码白名单和定向测试验证。
 
 ## 6. 结论
 
-本地实现与 GitHub Actions 全量验证均已收敛。
+本地实现与 GitHub Actions 全量验证均已收敛。G5 基线冻结以 `34e8272` 为文档与代码
+基线；本次文档提交只补充已批准范围例外，不改变业务实现。
