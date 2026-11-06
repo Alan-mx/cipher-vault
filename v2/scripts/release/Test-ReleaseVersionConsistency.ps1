@@ -16,7 +16,7 @@ foreach ($line in Get-Content -LiteralPath $versionsPath) {
 }
 
 $releaseVersion = $versions["RELEASE_VERSION"]
-if ($releaseVersion -ne "2.0.0-rc.1") {
+if ($releaseVersion -ne "2.0.0-rc.2") {
     throw "release_version_gate_mismatch"
 }
 
@@ -24,7 +24,7 @@ $workflow = Get-Content -Raw (
     Join-Path $repoRoot ".github/workflows/release.yml")
 foreach ($required in @(
     'tags:',
-    '- "v2.0.0-rc.1"',
+    '- "v2.0.0-rc.2"',
     'GITHUB_REF_TYPE',
     'GITHUB_REF_NAME',
     'artifactRoot=',
@@ -44,7 +44,7 @@ if ($workflow.Contains('GITHUB_REF_PROTECTED', [StringComparison]::Ordinal)) {
 $versionsScript = Get-Content -Raw (
     Join-Path $repoRoot "v2/deploy/versions.ps1")
 if ($versionsScript.Contains(
-        '2.0.0-rc.1',
+        '2.0.0-rc.2',
         [StringComparison]::Ordinal)) {
     throw "versions_ps1_contains_duplicate_release_version"
 }
@@ -57,7 +57,7 @@ foreach ($relativePath in @(
 )) {
     $content = Get-Content -Raw (Join-Path $repoRoot $relativePath)
     if ($content.Contains(
-            '2.0.0-rc.1',
+            '2.0.0-rc.2',
             [StringComparison]::Ordinal)) {
         throw "release_script_hardcodes_version:$relativePath"
     }
@@ -66,7 +66,7 @@ foreach ($relativePath in @(
 $compose = Get-Content -Raw (
     Join-Path $repoRoot "v2/deploy/docker-compose.yml")
 if ($compose.Contains(
-        'cipher-vault:2.0.0-rc.1',
+        'cipher-vault:2.0.0-rc.2',
         [StringComparison]::Ordinal)) {
     throw "compose_hardcodes_release_image"
 }

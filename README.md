@@ -57,15 +57,15 @@ http://127.0.0.1:43127
 x64：
 
 ```bash
-tar -xzf CipherVault-2.0.0-rc.1-linux-x64.tar.gz
-cd CipherVault-2.0.0-rc.1-linux-x64
+tar -xzf CipherVault-2.0.0-rc.2-linux-x64.tar.gz
+cd CipherVault-2.0.0-rc.2-linux-x64
 ```
 
 ARM64：
 
 ```bash
-tar -xzf CipherVault-2.0.0-rc.1-linux-arm64.tar.gz
-cd CipherVault-2.0.0-rc.1-linux-arm64
+tar -xzf CipherVault-2.0.0-rc.2-linux-arm64.tar.gz
+cd CipherVault-2.0.0-rc.2-linux-arm64
 ```
 
 Linux x64 基线为 Ubuntu 22.04 和 Debian 12。Linux ARM64 自包含包已在真实 aarch64

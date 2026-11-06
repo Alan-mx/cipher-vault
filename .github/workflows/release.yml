@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     tags:
-      - "v2.0.0-rc.1"
+      - "v2.0.0-rc.2"
 
 permissions:
   contents: read
@@ -50,7 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           source v2/deploy/versions.env
-          test "$RELEASE_VERSION" = "2.0.0-rc.1"
+          test "$RELEASE_VERSION" = "2.0.0-rc.2"
           test "$GITHUB_REF_NAME" = "v$RELEASE_VERSION"
           artifact_root="v2/artifacts/release/$RELEASE_VERSION"
           echo "version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"

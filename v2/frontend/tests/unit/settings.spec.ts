@@ -29,7 +29,7 @@ describe("settings store", () => {
     setActivePinia(createPinia());
     const settings = useSettingsStore();
     vi.spyOn(versionApi, "get").mockResolvedValue({
-      productVersion: "2.0.0-rc.1",
+      productVersion: "2.0.0-rc.2",
       commit: "0123456789abcdef0123456789abcdef01234567",
       rid: "win-x64",
       runtimeVersion: "10.0.13",
@@ -38,7 +38,7 @@ describe("settings store", () => {
 
     await settings.loadVersion();
 
-    expect(settings.version?.productVersion).toBe("2.0.0-rc.1");
+    expect(settings.version?.productVersion).toBe("2.0.0-rc.2");
     expect(settings.version?.rid).toBe("win-x64");
 
     settings.resetSensitive();

@@ -18,16 +18,16 @@ and zlib. A minimal image or distribution may need those packages installed.
 Choose the archive that matches `uname -m`. For x64:
 
 ```bash
-tar -xzf CipherVault-2.0.0-rc.1-linux-x64.tar.gz
-cd CipherVault-2.0.0-rc.1-linux-x64
+tar -xzf CipherVault-2.0.0-rc.2-linux-x64.tar.gz
+cd CipherVault-2.0.0-rc.2-linux-x64
 sudo ./install-systemd.sh
 ```
 
 For ARM64 (`aarch64`):
 
 ```bash
-tar -xzf CipherVault-2.0.0-rc.1-linux-arm64.tar.gz
-cd CipherVault-2.0.0-rc.1-linux-arm64
+tar -xzf CipherVault-2.0.0-rc.2-linux-arm64.tar.gz
+cd CipherVault-2.0.0-rc.2-linux-arm64
 sudo ./install-systemd.sh
 ```
 

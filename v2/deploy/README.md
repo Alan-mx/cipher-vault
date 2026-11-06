@@ -12,8 +12,8 @@ SHA-256 detects corrupted or modified files. It does not authenticate the publis
 ## Run
 
 ```bash
-docker load --input cipher-vault-2.0.0-rc.1-docker-linux-amd64.tar
-CIPHERVAULT_IMAGE=cipher-vault:2.0.0-rc.1 \
+docker load --input cipher-vault-2.0.0-rc.2-docker-linux-amd64.tar
+CIPHERVAULT_IMAGE=cipher-vault:2.0.0-rc.2 \
 docker compose up -d
 ```
 
@@ -82,7 +82,7 @@ parent. Run the same image in an interactive terminal:
 docker run --rm -it \
   -v /host/backups:/backup:ro \
   -v /host/restore-parent:/restore \
-  cipher-vault:2.0.0-rc.1 \
+  cipher-vault:2.0.0-rc.2 \
   --restore-backup /backup/backup.cvbackup \
   --target /restore/new-vault
 ```
