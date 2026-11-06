@@ -66,7 +66,6 @@ const submitAndApplyDraft = async (
 
   const applyButton = page.getByRole("button", { name: "批准并写入" });
   await expect(applyButton).toBeVisible();
-  await reviewQueue.getByRole("button", { name: new RegExp(title) }).click();
   const applyResponse = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&

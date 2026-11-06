@@ -92,7 +92,6 @@ const submitAndApplyDraft = async (
   await expect(status).toHaveValue("pending_review");
   const applyButton = page.getByRole("button", { name: "批准并写入" });
   await expect(applyButton).toBeVisible();
-  await queue.getByRole("button", { name: new RegExp(title) }).click();
   const applyResponse = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -187,7 +186,6 @@ test("editing a pending review draft returns it to draft", async ({ page }) => {
   await page.getByRole("button", { name: "提交审核" }).click();
   await expect(status).toHaveValue("pending_review");
   await expect(page.getByRole("button", { name: "批准并写入" })).toBeVisible();
-  await queue.getByRole("button", { name: new RegExp(title) }).click();
 
   await page.getByLabel("标题").fill(editedTitle);
   await page.getByRole("button", { name: "保存 Draft" }).click();
@@ -201,7 +199,6 @@ test("editing a pending review draft returns it to draft", async ({ page }) => {
   await expect(status).toHaveValue("pending_review");
   const finalApplyButton = page.getByRole("button", { name: "批准并写入" });
   await expect(finalApplyButton).toBeVisible();
-  await queue.getByRole("button", { name: new RegExp(editedTitle) }).click();
   const finalApplyResponse = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
