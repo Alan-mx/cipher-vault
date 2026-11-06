@@ -35,4 +35,4 @@
 | T74 知识整理验证 | 完成 | 前端 56 测试、14 条 E2E 通过；10,000 条 active Knowledge 的 Triage P95 门槛测试通过 |
 | T75 v1.3 审查修复 | 完成 | 修复 Draft 审计、证据只读、模型约束、幂等过期、来源顺序、MCP revision 和 Windows 产物验证 |
 | T76 全量验收 | 完成 | 后端 381 测试、前端 56 测试、14 条 E2E、format/build 及 Windows/ARM64 实际产物验收通过；ARM64 证据 SHA256 为 `79dfe98dcdcb010b1079004782e234a6ffae4d99f9c820923ffb0507b277d85b` |
-| T77 v1.3 基线收敛 | 进行中 | 已统一成熟度、整理队列、审核历史和 MCP 工作流口径；AI 工作区补齐四种终态筛选；后端 381、前端 67、Windows/Linux E2E 各 14 通过；GitHub CI 待提交后验证 |
+| T77 v1.3 基线收敛 | 完成 | 已统一成熟度、整理队列、审核历史和 MCP 工作流口径；AI 工作区补齐四种终态筛选；GitHub Actions run `42163597729` 的 structure、frontend、Windows、Linux、ARM64、Docker 全部通过 |

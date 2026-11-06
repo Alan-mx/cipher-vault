@@ -793,7 +793,7 @@ Chat LLM 的费用、数据保留和训练策略由用户选择的外部 AI 服�
 | M3 知识综合工作流 | Web 用例已完成；外部 AI 通过 Prompt + 通用 Draft 闭环 |
 | Draft Review 结构化编辑与字段级 Diff | 已完成 |
 | Windows 与 Linux ARM64 产物验收 | 已完成 |
-| Linux Playwright 截图基准 | 已新增并在 Ubuntu WSL 通过 P0 比较；完整 CI 待提交后验证 |
+| Linux Playwright 截图基准 | 已采用 GitHub runner Actual 并随全量 CI 通过 |
 
 v1.3 P0 的详细任务和验证证据见
 `docs/specs/mcp-first-v1.3/progress.md`。

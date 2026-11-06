@@ -2,7 +2,8 @@
 
 > 需求名：v1.3-baseline-convergence ｜ 日期：2026-11-06
 > 代码基线：`4afeecce24ffda4c804a5926bf28d3ba00650ece`
-> 结论：本地 Windows 与 Linux 验证通过；GitHub Actions 待提交后触发，当前不能声称远端 CI 已通过
+> 验证提交：`485ef7f`
+> 结论：本地与 GitHub Actions 全量验证通过
 
 ## 1. 验证环境
 
@@ -10,7 +11,7 @@
 |---|---|---|
 | Windows 11 + .NET 10.0.402 + Node 24.21.0 | 后端、前端、Windows E2E | 本地完整验证 |
 | WSL Ubuntu 24.04 x64 + Linux Node 24.22.2 | Linux E2E | Linux x64 Chromium，使用 Linux x64 自包含 Server |
-| GitHub Actions ubuntu-latest | 正式 CI | 尚未触发 |
+| GitHub Actions run `42163597729` | 完整 CI | 全量任务成功 |
 
 Linux 测试使用可再生成的 `v2/artifacts/e2e/` 临时运行时和 Chromium；未作为源码提交。
 
@@ -28,6 +29,12 @@ Linux 测试使用可再生成的 `v2/artifacts/e2e/` 临时运行时和 Chromiu
 | `npm run build` | 通过 |
 | Windows `npm run test:e2e` | 通过，14/14 |
 | Linux `playwright test` | 通过，14/14，使用 `knowledge-library-linux.png` 正式比较 |
+| GitHub Actions structure | 通过 |
+| GitHub Actions frontend（含 Linux E2E） | 通过，14/14 |
+| GitHub Actions dotnet-windows | 通过 |
+| GitHub Actions dotnet-linux | 通过 |
+| GitHub Actions dotnet-linux-arm64（含打包） | 通过 |
+| GitHub Actions docker | 通过 |
 
 ## 3. AC 收敛矩阵
 
@@ -41,7 +48,7 @@ Linux 测试使用可再生成的 `v2/artifacts/e2e/` 临时运行时和 Chromiu
 | AC6 | verified | 产品设计 8.2 列出四种历史终态 |
 | AC7 | verified | 产品设计说明 MCP 使用 Prompt + 通用 Draft |
 | AC8 | verified | `mcp-first-v1.3/progress.md` 增加 T77 |
-| AC9 | verified | 文档白名单已固化，待按白名单暂存 |
+| AC9 | verified | 文档白名单已固化并按白名单提交 |
 | AC10 | verified | 不使用 `git add docs/`；采用逐文件命令 |
 | AC11 | verified | cached 清单无其他 `docs/` 工作产物 |
 | AC12 | verified | AGENTS 引用的产品设计与 mcp-first-v1.3 路径均存在 |
@@ -57,35 +64,29 @@ Linux 测试使用可再生成的 `v2/artifacts/e2e/` 临时运行时和 Chromiu
 | AC22 | verified | 单元测试断言精确 wire value 传给现有 API |
 | AC23 | verified | `git diff --name-only -- v2/src` 无 API 变更 |
 | AC24 | verified | 四种终态空列表测试通过 |
-| AC25 | verified | Linux PNG 已生成，1280×720，正式比较通过 |
+| AC25 | verified | Linux PNG 来自 GitHub runner Actual，1280×720，正式比较通过；SHA256 `4713711E6343463DC3D31FE25670108FA8DD8B09ED0FF041AEAFBEF31845C561` |
 | AC26 | verified | Windows PNG SHA256 未变：`530918FFC0B64CB78498C1AAA1BDB49CE3DBEB8190A9D6D320698C526D74A9D4` |
 | AC27 | verified | `toHaveScreenshot("knowledge-library.png")` 保持不变 |
-| AC28 | partial | 本地 Ubuntu 24.04 全量 E2E 14/14 通过；GitHub Actions 尚未触发 |
-| AC29 | partial | 已明确没有用 Windows 结果替代 Linux；远端 CI 仍待外部触发 |
+| AC28 | verified | GitHub Actions frontend 全量 E2E 14/14 通过 |
+| AC29 | verified | 未用 Windows 结果替代 Linux；GitHub runner 使用 `knowledge-library-linux.png` 通过 |
 | AC30 | verified | 未修改 `KnowledgeStatus` 或成熟度枚举/种子 |
 | AC31 | verified | Triage 源码与视图无变更 |
 | AC32 | verified | Migration、Schema、Backup Format 无变更 |
 | AC33 | verified | MCP 注册与契约无变更 |
 | AC34 | verified | 未新增专用 MCP Tool 或其他范围外能力 |
 | AC35 | verified | 后端、前端静态检查、单元、构建和 E2E 全部通过 |
-| AC36 | partial | Windows 与 Linux 本地证据已分开；GitHub CI 结果待提交后补录 |
+| AC36 | verified | Windows、Linux、ARM64、Docker 的 GitHub Actions 结果均独立通过 |
 
 ## 4. 差距分类
 
-| 类型 | 项目 | 说明 |
-|---|---|---|
-| partial | AC28 | 缺 GitHub Actions 远端运行结果 |
-| partial | AC29 | 同上，不能把本地 WSL 结果写成 CI 已验证 |
-| partial | AC36 | 同上，最终报告需补远端 CI 状态 |
+无未收敛项。
 
 ## 5. 未执行 / 未验证
 
-- 未 commit、未 push，因此 GitHub Actions 未触发。
-- 未执行 Linux ARM64 本轮回归；本需求不涉及平台运行时或原生依赖，且本地 Linux x64
-  已覆盖截图与页面行为。不得将本次结果表述为新的 ARM64 验收。
+- GitHub Actions ARM64 job 已完成构建、测试、打包和脚本验收；未将 CI runner 结果表述为
+  新的物理 ARM64 设备验收。
 - 未修改或验证真实用户 Vault 数据；本轮不涉及数据库、备份或恢复。
 
 ## 6. 结论
 
-本地实现与本地跨平台 E2E 已收敛。剩余差距只有远端 GitHub Actions 结果，需要获得用户
-授权提交并推送后才能补齐。
+本地实现与 GitHub Actions 全量验证均已收敛。
