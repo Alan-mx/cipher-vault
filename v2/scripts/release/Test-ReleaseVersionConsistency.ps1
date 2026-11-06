@@ -21,7 +21,7 @@ if ($releaseVersion -ne "2.0.0-rc.1") {
 }
 
 $workflow = Get-Content -Raw (
-    Join-Path $repoRoot ".github/workflows/phase8-release.yml")
+    Join-Path $repoRoot ".github/workflows/release.yml")
 foreach ($required in @(
     'tags:',
     '- "v2.0.0-rc.1"',

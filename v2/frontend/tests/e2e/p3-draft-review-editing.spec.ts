@@ -89,9 +89,10 @@ const submitAndApplyDraft = async (
   await status.selectOption("draft");
   await queue.getByRole("button", { name: new RegExp(title) }).click();
   await page.getByRole("button", { name: "提交审核" }).click();
-  await status.selectOption("pending_review");
-  await queue.getByRole("button", { name: new RegExp(title) }).click();
+  await expect(status).toHaveValue("pending_review");
   const applyButton = page.getByRole("button", { name: "批准并写入" });
+  await expect(applyButton).toBeVisible();
+  await queue.getByRole("button", { name: new RegExp(title) }).click();
   const applyResponse = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -185,6 +186,7 @@ test("editing a pending review draft returns it to draft", async ({ page }) => {
   await queue.getByRole("button", { name: new RegExp(title) }).click();
   await page.getByRole("button", { name: "提交审核" }).click();
   await expect(status).toHaveValue("pending_review");
+  await expect(page.getByRole("button", { name: "批准并写入" })).toBeVisible();
   await queue.getByRole("button", { name: new RegExp(title) }).click();
 
   await page.getByLabel("标题").fill(editedTitle);
@@ -196,9 +198,18 @@ test("editing a pending review draft returns it to draft", async ({ page }) => {
   await expect(page.getByRole("button", { name: "提交审核" })).toBeVisible();
 
   await page.getByRole("button", { name: "提交审核" }).click();
-  await status.selectOption("pending_review");
+  await expect(status).toHaveValue("pending_review");
+  const finalApplyButton = page.getByRole("button", { name: "批准并写入" });
+  await expect(finalApplyButton).toBeVisible();
   await queue.getByRole("button", { name: new RegExp(editedTitle) }).click();
-  await page.getByRole("button", { name: "批准并写入" }).click();
+  const finalApplyResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith("/apply"),
+  );
+  await finalApplyButton.click();
+  expect((await finalApplyResponse).ok()).toBe(true);
+  await expect(finalApplyButton).toBeHidden();
 });
 
 test("edits Source and Relation drafts", async ({ page }) => {

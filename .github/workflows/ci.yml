@@ -2,10 +2,25 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   frontend:
@@ -43,14 +58,24 @@ jobs:
         run: npm run build
       - name: Build Server for browser verification
         run: dotnet build v2/src/CipherVault.Server/CipherVault.Server.csproj -c Release --no-restore -warnaserror
+      - name: Cache Playwright browsers
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('v2/frontend/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
       - name: Install Chromium
+        if: github.event_name == 'workflow_dispatch'
         working-directory: v2/frontend
         run: npx playwright install --with-deps chromium
       - name: Browser and accessibility tests
+        if: github.event_name == 'workflow_dispatch'
         working-directory: v2/frontend
         run: npm run test:e2e
       - name: Upload frontend evidence
-        if: always()
+        if: always() && github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: v2-frontend-evidence
@@ -59,6 +84,7 @@ jobs:
             v2/frontend/playwright-report
           if-no-files-found: ignore
       - name: Upload frontend build
+        if: github.event_name == 'workflow_dispatch' && success()
         uses: actions/upload-artifact@v4
         with:
           name: v2-frontend-wwwroot
@@ -67,6 +93,7 @@ jobs:
 
   dotnet-windows:
     needs: frontend
+    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -88,6 +115,7 @@ jobs:
         run: dotnet test CipherVault.slnx -c Release --no-build --no-restore
   dotnet-linux:
     needs: frontend
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -109,6 +137,7 @@ jobs:
         run: dotnet test CipherVault.slnx -c Release --no-build --no-restore
   dotnet-linux-arm64:
     needs: frontend
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
     steps:
@@ -161,6 +190,7 @@ jobs:
 
   docker:
     needs: frontend
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -241,19 +271,19 @@ jobs:
           bash -n v2/deploy/linux/enable-tailscale-serve.sh
           grep -Fq -- 'tailscale serve' v2/deploy/linux/enable-tailscale-serve.sh
           ! grep -Fq -- 'tailscale funnel' v2/deploy/linux/enable-tailscale-serve.sh
-          grep -Fq -- '$publish = Join-Path $root "work/windows/publish"' .github/workflows/phase8-release.yml
-          grep -Fq -- 'publish_root="$root/work/linux/publish"' .github/workflows/phase8-release.yml
+          grep -Fq -- '$publish = Join-Path $root "work/windows/publish"' .github/workflows/release.yml
+          grep -Fq -- 'publish_root="$root/work/linux/publish"' .github/workflows/release.yml
           grep -Fq -- 'dotnet-linux-arm64:' .github/workflows/ci.yml
           grep -Fq -- 'runs-on: ubuntu-24.04-arm' .github/workflows/ci.yml
           grep -Fq -- '--rid linux-arm64' .github/workflows/ci.yml
-          grep -Fq -- 'linux-arm64-package:' .github/workflows/phase8-release.yml
-          grep -Fq -- 'name: phase8-linux-arm64' .github/workflows/phase8-release.yml
-          grep -Fq -- '--rid linux-arm64' .github/workflows/phase8-release.yml
+          grep -Fq -- 'linux-arm64-package:' .github/workflows/release.yml
+          grep -Fq -- 'name: phase8-linux-arm64' .github/workflows/release.yml
+          grep -Fq -- '--rid linux-arm64' .github/workflows/release.yml
           grep -Fq -- 'net10.0/linux-arm64' v2/src/CipherVault.Server/packages.lock.json
           grep -Fq -- 'CipherVault-$Version-linux-arm64.tar.gz' v2/scripts/release/New-ReleaseManifest.ps1
           grep -Fq -- 'CipherVault-$Version-linux-arm64.tar.gz' v2/scripts/release/Scan-ReleaseArtifacts.ps1
-          ! grep -Fq -- 'publish_root="$(bash v2/scripts/publish-phase8.sh' .github/workflows/phase8-release.yml
-          ! grep -Fq -- '$publish = & .\v2\scripts\publish-phase8.ps1' .github/workflows/phase8-release.yml
+          ! grep -Fq -- 'publish_root="$(bash v2/scripts/publish-phase8.sh' .github/workflows/release.yml
+          ! grep -Fq -- '$publish = & .\v2\scripts\publish-phase8.ps1' .github/workflows/release.yml
       - name: Reject tracked sensitive artifacts
         shell: bash
         run: |
