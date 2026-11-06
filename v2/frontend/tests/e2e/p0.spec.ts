@@ -65,7 +65,15 @@ const submitAndApplyDraft = async (
 
   await status.selectOption("pending_review");
   await reviewQueue.getByRole("button", { name: new RegExp(title) }).click();
-  await page.getByRole("button", { name: "批准并写入" }).click();
+  const applyButton = page.getByRole("button", { name: "批准并写入" });
+  const applyResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith("/apply"),
+  );
+  await applyButton.click();
+  expect((await applyResponse).ok()).toBe(true);
+  await expect(applyButton).toBeHidden();
 };
 
 test("P0 knowledge workflow covers source, inbox, review and model", async ({

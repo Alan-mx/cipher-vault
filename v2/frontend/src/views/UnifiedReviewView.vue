@@ -29,22 +29,27 @@ import DraftRelationEditor from "../components/draft/DraftRelationEditor.vue";
 import DraftSourceEditor from "../components/draft/DraftSourceEditor.vue";
 import DraftValidationList from "../components/draft/DraftValidationList.vue";
 
-const allowedStatuses = [
-  "pending_review",
-  "draft",
-  "conflict",
-  "applied",
+const statusOptions = [
+  { value: "pending_review", label: "待审核" },
+  { value: "draft", label: "处理中" },
+  { value: "conflict", label: "冲突" },
+  { value: "applied", label: "已应用" },
+  { value: "rejected", label: "已拒绝" },
+  { value: "discarded", label: "已丢弃" },
+  { value: "expired", label: "已过期" },
 ] as const;
+
+type ReviewStatus = (typeof statusOptions)[number]["value"];
+
+const isReviewStatus = (value: unknown): value is ReviewStatus =>
+  statusOptions.some((option) => option.value === value);
+
+const parseReviewStatus = (value: unknown): ReviewStatus =>
+  isReviewStatus(value) ? value : "pending_review";
 
 const route = useRoute();
 const router = useRouter();
-const initialStatus =
-  typeof route.query.status === "string" &&
-  allowedStatuses.includes(
-    route.query.status as (typeof allowedStatuses)[number],
-  )
-    ? route.query.status
-    : "pending_review";
+const initialStatus = parseReviewStatus(route.query.status);
 const initialDraftId =
   typeof route.query.draftId === "string" ? route.query.draftId : null;
 
@@ -53,7 +58,7 @@ const selected = ref<DraftDetail | null>(null);
 const model = ref<KnowledgeModel | null>(null);
 const message = ref("");
 const error = ref<string | null>(null);
-const status = ref(initialStatus);
+const status = ref<ReviewStatus>(initialStatus);
 const form = ref<EditableDraftPayload | null>(null);
 const baseline = ref<EditableDraftPayload | null>(null);
 const saving = ref(false);
@@ -164,13 +169,12 @@ const setSelected = (detail: DraftDetail) => {
 
 const openById = async (draftId: string) => {
   const detail = await knowledgeBaseApi.draft(draftId);
-  setSelected(detail);
   const selectedStatus = detail.record.status;
-  if (
-    allowedStatuses.includes(selectedStatus as (typeof allowedStatuses)[number])
-  ) {
+  if (isReviewStatus(selectedStatus) && status.value !== selectedStatus) {
     status.value = selectedStatus;
+    await load();
   }
+  setSelected(detail);
   await syncQuery(draftId);
 };
 
@@ -226,7 +230,9 @@ const save = async () => {
       selected.value.record.status === "pending_review"
         ? "修改已保存，Draft 已退回处理中，请重新送审。"
         : "Draft 已保存。";
-    status.value = result.status;
+    if (isReviewStatus(result.status)) {
+      status.value = result.status;
+    }
     await load();
     await openById(result.draftId);
   } catch (caught) {
@@ -303,6 +309,7 @@ onBeforeRouteLeave(() => confirmDiscard());
 onMounted(async () => {
   window.addEventListener("beforeunload", handleBeforeUnload);
   await Promise.all([load(), loadModel()]);
+  await syncQuery(initialDraftId);
   if (initialDraftId) {
     try {
       await openById(initialDraftId);
@@ -327,10 +334,13 @@ onBeforeUnmount(() => {
         <p class="muted">完善 Draft，保存后由你决定是否提交审核。</p>
       </div>
       <select v-model="status" aria-label="草稿状态" @change="changeStatus">
-        <option value="pending_review">待审核</option>
-        <option value="draft">处理中</option>
-        <option value="conflict">冲突</option>
-        <option value="applied">历史</option>
+        <option
+          v-for="option in statusOptions"
+          :key="option.value"
+          :value="option.value"
+        >
+          {{ option.label }}
+        </option>
       </select>
     </header>
     <div class="layout">

@@ -110,14 +110,43 @@ const draftDetail = (status = "draft"): DraftDetail => ({
   },
 });
 
-const mountReview = async () => {
+const draftPage = {
+  items: [],
+  nextCursor: null,
+  hasMore: false,
+  totalCount: 0,
+};
+
+const mockReviewApis = (detail: DraftDetail | null = draftDetail()) => {
+  const drafts = vi
+    .spyOn(knowledgeBaseApi, "drafts")
+    .mockResolvedValue(draftPage);
+  vi.spyOn(knowledgeBaseApi, "knowledgeModel").mockResolvedValue(model);
+  if (detail) {
+    vi.spyOn(knowledgeBaseApi, "draft").mockResolvedValue(detail);
+  }
+  return { drafts };
+};
+
+interface MountReviewOptions {
+  status?: string;
+  draftId?: string | null;
+}
+
+const mountReview = async ({
+  status = "draft",
+  draftId = "draft-1",
+}: MountReviewOptions = {}) => {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: "/review", component: UnifiedReviewView }],
   });
   await router.push({
     path: "/review",
-    query: { status: "draft", draftId: "draft-1" },
+    query: {
+      status,
+      ...(draftId ? { draftId } : {}),
+    },
   });
   await router.isReady();
   const wrapper = mount(UnifiedReviewView, {
@@ -126,6 +155,23 @@ const mountReview = async () => {
   await flushPromises();
   return { wrapper, router };
 };
+
+const statusOptions = [
+  ["pending_review", "待审核"],
+  ["draft", "处理中"],
+  ["conflict", "冲突"],
+  ["applied", "已应用"],
+  ["rejected", "已拒绝"],
+  ["discarded", "已丢弃"],
+  ["expired", "已过期"],
+] as const;
+
+const terminalStatuses = [
+  "applied",
+  "rejected",
+  "discarded",
+  "expired",
+] as const;
 
 describe("Draft review editing", () => {
   afterEach(() => {
@@ -145,6 +191,84 @@ describe("Draft review editing", () => {
     expect(canonicalizeDraftPayload("knowledge", parsed)).toBe(
       canonicalizeDraftPayload("knowledge", parsed),
     );
+  });
+
+  it("renders the seven Draft status filters", async () => {
+    mockReviewApis(null);
+    const { wrapper } = await mountReview({
+      status: "pending_review",
+      draftId: null,
+    });
+
+    const options = wrapper
+      .get('select[aria-label="草稿状态"]')
+      .findAll("option")
+      .map((option) => [option.attributes("value"), option.text()]);
+
+    expect(options).toEqual(statusOptions);
+  });
+
+  it.each(terminalStatuses)(
+    "loads the %s history status as an empty queue",
+    async (terminalStatus) => {
+      const { drafts } = mockReviewApis(null);
+      const { wrapper } = await mountReview({
+        status: terminalStatus,
+        draftId: null,
+      });
+
+      expect(drafts).toHaveBeenCalledWith({
+        status: terminalStatus,
+        pageSize: 100,
+      });
+      expect(wrapper.text()).toContain("选择一条 Draft 查看详情");
+      expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+    },
+  );
+
+  it.each(terminalStatuses)(
+    "shows the %s history detail as read-only",
+    async (terminalStatus) => {
+      mockReviewApis(draftDetail(terminalStatus));
+      const { wrapper } = await mountReview({ status: terminalStatus });
+
+      const buttons = wrapper.findAll("button").map((button) => button.text());
+      expect(wrapper.text()).toContain("Knowledge draft");
+      expect(buttons).not.toContain("保存 Draft");
+      expect(buttons).not.toContain("提交审核");
+      expect(buttons).not.toContain("批准并写入");
+      expect(buttons).not.toContain("拒绝");
+      expect(buttons).not.toContain("丢弃");
+    },
+  );
+
+  it("falls back to pending_review for an unknown status", async () => {
+    const { drafts } = mockReviewApis(null);
+    const { router } = await mountReview({
+      status: "unknown",
+      draftId: null,
+    });
+
+    expect(drafts).toHaveBeenCalledWith({
+      status: "pending_review",
+      pageSize: 100,
+    });
+    expect(router.currentRoute.value.query.status).toBe("pending_review");
+  });
+
+  it("prefers the detail status when status and draftId conflict", async () => {
+    const { drafts } = mockReviewApis(draftDetail("applied"));
+    const { wrapper, router } = await mountReview({
+      status: "rejected",
+      draftId: "draft-1",
+    });
+
+    expect(drafts).toHaveBeenLastCalledWith({
+      status: "applied",
+      pageSize: 100,
+    });
+    expect(router.currentRoute.value.query.status).toBe("applied");
+    expect(wrapper.text()).toContain("Knowledge draft");
   });
 
   it("saves edited Knowledge and refreshes with expected revision", async () => {

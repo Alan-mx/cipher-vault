@@ -91,7 +91,15 @@ const submitAndApplyDraft = async (
   await page.getByRole("button", { name: "提交审核" }).click();
   await status.selectOption("pending_review");
   await queue.getByRole("button", { name: new RegExp(title) }).click();
-  await page.getByRole("button", { name: "批准并写入" }).click();
+  const applyButton = page.getByRole("button", { name: "批准并写入" });
+  const applyResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith("/apply"),
+  );
+  await applyButton.click();
+  expect((await applyResponse).ok()).toBe(true);
+  await expect(applyButton).toBeHidden();
 };
 
 const submitAndApplyDraftById = async (
@@ -202,6 +210,7 @@ test("edits Source and Relation drafts", async ({ page }) => {
   await page.getByPlaceholder("https://…").fill("https://example.com/edit");
   await page.getByPlaceholder("来源内容快照").fill("# Source\n\nOriginal.");
   await page.getByRole("button", { name: "保存为草稿" }).click();
+  await expect(page.getByPlaceholder("来源标题")).toHaveValue("");
   await page.goto("/review");
   const status = page.getByRole("combobox", { name: "草稿状态" });
   const queue = page.getByRole("complementary", {
