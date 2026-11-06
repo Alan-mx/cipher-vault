@@ -4,6 +4,28 @@ CipherVault 是本地优先、加密存储、由外部 AI 通过 MCP 使用的�
 一个 ASP.NET Core 进程同时提供 Vue Web UI、REST API、MCP HTTP 端点，以及受
 SQLite3MC 保护的本地数据库。
 
+## 产品定位
+
+CipherVault 不是内置 AI 的笔记软件，也不是某一种知识管理方法的实现。它负责
+知识数据、结构、检索、来源溯源、草稿审核和审计；理解、推理、拆解、综合和组织
+由 Codex、Claude 等外部 AI 客户端负责。
+
+> 笔记管理是高度个人化的事情，不存在一套适合所有人的完整方案；产品更倾向于提供基础构件，而不是强行提供一套固定方法。
+
+因此，CipherVault 提供的是可以自由组合的知识基础构件：
+
+- Source 与不可变 SourceRevision：保存原始资料、内容快照和章节/段落定位。
+- Knowledge 与 KnowledgeRevision：保存可独立理解、检索和复用的结构化知识。
+- Relation：使用可配置的关系类型表达知识之间的真实语义。
+- SourceReference：把知识关联到精确来源版本、定位位置和原文摘录。
+- Knowledge Model：由用户维护知识类型、属性、模板、关系类型和来源规则。
+- 统一 Draft 与 Web 审核：外部 AI 提出变更，最终由用户确认后写入。
+- Keyword / Fulltext 检索：不依赖固定语义模型，也不绑定具体 AI 供应商。
+
+系统不会强制固定卡片数量、拆分粒度、成熟度生命周期或中心方法卡，也不会把
+PARA、Zettelkasten、卡片盒笔记法或项目中心写死为唯一组织方式。内置类型和关系
+只是可修改、可停用的起点；用户可以按自己的领域、项目、学习方式或长期目标组织知识。
+
 当前实现聚焦 v1.3 P0 闭环，并已完成 Windows 与 Linux ARM64 实际产物验收：
 
 - 可配置 Knowledge Model：类型、属性、模板、关系和来源规则。
